@@ -298,7 +298,7 @@ enum rtattr_type_t {
 	RTA_PREFSRC,
 	RTA_METRICS,
 	RTA_MULTIPATH,
-	RTA_PROTOINFO, /* no longer used */
+	RTA_PROTOINFO, /* Only used by XIA */
 	RTA_FLOW,
 	RTA_CACHEINFO,
 	RTA_SESSION, /* no longer used */
@@ -312,6 +312,7 @@ enum rtattr_type_t {
 	RTA_ENCAP_TYPE,
 	RTA_ENCAP,
 	RTA_EXPIRES,
+	RTA_LLADDR, /* Only used by XIA */
 	__RTA_MAX
 };
 

@@ -1,0 +1,8 @@
+#
+# Makefile for Linux's XIA stack.
+#
+
+obj-$(CONFIG_XIA) += xia.o
+
+xia-objs :=	main.o socket.o dag.o locktbl.o list_fib.o fib.o \
+		fib_frontend.o route.o output.o vxidty.o

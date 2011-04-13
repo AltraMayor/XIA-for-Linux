@@ -1,0 +1,11 @@
+config XIA
+	tristate "eXpressive Internet Architecture (EXPERIMENTAL)"
+	default n
+	help
+	  eXpressive Internet Architecture (XIA) is a new network stack
+	  being developed by Carnegie Mellon, Boston University, and
+	  University of Wisconsin-Madison for a future Internet.
+	  If you are unsure how to answer this question, answer N.
+
+	  For information about XIA, please refer to
+	  <http://www.cs.cmu.edu/~xia/>

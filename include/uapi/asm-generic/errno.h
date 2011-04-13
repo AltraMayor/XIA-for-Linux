@@ -119,4 +119,6 @@
 
 #define EHWPOISON	133	/* Memory page has hardware error */
 
+#define EXTYNOSUPPORT	134	/* Principal (XID type) is not supported. */
+#define ESNOTBOUND	135	/* Socket is not bound to an address. */
 #endif

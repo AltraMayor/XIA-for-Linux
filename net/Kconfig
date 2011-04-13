@@ -89,6 +89,8 @@ source "net/netlabel/Kconfig"
 
 endif # if INET
 
+source "net/xia/Kconfig"
+
 config NETWORK_SECMARK
 	bool "Security Marking"
 	help
