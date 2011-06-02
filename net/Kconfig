@@ -84,7 +84,8 @@ source "net/netlabel/Kconfig"
 endif # if INET
 
 config XIA
-	bool "eXpressive Internet Architecture (EXPERIMENTAL)"
+	tristate "eXpressive Internet Architecture (EXPERIMENTAL)"
+	depends on EXPERIMENTAL
 	default n
 	help
 	  eXpressive Internet Architecture (XIA) is a new protocol suite
