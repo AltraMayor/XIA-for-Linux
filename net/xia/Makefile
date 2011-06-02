@@ -1,7 +1,7 @@
 #
-# Makefile for the Linux XIA layer.
+# Makefile for Linux's XIA stack.
 #
 
 obj-$(CONFIG_XIA) += xia.o
 
-xia-objs :=	af_xia.o
+xia-objs :=	main.o af_xia.o
