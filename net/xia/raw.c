@@ -1,6 +1,6 @@
 #include <net/sock.h>
 #include <net/raw.h>
-#include <net/xia_sock.h>
+#include <net/xia.h>
 #include <linux/module.h>
 
 static void raw_close(struct sock *sk, long timeout)
@@ -125,8 +125,8 @@ struct proto xia_raw_prot = {
 	.recvmsg		= raw_recvmsg,
 	.bind			= raw_bind,
 	.backlog_rcv		= raw_backlog_rcv,
-	.hash			= xia_raw_hash_sk,
-	.unhash			= xia_raw_unhash_sk,
+	.hash			= xia_raw_hash_sk,	/* Required */
+	.unhash			= xia_raw_unhash_sk,	/* Required */
 	.obj_size		= sizeof(struct xia_raw_sock),
 	.h.raw_hash		= &xia_raw_hashinfo,
 };
