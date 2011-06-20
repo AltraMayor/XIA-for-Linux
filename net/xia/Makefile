@@ -4,4 +4,4 @@
 
 obj-$(CONFIG_XIA) += xia.o
 
-xia-objs :=	raw.o af_xia.o
+xia-objs :=	af_xia.o raw.o util.o
