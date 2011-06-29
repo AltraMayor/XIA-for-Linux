@@ -33,6 +33,11 @@ struct xia_sock {
 	/* EMPTY */
 };
 
+static inline struct xia_sock *xia_sk(const struct sock *sk)
+{
+	return (struct xia_sock *)sk;
+}
+
 /*
  * Raw socket
  */
@@ -45,6 +50,11 @@ struct xia_raw_sock {
 
 	/* EMPTY */
 };
+
+static inline struct xia_raw_sock *xia_raw_sk(const struct sock *sk)
+{
+	return (struct xia_raw_sock *)sk;
+}
 
 extern struct proto xia_raw_prot;
 
@@ -82,6 +92,16 @@ struct xia_row {
 #define XIA_CHOSEN_EDGE		0x80
 #define XIA_EMPTY_EDGE		0x7f
 
+static inline int is_edge_chosen(u8 e)
+{
+	return e & XIA_CHOSEN_EDGE;
+}
+
+static inline int is_empty_edge(u8 e)
+{
+	return (e & XIA_EMPTY_EDGE) == XIA_EMPTY_EDGE;
+}
+
 /* XIA address. */
 #define XIA_NODES_MAX		9
 struct xia_addr {
@@ -100,11 +120,8 @@ struct sockaddr_xia {
 };
 
 enum xia_addr_error {
-	XIAEADDR_OK = 0,
 	/* There's a non-XIDTYPE_NAT node after an XIDTYPE_NAT node. */
-	XIAEADDR_NAT_MISPLACED,
-	/* There is no nodes, address is empty. */
-	XIAEADDR_EMPTY,
+	XIAEADDR_NAT_MISPLACED = 1,
 	/* Edge-selected bit is only valid in packets. */
 	XIAEADDR_CHOSEN_EDGE,
 	/* There's a non-empty edge after an Empty Edge.
@@ -116,6 +133,11 @@ enum xia_addr_error {
 	XIAEADDR_NO_ENTRY,
 };
 
+/** xia_test_addr - test addr.
+ * RETURN
+ *	Negative enum xia_addr_error - there is an error.
+ *	Greater or equal to zero - Number of nodes.
+ */
 extern int xia_test_addr(const struct xia_addr *addr);
 
 /** XIA_MAX_STRADDR_SIZE - The maximum size of an XIA address as a string
@@ -125,30 +147,39 @@ extern int xia_test_addr(const struct xia_addr *addr);
  * the edge-chosen sign (i.e. '>') for each selected edge,
  * the node separators (i.e. ':'), and a string terminator (i.e. '\0').
  */
-#define XIA_MAX_STRADDR_SIZE (XIA_NODES_MAX * \
-	((sizeof(xid_type_t) + XIA_XID_MAX + XIA_OUTDEGREE_MAX) * 2 + 2) + \
+#define XIA_MAX_STRADDR_SIZE (1 + XIA_NODES_MAX * \
+	((sizeof(xid_type_t) + XIA_XID_MAX + XIA_OUTDEGREE_MAX) * 2 + 3) + \
 	XIA_NODES_MAX)
 
 /** xia_ntop - convert an XIA address to a string.
  * src can be ill-formed, but xia_ntop won't report error and will return
  * a string that `approximates' that ill-formed address.
+ * If include_nl is non-zero, '\n' is added after ':'.
  * Return
  * 	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
+ *	-EINVAL - For unexpected cases; it shouldn't happen.
  *	Total number of written bytes, NOT including the trailing '\0'.
  */
-extern int xia_ntop(const struct xia_addr *src, char *dst, int dstlen);
+extern int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
+		int include_nl);
 
 /** xia_pton - Convert a string that represents an XIA addressesng into
  *	binary (network) form.
  * It doesn't not require the string src to be terminated by '\0'.
  * If ignore_ce is true, the chosen edges are not marked in dst.
+ * 	It's useful to obtain an address that will be used in a header.
+ * invalid_flag is set true if '!' begins the string;
+ * 	otherwise it is set false.
  * Return
- * 	-1 if the string can't be converted; zero otherwise.
- *	Notice that even if the function is successful, the address may
+ * 	-1 if the string can't be converted.
+ *	Number of parsed chars, not couting trailing '\0' if it exists.
+ * Notes
+ *	Even if the function is successful, the address may
  *	still be invalid according to xia_test_addr.
+ *	XIA_MAX_STRADDR_SIZE could be passed in srclen if src includes a '\0'.
  */
-extern int xia_pton(const char *src, int srclen, struct xia_addr *dst,
-		int ignore_ce);
+extern int xia_pton(const char *src, size_t srclen, struct xia_addr *dst,
+		int ignore_ce, int *invalid_flag);
 
 #endif	/* _XIA_H */
