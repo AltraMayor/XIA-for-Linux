@@ -1,12 +1,11 @@
 #include <net/sock.h>
-#include <net/raw.h>
 #include <net/xia.h>
 #include <linux/module.h>
 
 static void raw_close(struct sock *sk, long timeout)
 {
-	/* FIXME Write me! */
-	printk(KERN_ALERT "Function xia/raw.c:%s not implemented\n", __func__);
+	printk(KERN_ALERT "Function xia/raw.c:%s called\n", __func__);
+	sk_common_release(sk);
 }
 
 static int raw_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
@@ -32,15 +31,15 @@ static int raw_ioctl(struct sock *sk, int cmd, unsigned long arg)
 
 static int raw_init(struct sock *sk)
 {
-	/* FIXME Write me! */
-	printk(KERN_ALERT "Function xia/raw.c:%s not implemented\n", __func__);
-	return -1;
+	printk(KERN_ALERT "Function xia/raw.c:%s called\n", __func__);
+	/* Do nothing. TODO Should I remove this method? */
+	return 0;
 }
 
 static void raw_destroy(struct sock *sk)
 {
-	/* FIXME Write me! */
-	printk(KERN_ALERT "Function xia/raw.c:%s not implemented\n", __func__);
+	printk(KERN_ALERT "Function xia/raw.c:%s called\n", __func__);
+	/* Do nothing. TODO Should I remove this method? */
 }
 
 static int raw_setsockopt(struct sock *sk, int level, int optname,
@@ -91,42 +90,36 @@ static int raw_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 
 static void xia_raw_hash_sk(struct sock *sk)
 {
-	/* FIXME Write me! */
-	printk(KERN_ALERT "Function xia/raw.c:%s not implemented\n", __func__);
+	/* Functions xia_raw_hash_sk and xia_raw_unhash_sk seem to be necessary
+         * only for /proc filesystem.
+	 * TODO Should them be implemented? If not, shouldn't there be
+	 * a dummy function for both?
+	 */
+	printk(KERN_ALERT "Function xia/raw.c:%s called\n", __func__);
 }
 
 static void xia_raw_unhash_sk(struct sock *sk)
 {
-	/* FIXME Write me! */
-	printk(KERN_ALERT "Function xia/raw.c:%s not implemented\n", __func__);
+	/* TODO See comment in xia_raw_hash_sk. */
+	printk(KERN_ALERT "Function xia/raw.c:%s called\n", __func__);
 }
-
-/* FIXME A new hashinfo is likely necessary.
- * The one used here is reused from IP raw; once this issue has been addressed,
- * please verify if header <net/raw.h> should be removed from this file.
- * This code was copied from net/ipv4/raw.c, look for `raw_v4_hashinfo'.
- */
-static struct raw_hashinfo xia_raw_hashinfo = {
-	.lock = __RW_LOCK_UNLOCKED(xia_raw_hashinfo.lock),
-};
 
 struct proto xia_raw_prot = {
 	.name			= "XIA_RAW",
 	.owner			= THIS_MODULE,
-	.close			= raw_close,
-	.connect		= raw_connect,
-	.disconnect		= raw_disconnect,
+	.close			= raw_close,		/* Required */
+	.connect		= raw_connect,		/* Required */
+	.disconnect		= raw_disconnect,	/* Required */
 	.ioctl			= raw_ioctl,
 	.init			= raw_init,
 	.destroy		= raw_destroy,
 	.setsockopt		= raw_setsockopt,
 	.getsockopt		= raw_getsockopt,
-	.sendmsg		= raw_sendmsg,
-	.recvmsg		= raw_recvmsg,
+	.sendmsg		= raw_sendmsg,		/* Required */
+	.recvmsg		= raw_recvmsg,		/* Required */
 	.bind			= raw_bind,
 	.backlog_rcv		= raw_backlog_rcv,
 	.hash			= xia_raw_hash_sk,	/* Required */
 	.unhash			= xia_raw_unhash_sk,	/* Required */
 	.obj_size		= sizeof(struct xia_raw_sock),
-	.h.raw_hash		= &xia_raw_hashinfo,
 };
