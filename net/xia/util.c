@@ -15,9 +15,9 @@ int xia_test_addr(const struct xia_addr *addr)
 	for (i = 0; i < XIA_NODES_MAX; i++) {
 		xid_type_t ty = addr->s_row[i].s_xid_type;
 		if (saw_nat) {
-			if (ty != XIDTYPE_NAT)
+			if (!xia_is_nat(ty))
 				return -XIAEADDR_NAT_MISPLACED;
-		} else if (ty == XIDTYPE_NAT) {
+		} else if (xia_is_nat(ty)) {
 			n = i;
 			saw_nat = 1;
 		}
@@ -123,7 +123,7 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 		char *se3 = is_edge_chosen(edge[3]) ? ">" : "";
 		char *sep = i > 0 ? node_sep : "";
 		int count;
-		if (ty == XIDTYPE_NAT)
+		if (xia_is_nat(ty))
 			break;
 		count = snprintf(p, left,
 			"%s%x-%.8x%.8x%.8x%.8x%.8x-%s%c%s%c%s%c%s%c",
@@ -207,7 +207,7 @@ static int read_type(const char **pp, size_t *pleft, xid_type_t *pty)
 	/* Not A Type is not a type!
          * Notice that byte order doesn't matter here.
 	 */
-	if (*pty == XIDTYPE_NAT)
+	if (xia_is_nat(*pty))
 		return -1;
 
 	return 0;
