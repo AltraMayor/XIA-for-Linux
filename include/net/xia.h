@@ -154,6 +154,12 @@ enum xia_addr_error {
 	XIAEADDR_EE_MISPLACED,
 	/* An edge of a node is out of range. */
 	XIAEADDR_EDGE_OUT_RANGE,
+	/* The nodes are not in topological order. Notice that being in
+	 * topological guarntees that the graph is acyclic, and has a simple,
+	 * cheap test. */
+	XIAEADDR_NOT_TOPOLOGICAL,
+	/* No single component. */
+	XIAEADDR_MULTI_COMPONENTS,
 	/* Entry node is not present. */
 	XIAEADDR_NO_ENTRY,
 };
