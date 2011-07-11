@@ -9,6 +9,7 @@ int xia_test_addr(const struct xia_addr *addr)
 {
 	int i, j, n;
 	int saw_nat = 0;
+	u32 visited = 0;
 
 	/* Test that XIDTYPE_NAT is present only on last rows. */
 	n = XIA_NODES_MAX;
@@ -25,6 +26,7 @@ int xia_test_addr(const struct xia_addr *addr)
 	/* n = number of nodes from here. */
 
 	BUILD_BUG_ON(XIA_OUTDEGREE_MAX != 4);
+	BUILD_BUG_ON(XIA_NODES_MAX + 1 > sizeof(visited) * 8);
 
 	/* Test edges are well formed. */
 	for (i = 0; i < n; i++) {
@@ -43,21 +45,25 @@ int xia_test_addr(const struct xia_addr *addr)
 					break;
 			} else if (e >= n) {
 				return -XIAEADDR_EDGE_OUT_RANGE;
+			} else if (i < (n - 1) && e <= i) {
+				return -XIAEADDR_NOT_TOPOLOGICAL;
 			}
 			bits >>= 8;
+			visited |= 1 << e;
 		}
 	}
 
 	if (n >= 1) {
-		__be32 all_edges = addr->s_row[n - 1].s_edge.i;
-		
-		/* Test entry point is present. */
+		/* Test entry point is present. Notice that it's just a
+		 * friendlier error since it's also XIAEADDR_MULTI_COMPONENTS.
+		 */
 		/* __be32_to_cpu is not necessary here! */
-		if (all_edges == EMPTY_EDGES) {
+		__be32 all_edges = addr->s_row[n - 1].s_edge.i;
+		if (all_edges == EMPTY_EDGES)
 			return -XIAEADDR_NO_ENTRY;
-		}
 
-		/* XXX Test the graph is connected and acyclic. */
+		if (visited != ((1 << n) - 1))
+			return -XIAEADDR_MULTI_COMPONENTS;
 	}
 
 	return n;
