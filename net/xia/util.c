@@ -83,6 +83,30 @@ static inline char edge_to_char(u8 e)
 		return '+';
 }
 
+#define EDGES_STR_SIZE (XIA_OUTDEGREE_MAX * 2 + 2)
+static void edges_to_str(int valid, char *str, int len, const u8 *edges)
+{
+	char *p = str;
+	int i;
+
+	BUG_ON(len < EDGES_STR_SIZE);
+
+	*(p++) = '-';
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		if (valid && edges[i] == XIA_EMPTY_EDGE) {
+			if (i == 0) {
+				*str = '\0';
+				return;
+			}
+			break;
+		}
+		if (is_edge_chosen(edges[i]))
+			*(p++) = '>';
+		*(p++) = edge_to_char(edges[i]);
+	}
+	*p = '\0';
+}
+
 int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 	int include_nl)
 {
@@ -91,12 +115,12 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 	char *p = dst;
 	size_t tot = 0;
 	char *node_sep = include_nl ? ":\n" : ":";
+	int valid = xia_test_addr(src) >= 1;
 
 	BUILD_BUG_ON(sizeof(xid_type_t) != 4);
 	BUILD_BUG_ON(XIA_XID_MAX != 20);
-	BUILD_BUG_ON(XIA_OUTDEGREE_MAX != 4);
 
-	if (xia_test_addr(src) < 1) {
+	if (!valid) {
 		/* The DAG is invalid or empty. */
 		if (left <= 0)
 			return -ENOSPC;
@@ -115,26 +139,16 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 		u32 c = __be32_to_cpu(pxid[2]);
 		u32 d = __be32_to_cpu(pxid[3]);
 		u32 e = __be32_to_cpu(pxid[4]);
-		const u8 *edge = row->s_edge.a;
-		/* TODO When the address is valid, listing only the present
-                 * edges would be better.
-		 */
-		char e0 = edge_to_char(edge[0]);
-		char e1 = edge_to_char(edge[1]);
-		char e2 = edge_to_char(edge[2]);
-		char e3 = edge_to_char(edge[3]);
-		char *se0 = is_edge_chosen(edge[0]) ? ">" : "";
-		char *se1 = is_edge_chosen(edge[1]) ? ">" : "";
-		char *se2 = is_edge_chosen(edge[2]) ? ">" : "";
-		char *se3 = is_edge_chosen(edge[3]) ? ">" : "";
+		char str_edges[EDGES_STR_SIZE];
 		char *sep = i > 0 ? node_sep : "";
 		int count;
+
 		if (xia_is_nat(ty))
 			break;
+		edges_to_str(valid, str_edges, EDGES_STR_SIZE, row->s_edge.a);
 		count = snprintf(p, left,
-			"%s%x-%.8x%.8x%.8x%.8x%.8x-%s%c%s%c%s%c%s%c",
-			sep, __be32_to_cpu(ty), a, b, c, d, e,
-			se0, e0, se1, e1, se2, e2, se3, e3);
+			"%s%x-%.8x%.8x%.8x%.8x%.8x%s",
+			sep, __be32_to_cpu(ty), a, b, c, d, e, str_edges);
 		if (count < 0)
 			return -EINVAL;
 		left -= count;
