@@ -392,7 +392,7 @@ static const struct net_proto_family xia_family_ops = {
  * xia_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
-static int xia_init(void)
+static int __init xia_init(void)
 {
 	int rc;
 
@@ -420,7 +420,7 @@ out_unregister_raw_prot:
 /*
  * xia_exit - this function is called when the modlule is removed.
  */
-static void xia_exit(void)
+static void __exit xia_exit(void)
 {
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
