@@ -1,8 +1,13 @@
 #ifndef _XIA_H
 #define _XIA_H
 
+#include <linux/types.h>
 #include <linux/socket.h>
+#include <asm/byteorder.h>
+
+#ifdef __KERNEL__
 #include <net/sock.h>
+#endif
 
 /*
  * XIA address
@@ -38,12 +43,12 @@ struct xia_row {
 #define XIA_CHOSEN_EDGE		0x80
 #define XIA_EMPTY_EDGE		0x7f
 
-static inline int is_edge_chosen(u8 e)
+static inline int is_edge_chosen(__u8 e)
 {
 	return e & XIA_CHOSEN_EDGE;
 }
 
-static inline int is_empty_edge(u8 e)
+static inline int is_empty_edge(__u8 e)
 {
 	return (e & XIA_EMPTY_EDGE) == XIA_EMPTY_EDGE;
 }
@@ -64,6 +69,19 @@ static inline int xia_is_nat(xid_type_t ty)
 	return ty == __cpu_to_be32(XIDTYPE_NAT);
 }
 
+/* XXX This is only needed for applications.
+ * Isn't there a clearer way to do it?
+ */
+#ifndef __KERNEL__
+/* sa_family_t is not available to applications. */
+typedef unsigned short sa_family_t;
+/* _K_SS_MAXSIZE is redefined because we want to compile with
+ * old kernels installed.
+ */
+#undef	_K_SS_MAXSIZE
+#define	_K_SS_MAXSIZE 256
+#endif
+
 /* Structure describing an XIA socket address. */
 struct sockaddr_xia {
   sa_family_t		sxia_family;	/* Address family		*/
@@ -74,6 +92,8 @@ struct sockaddr_xia {
   __u8			__pad1[_K_SS_MAXSIZE - sizeof(sa_family_t) -
 			sizeof(__u16) - sizeof(struct xia_addr)];
 };
+
+#ifdef __KERNEL__
 
 /*
  * sock structs
@@ -195,22 +215,5 @@ extern int xia_test_addr(const struct xia_addr *addr);
 extern int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 		int include_nl);
 
-/** xia_pton - Convert a string that represents an XIA addressesng into
- *	binary (network) form.
- * It doesn't not require the string src to be terminated by '\0'.
- * If ignore_ce is true, the chosen edges are not marked in dst.
- * 	It's useful to obtain an address that will be used in a header.
- * invalid_flag is set true if '!' begins the string;
- * 	otherwise it is set false.
- * RETURN
- * 	-1 if the string can't be converted.
- *	Number of parsed chars, not couting trailing '\0' if it exists.
- * NOTES
- *	Even if the function is successful, the address may
- *	still be invalid according to xia_test_addr.
- *	XIA_MAX_STRADDR_SIZE could be passed in srclen if src includes a '\0'.
- */
-extern int xia_pton(const char *src, size_t srclen, struct xia_addr *dst,
-		int ignore_ce, int *invalid_flag);
-
-#endif	/* _XIA_H */
+#endif	/* __KERNEL__	*/
+#endif	/* _XIA_H	*/
