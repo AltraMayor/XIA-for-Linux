@@ -15,6 +15,7 @@
 #include <linux/socket.h>
 #include <linux/xia.h>
 #include <net/xia.h>
+#include <net/xia_fib.h>
 #include <net/sock.h>
 
 static void xia_sock_destruct(struct sock *sk)
@@ -403,10 +404,11 @@ static int __init xia_init(void)
 	/*
 	 *	Tell SOCKET that we are alive...
 	 */
-
 	rc = sock_register(&xia_family_ops);
 	if (rc)
 		goto out_unregister_raw_prot;
+
+	xia_fib_init();
 
 	rc = 0;
 	printk(KERN_ALERT "XIA loaded\n");
