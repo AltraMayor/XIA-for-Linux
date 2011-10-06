@@ -434,5 +434,5 @@ module_exit(xia_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michel Machado <michel@digirati.com.br>");
-MODULE_DESCRIPTION("XIA Network Protocol Suite");
+MODULE_DESCRIPTION("XIA Network Stack");
 MODULE_ALIAS_NETPROTO(PF_XIA);
