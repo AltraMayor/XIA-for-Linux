@@ -32,6 +32,12 @@ enum {
 #define XIA_OUTDEGREE_MAX	4
 #define XIA_XID_MAX		20
 typedef __be32 xid_type_t;
+
+struct xia_xid {
+	xid_type_t	xid_type;		/* XID type		*/
+	__u8		xid_id[XIA_XID_MAX];	/* eXpressive IDentifier*/
+};
+
 struct xia_row {
 	xid_type_t	s_xid_type;		/* XID type		*/
 	__u8		s_xid[XIA_XID_MAX];	/* eXpressive IDentifier*/

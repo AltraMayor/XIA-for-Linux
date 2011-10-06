@@ -3,7 +3,32 @@
 
 #include <linux/types.h>
 #include <linux/list.h>
+#include <net/netlink.h>
 #include <net/xia.h>
+
+struct xia_fib_config {
+	u8			xfc_dst_len;
+	u8			xfc_tos;
+	u8			xfc_table;
+	/* See rtm_protocol in linux/rtnetlink.h */
+	u8			xfc_protocol;
+
+	/* See rtm_scope in linux/rtnetlink.h */
+	u8			xfc_scope;
+	/* See rtm_type in linux/rtnetlink.h */
+	u8			xfc_type;
+	/* 2 bytes unused */
+
+	u32			xfc_flags;
+
+	struct xia_xid		*xfc_dst;
+	u32			xfc_oif;
+	struct xia_xid		*xfc_gw;
+	u32			xfc_gw_len;
+	
+	u32			xfc_nlflags;
+	struct nl_info		xfc_nlinfo;
+};
 
 /* This structure is principal independent.
  * A bucket list for a give principal should define a struct that has it
@@ -35,6 +60,22 @@ struct fib_xid_table {
 struct fib_xia_rtable {
 	struct hlist_head ppal[NUM_PRINCIPAL_HINT];
 };
+
+#define XRTABLE_LOCAL_INDEX	0
+#define XRTABLE_MAIN_INDEX	1
+#define XRTABLE_MAX_INDEX	2
+
+static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
+{
+	switch (id) {
+	case XRTABLE_LOCAL_INDEX:
+		return net->xia.main_rtbl;
+	case XRTABLE_MAIN_INDEX:
+		return net->xia.local_rtbl;
+	default:
+		return NULL;
+	}
+}
 
 /* Exported by fib_frontend.c */
 
