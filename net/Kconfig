@@ -83,18 +83,7 @@ source "net/netlabel/Kconfig"
 
 endif # if INET
 
-config XIA
-	tristate "eXpressive Internet Architecture (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
-	default n
-	help
-	  eXpressive Internet Architecture (XIA) is a new protocol suite
-	  being developed by Boston University, Carnegie Mellon, and
-	  Wisconsin University for a future Internet.
-	  If you are unsure how to answer this question, answer N.
-
-	  For information about XIA, please refer to
-	  <http://www.cs.cmu.edu/~xia/>
+source "net/xia/Kconfig"
 
 config NETWORK_SECMARK
 	bool "Security Marking"
