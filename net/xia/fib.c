@@ -24,7 +24,7 @@ static inline struct hlist_head *ppalhead(struct fib_xia_rtable *rtbl,
 	return &rtbl->ppal[ty & (NUM_PRINCIPAL_HINT - 1)];
 }
 
-static struct fib_xid_table *find_xtbl(struct fib_xia_rtable *rtbl,
+struct fib_xid_table *__xia_find_xtbl(struct fib_xia_rtable *rtbl,
 					xid_type_t ty,
 					struct hlist_head **phead)
 {
@@ -50,14 +50,15 @@ static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
 
 #define XTBL_INITIAL_DIV 8
 
-static int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
+static int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
+			struct xia_ppal_rt_ops *ops)
 {
 	struct hlist_head *head;
 	struct fib_xid_table *new_xtbl;
 	int rc;
 	
 	rc = -EINVAL;
-	if (find_xtbl(rtbl, ty, &head))
+	if (__xia_find_xtbl(rtbl, ty, &head))
 		goto out; /* Duplicate. */
 
 	rc = -ENOMEM;
@@ -68,6 +69,7 @@ static int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
 		goto new_xtbl;
 
 	new_xtbl->fxt_ppal_type = ty;
+	new_xtbl->fxt_ops = ops;
 	new_xtbl->fxt_divisor = XTBL_INITIAL_DIV;
 	new_xtbl->fxt_count = 0;
 	hlist_add_head(&new_xtbl->fxt_list, head);
