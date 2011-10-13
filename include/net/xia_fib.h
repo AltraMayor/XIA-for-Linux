@@ -38,12 +38,28 @@ struct fib_xid {
 	u8			fx_xid[XIA_XID_MAX];	/* XID		*/
 };
 
+struct xia_ppal_rt_ops;
+
 struct fib_xid_table {
 	xid_type_t		fxt_ppal_type;
+	struct xia_ppal_rt_ops	*fxt_ops;
 	struct hlist_head	*fxt_buckets;	/* Heads of bucket lists. */
 	int			fxt_divisor;	/* Number of buckets.	  */
 	int			fxt_count;	/* Number of entries.	  */
 	struct hlist_node	fxt_list; /* To be added in fib_xia_rtable. */
+};
+
+/* Operations needed to maintain a routing table of a principal. */
+struct xia_ppal_rt_ops {
+	int (*newroute)(struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
+	int (*delroute)(struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
+
+	/* XXX See net/ipv4/fib_semantics.c:fib_dump_info and its call in
+	 * net/ipv4/fib_trie.c:fn_trie_dump_fa for an example.
+	 */
+	int (*dump_xid)(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+		struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+		struct netlink_callback *cb);
 };
 
 /* Hash of principals.
@@ -81,11 +97,23 @@ static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 
 void xia_fib_init(void);
 
+/* Exported by fib.c */
+
 /* Create and return a fib_xia_rtable.
  * It returns the struct, otherwise NULL.
  */
 struct fib_xia_rtable *create_xia_rtable(void);
 
 int destroy_xia_rtable(struct fib_xia_rtable *rtbl);
+
+struct fib_xid_table *__xia_find_xtbl(struct fib_xia_rtable *rtbl,
+				xid_type_t ty, struct hlist_head **phead);
+
+static inline struct fib_xid_table *xia_find_xtbl(struct fib_xia_rtable *rtbl,
+					xid_type_t ty)
+{
+	struct hlist_head *phead;
+	return __xia_find_xtbl(rtbl, ty, &phead);
+}
 
 #endif /* _NET_XIA_FIB_H */

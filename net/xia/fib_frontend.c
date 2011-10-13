@@ -67,19 +67,24 @@ static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 {
 	struct net *net = sock_net(skb->sk);
 	struct xia_fib_config cfg;
-	struct fib_xia_rtable *rtb;
+	struct fib_xia_rtable *rtbl;
+	struct fib_xid_table *xtbl;
 	int rc;
 
 	rc = rtm_to_fib_config(net, skb, nlh, &cfg);
 	if (rc < 0)
 		return rc;
 
-	rtb = xia_fib_get_table(net, cfg.xfc_table);
-	if (rtb == NULL)
+	if (!cfg.xfc_dst)
+		return -EINVAL;
+	rtbl = xia_fib_get_table(net, cfg.xfc_table);
+	if (rtbl == NULL)
 		return -ESRCH;
+	xtbl = xia_find_xtbl(rtbl, cfg.xfc_dst->xid_type);
+	if (xtbl == NULL)
+		return -EXTYNOSUPPORT;
 
-	return -ENOPROTOOPT;
-	/* XXX Implement me! rc = fib_table_insert(tb, &cfg); */
+	return xtbl->fxt_ops->newroute(xtbl, &cfg);
 }
 
 static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
@@ -87,30 +92,24 @@ static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 {
 	struct net *net = sock_net(skb->sk);
 	struct xia_fib_config cfg;
-	struct fib_xia_rtable *rtb;
+	struct fib_xia_rtable *rtbl;
+	struct fib_xid_table *xtbl;
 	int rc;
 
 	rc = rtm_to_fib_config(net, skb, nlh, &cfg);
 	if (rc < 0)
 		return rc;
 
-	rtb = xia_fib_get_table(net, cfg.xfc_table);
-	if (rtb == NULL)
+	if (!cfg.xfc_dst)
+		return -EINVAL;
+	rtbl = xia_fib_get_table(net, cfg.xfc_table);
+	if (rtbl == NULL)
 		return -ESRCH;
+	xtbl = xia_find_xtbl(rtbl, cfg.xfc_dst->xid_type);
+	if (xtbl == NULL)
+		return -EXTYNOSUPPORT;
 
-	return -ENOPROTOOPT;
-	/* XXX Implement me! err = fib_table_delete(tb, &cfg); */
-}
-
-static int xia_fib_dump_xid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
-	struct netlink_callback *cb)
-{
-	/* XXX Implement this function!
-	 * See net/ipv4/fib_semantics.c:fib_dump_info and its call in
-	 * net/ipv4/fib_trie.c:fn_trie_dump_fa
-	 */
-	return -1;
+	return xtbl->fxt_ops->delroute(xtbl, &cfg);
 }
 
 static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
@@ -133,7 +132,8 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 			if (dumped)
 				memset(&cb->args[5], 0, sizeof(cb->args) -
 						 5 *	sizeof(cb->args[0]));
-			if (xia_fib_dump_xid(fxid, xtbl, rtbl, skb, cb) < 0)
+			if (xtbl->fxt_ops->dump_xid(fxid, xtbl, rtbl, skb, cb)
+				< 0)
 				goto out;
 			dumped = 1;
 next:
