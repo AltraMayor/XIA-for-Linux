@@ -53,7 +53,6 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 			break;
 		case RTA_GATEWAY:
 			cfg->xfc_gw = nla_data(attr);
-			cfg->xfc_gw_len = nla_len(attr);
 			break;
 		default:
 			return -EINVAL;
@@ -213,10 +212,10 @@ static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 
 static int __net_init xia_fib_net_init(struct net *net)
 {
-	net->xia.main_rtbl = create_xia_rtable();
+	net->xia.main_rtbl = create_xia_rtable(XRTABLE_MAIN_INDEX);
 	if (!net->xia.main_rtbl)
 		goto error;
-	net->xia.local_rtbl = create_xia_rtable();
+	net->xia.local_rtbl = create_xia_rtable(XRTABLE_LOCAL_INDEX);
 	if (!net->xia.local_rtbl)
 		goto main_rtbl;
 	return 0;

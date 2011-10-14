@@ -13,20 +13,12 @@
  * XIA address
  */
 
-/* XID types. */
-enum {
-  XIDTYPE_NAT = 0,		/* Not A Type				*/
-
-  				/* 0x01--0x0f reserved for future use	*/
-
-  XIDTYPE_AD  = 0x10,		/* Autonomous Domain			*/
-  XIDTYPE_HID,			/* Host					*/
-  XIDTYPE_CID,			/* Content				*/
-  XIDTYPE_SID,			/* Service				*/
-
-  XIDTYPE_USER = 0xffffff00,	/* User defined XID			*/
-  XIDTYPE_MAX
-};
+/* Not A Type */
+#define XIDTYPE_NAT 0
+/* The range 0x01--0x0f is reserved for future use.
+ * Identification numbers for new principals should be requested from
+ * Michel Machado <michel@digirati.com.br>.
+ */
 
 /* Row or a node in a DAG. */
 #define XIA_OUTDEGREE_MAX	4
