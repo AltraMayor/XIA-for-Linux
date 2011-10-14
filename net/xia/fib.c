@@ -6,7 +6,7 @@
 /* TODO Review the code for concorrency! */
 /* TODO Some structures may need a slab for better performance. */
 
-struct fib_xia_rtable *create_xia_rtable(void)
+struct fib_xia_rtable *create_xia_rtable(int tbl_id)
 {
 	struct fib_xia_rtable *rtbl = kmalloc(sizeof(*rtbl), GFP_KERNEL);
 
@@ -14,6 +14,7 @@ struct fib_xia_rtable *create_xia_rtable(void)
 		return NULL;
 
 	memset(rtbl, 0, sizeof(*rtbl));
+	rtbl->tbl_id = tbl_id;
 	return rtbl;
 }
 
@@ -50,8 +51,8 @@ static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
 
 #define XTBL_INITIAL_DIV 8
 
-static int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
-			struct xia_ppal_rt_ops *ops)
+int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
+			const struct xia_ppal_rt_ops *ops)
 {
 	struct hlist_head *head;
 	struct fib_xid_table *new_xtbl;
@@ -82,8 +83,9 @@ new_xtbl:
 out:
 	return rc;
 }
+EXPORT_SYMBOL_GPL(init_xid_table);
 
-static int end_xid_table(struct fib_xid_table *xtbl)
+static void end_xtbl(struct fib_xid_table *xtbl)
 {
 	int rm_count = 0;
 	int i;
@@ -110,9 +112,20 @@ static int end_xid_table(struct fib_xid_table *xtbl)
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count,
 			xtbl->fxt_count);
-
-	return 0;
 }
+
+void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
+{
+	struct fib_xid_table *xtbl = xia_find_xtbl(rtbl, ty);
+	if (!xtbl) {
+		printk(KERN_ERR "Not found XID table %i when running %s. "
+			"Ignoring it, but it's a serious bug!\n",
+			__be32_to_cpu(ty), __FUNCTION__);
+		return;
+	}
+	end_xtbl(xtbl);
+}
+EXPORT_SYMBOL_GPL(end_xid_table);
 
 int destroy_xia_rtable(struct fib_xia_rtable *rtbl)
 {
@@ -123,7 +136,7 @@ int destroy_xia_rtable(struct fib_xia_rtable *rtbl)
 		struct hlist_head *head = &rtbl->ppal[i];
 		hlist_for_each_entry_safe(xtbl, p, n, head, fxt_list) {
 			hlist_del(p);
-			end_xid_table(xtbl);
+			end_xtbl(xtbl);
 		}
 	}
 	kfree(rtbl);
@@ -211,7 +224,7 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
 	return 0;
 }
 
-static int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct hlist_head *head;
 	struct fib_xid *old_fxid = find_xid(xtbl, fxid->fx_xid, &head);
@@ -223,13 +236,19 @@ static int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	xtbl->fxt_count++;
 
 	/* Grow table as needed. */
-	if (xtbl->fxt_count / xtbl->fxt_divisor > 2)
-		return rehash_xtbl(xtbl);
+	if (xtbl->fxt_count / xtbl->fxt_divisor > 2) {
+		int rc = rehash_xtbl(xtbl);
+		if (rc)
+			printk(KERN_ERR
+		"Rehashing XID table %p was not possible due to error %i.\n",
+				xtbl, rc);
+	}
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(fib_add_xid);
 
-static struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid)
+struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid)
 {
 	struct hlist_head *head;
 	struct fib_xid *fxid = find_xid(xtbl, xid, &head);
@@ -241,3 +260,4 @@ static struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid)
 	xtbl->fxt_count--;
 	return fxid;
 }
+EXPORT_SYMBOL_GPL(fib_rm_xid);

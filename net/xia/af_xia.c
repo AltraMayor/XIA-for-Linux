@@ -82,6 +82,8 @@ static int xia_release(struct socket *sock)
 	return 0;
 }
 
+/* XXX This code should be moved to an SID module. */
+#define XIDTYPE_SID 0x13
 static int xia_bind(struct socket *sock, struct sockaddr *uaddr,
 		int addr_len)
 {
