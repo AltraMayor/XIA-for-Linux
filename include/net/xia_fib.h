@@ -1,6 +1,19 @@
 #ifndef _NET_XIA_FIB_H
 #define _NET_XIA_FIB_H
 
+/* Hash of principals.
+ * It has to be power of 2.
+ * Until one has a significant number of principals, or a way to instantiate
+ * them in user land, this fixed arrary is enough.
+ */
+#define NUM_PRINCIPAL_HINT	128
+
+#define XRTABLE_LOCAL_INDEX	0
+#define XRTABLE_MAIN_INDEX	1
+#define XRTABLE_MAX_INDEX	2
+
+#ifdef __KERNEL__
+
 #include <linux/types.h>
 #include <linux/list.h>
 #include <net/netlink.h>
@@ -57,13 +70,6 @@ struct xia_ppal_rt_ops {
 		struct netlink_callback *cb);
 };
 
-/* Hash of principals.
- * It has to be power of 2.
- * Until one has a significant number of principals, or a way to instantiate
- * them in user land, this fixed arrary is enough.
- */
-#define NUM_PRINCIPAL_HINT	128
-
 /* One could use principal type as part of the hash function and have only
  * a big hash table, but this would require a full table scan when a principal
  * were removed from the stack.
@@ -72,10 +78,6 @@ struct fib_xia_rtable {
 	int			tbl_id;
 	struct hlist_head	ppal[NUM_PRINCIPAL_HINT];
 };
-
-#define XRTABLE_LOCAL_INDEX	0
-#define XRTABLE_MAIN_INDEX	1
-#define XRTABLE_MAX_INDEX	2
 
 static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 {
@@ -120,4 +122,5 @@ int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid);
 
+#endif /* __KERNEL__ */
 #endif /* _NET_XIA_FIB_H */
