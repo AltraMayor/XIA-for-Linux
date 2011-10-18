@@ -102,28 +102,31 @@ static void end_xtbl(struct fib_xid_table *xtbl)
 		}
 	}
 	kfree(xtbl->fxt_buckets);
+	xtbl->fxt_buckets = NULL;
 
 	/* It doesn't return an error here because there's nothing
          * the caller can do about this error/bug.
 	 */
 	if (xtbl->fxt_count != rm_count)
-		printk(KERN_ERR "While freeing XID table of principal %u "
+		printk(KERN_ERR "While freeing XID table of principal %x "
 			"%i entries were found, whereas %i are counted! "
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count,
 			xtbl->fxt_count);
+
+	kfree(xtbl);
 }
 
 void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
 {
 	struct fib_xid_table *xtbl = xia_find_xtbl(rtbl, ty);
-	if (!xtbl) {
-		printk(KERN_ERR "Not found XID table %i when running %s. "
+	if (xtbl) {
+		end_xtbl(xtbl);
+	} else {
+		printk(KERN_ERR "Not found XID table %x when running %s. "
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(ty), __FUNCTION__);
-		return;
 	}
-	end_xtbl(xtbl);
 }
 EXPORT_SYMBOL_GPL(end_xid_table);
 
@@ -213,7 +216,7 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
          * the caller can do about this error/bug.
 	 */
 	if (xtbl->fxt_count != mv_count) {
-		printk(KERN_ERR "While rehashing XID table of principal %u "
+		printk(KERN_ERR "While rehashing XID table of principal %x "
 			"%i entries were found, whereas %i are counted! "
 			"Fixing the counter for now, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count,
@@ -240,8 +243,8 @@ int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 		int rc = rehash_xtbl(xtbl);
 		if (rc)
 			printk(KERN_ERR
-		"Rehashing XID table %p was not possible due to error %i.\n",
-				xtbl, rc);
+		"Rehashing XID table %x was not possible due to error %i.\n",
+				__be32_to_cpu(xtbl->fxt_ppal_type), rc);
 	}
 
 	return 0;
