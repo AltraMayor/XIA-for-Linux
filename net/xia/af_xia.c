@@ -16,6 +16,7 @@
 #include <linux/xia.h>
 #include <net/xia.h>
 #include <net/xia_fib.h>
+#include <net/xia_dag.h>
 #include <net/sock.h>
 
 static void xia_sock_destruct(struct sock *sk)

@@ -1,7 +1,7 @@
 #include <asm/byteorder.h>
 #include <linux/kernel.h>
 #include <linux/ctype.h>
-#include <net/xia.h>
+#include <net/xia_dag.h>
 
 #define EMPTY_EDGES 	(XIA_EMPTY_EDGE << 24 | XIA_EMPTY_EDGE << 16 |\
 			 XIA_EMPTY_EDGE <<  8 | XIA_EMPTY_EDGE)
