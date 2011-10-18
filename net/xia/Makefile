@@ -4,4 +4,4 @@
 
 obj-$(CONFIG_XIA) += xia.o
 
-xia-objs :=	af_xia.o raw.o util.o fib.o fib_frontend.o
+xia-objs :=	af_xia.o raw.o dag.o fib.o fib_frontend.o
