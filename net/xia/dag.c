@@ -1,7 +1,204 @@
 #include <asm/byteorder.h>
 #include <linux/kernel.h>
+#include <linux/spinlock.h>
 #include <linux/ctype.h>
+#include <net/xia_fib.h>
 #include <net/xia_dag.h>
+
+/*
+ * IMPORTANT
+ *
+ * This file is intended to be used by userland applications without editing!
+ *
+ */
+
+/*
+ * Map beween principal names and numbers
+ */
+
+struct ppal_node {
+	struct hlist_node	lst_per_name;
+	struct hlist_node	lst_per_type;
+	char			name[MAX_PPAL_NAME_SIZE];
+	xid_type_t		type;
+};
+
+/* This constant must be a power of 2. */
+#define PPAL_MAP_SIZE	NUM_PRINCIPAL_HINT
+
+DEFINE_SPINLOCK(map_lock);
+static struct hlist_head ppal_head_per_name[PPAL_MAP_SIZE];
+static struct hlist_head ppal_head_per_type[PPAL_MAP_SIZE];
+
+__u32 djb_case_hash(const __u8 *str)
+{
+	__u32 hash = 5381;
+	const __u8 *p = str;
+	while (*p) {
+		hash = ((hash << 5) + hash) + tolower(*p);
+		p++;
+	}
+	return hash;
+}
+
+static inline struct hlist_head *head_per_name(const char *name)
+{
+	BUILD_BUG_ON_NOT_POWER_OF_2(PPAL_MAP_SIZE);
+	return &ppal_head_per_name[djb_case_hash(name) & (PPAL_MAP_SIZE - 1)];
+}
+
+static inline struct hlist_head *head_per_type(xid_type_t type)
+{
+	BUILD_BUG_ON_NOT_POWER_OF_2(PPAL_MAP_SIZE);
+	return &ppal_head_per_type[type & (PPAL_MAP_SIZE - 1)];
+}
+
+xid_type_t ppal_name_to_type(const char *name)
+{
+	const struct ppal_node *map;
+	const struct hlist_node *p;
+	xid_type_t ty = XIDTYPE_NAT;
+
+	rcu_read_lock();
+	hlist_for_each_entry_rcu(map, p, head_per_name(name), lst_per_name)
+		if (!strcasecmp(map->name, name)) {
+			ty = map->type;
+			goto out;
+		}
+
+out:
+	rcu_read_unlock();
+	return ty;
+}
+EXPORT_SYMBOL(ppal_name_to_type);
+
+int ppal_type_to_name(xid_type_t type, char *name)
+{
+	const struct ppal_node *map;
+	const struct hlist_node *p;
+	int rc = -ESRCH;
+
+	rcu_read_lock();
+	hlist_for_each_entry_rcu(map, p, head_per_type(type), lst_per_type)
+		if (map->type == type) {
+			strcpy(name, map->name);
+			rc = 0;
+			goto out;
+		}
+
+out:
+	rcu_read_unlock();
+	return rc;
+}
+EXPORT_SYMBOL(ppal_type_to_name);
+
+static int is_name_valid(const char *name)
+{
+	int left = MAX_PPAL_NAME_SIZE;
+
+	if (!isalpha(*name))
+		return 0;
+	name++;
+	left--;
+
+	while (left > 0 && (isalnum(*name) || *name == '_')) {
+		name++;
+		left--;
+	}
+
+	if (left > 0 && *name == '\0')
+		return 1;
+	return 0;
+}
+
+static inline void lowerstr(char *s)
+{
+	while(*s) {
+		*s = tolower(*s);
+		s++;
+	}
+}
+
+int ppal_add_map(const char *name, xid_type_t type)
+{
+	struct hlist_head *h_per_name, *h_per_type;
+	struct ppal_node *map;
+	struct hlist_node *p;
+	int rc;
+
+	if (!is_name_valid(name))
+		return -EINVAL;
+	if (xia_is_nat(type))
+		return -EINVAL;
+
+	/* This can be done before the lock because
+	 * this addresses don't change.
+	 */
+	h_per_name = head_per_name(name);
+	h_per_type = head_per_type(type);
+
+	spin_lock(&map_lock);
+
+	/* Avoid duplicates. */
+	rc = -ESRCH;
+	hlist_for_each_entry(map, p, h_per_name, lst_per_name)
+		if (!strcasecmp(map->name, name))
+			goto out;
+	hlist_for_each_entry(map, p, h_per_type, lst_per_type)
+		if (map->type == type)
+			goto out;
+
+	/* Initialize new entry. */
+	rc = -ENOMEM;
+	map = kmalloc(sizeof(*map), GFP_KERNEL);
+	if (!map)
+		goto out;
+	/* It is safe to call strcpy because we validated name before. */
+	strcpy(map->name, name);
+	lowerstr(map->name);
+	map->type = type;
+
+	/* Add entry to lists. */
+	hlist_add_head_rcu(&map->lst_per_name, h_per_name);
+	hlist_add_head_rcu(&map->lst_per_type, h_per_type);
+	rc = 0;
+
+out:
+	spin_unlock(&map_lock);
+	return rc;
+}
+EXPORT_SYMBOL(ppal_add_map);
+
+int ppal_del_map(xid_type_t type)
+{
+	struct ppal_node *map;
+	struct hlist_node *p;
+	int rc = -ESRCH;
+
+	if (xia_is_nat(type))
+		return -EINVAL;
+
+	spin_lock(&map_lock);
+
+	hlist_for_each_entry(map, p, head_per_type(type), lst_per_type)
+		if (map->type == type) {
+			hlist_del_rcu(&map->lst_per_name);
+			hlist_del_rcu(&map->lst_per_type);
+			synchronize_rcu();
+			kfree(map);
+			rc = 0;
+			goto out;
+		}
+
+out:
+	spin_unlock(&map_lock);
+	return rc;
+}
+EXPORT_SYMBOL(ppal_del_map);
+
+/*
+ * Validating addresses
+ */
 
 #define EMPTY_EDGES 	(XIA_EMPTY_EDGE << 24 | XIA_EMPTY_EDGE << 16 |\
 			 XIA_EMPTY_EDGE <<  8 | XIA_EMPTY_EDGE)
@@ -70,8 +267,12 @@ int xia_test_addr(const struct xia_addr *addr)
 }
 EXPORT_SYMBOL(xia_test_addr);
 
+/*
+ * Printing addresses out
+ */
+
 #define INDEX_BASE 36
-static inline char edge_to_char(u8 e)
+static inline char edge_to_char(__u8 e)
 {
 	char *ch_edge = "0123456789abcdefghijklmnopqrstuvwxyz";
 		/*       0123456789012345678901234567890123456789 */
@@ -84,7 +285,7 @@ static inline char edge_to_char(u8 e)
 }
 
 #define EDGES_STR_SIZE (XIA_OUTDEGREE_MAX * 2 + 2)
-static void edges_to_str(int valid, char *str, int len, const u8 *edges)
+static void edges_to_str(int valid, char *str, int len, const __u8 *edges)
 {
 	char *p = str;
 	int i;
@@ -141,14 +342,19 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 		u32 e = __be32_to_cpu(pxid[4]);
 		char str_edges[EDGES_STR_SIZE];
 		char *sep = i > 0 ? node_sep : "";
+		char ppal[MAX_PPAL_NAME_SIZE];
 		int count;
 
 		if (xia_is_nat(ty))
 			break;
+
+		BUILD_BUG_ON(sizeof(ppal) <= 8);
+		if (ppal_type_to_name(ty, ppal))
+			snprintf(ppal, sizeof(ppal), "%x", __be32_to_cpu(ty));
+
 		edges_to_str(valid, str_edges, EDGES_STR_SIZE, row->s_edge.a);
-		count = snprintf(p, left,
-			"%s%x-%.8x%.8x%.8x%.8x%.8x%s",
-			sep, __be32_to_cpu(ty), a, b, c, d, e, str_edges);
+		count = snprintf(p, left, "%s%s-%.8x%.8x%.8x%.8x%.8x%s",
+			sep, ppal, a, b, c, d, e, str_edges);
 		if (count < 0)
 			return -EINVAL;
 		left -= count;
@@ -162,3 +368,235 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 	return tot;
 }
 EXPORT_SYMBOL(xia_ntop);
+
+/*
+ * xia_pton and its auxiliares functions
+ */
+
+static inline void next(const char **pp, size_t *pleft)
+{
+	(*pp)++;
+	(*pleft)--;
+}
+
+static inline int read_sep(const char **pp, size_t *pleft, char sep)
+{
+	if (*pleft <= 0 || **pp != sep)
+		return -1;
+	next(pp, pleft);
+	return 0;
+}
+
+static int read_invalid_flag(const char **pp, size_t *pleft, int *invalid_flag)
+{
+	int inv_flag;
+	if (*pleft <= 0) /* No XIA address is an empty string. */
+		return -1;
+	inv_flag = **pp == '!';
+	if (inv_flag)
+		next(pp, pleft);
+	if (invalid_flag)
+		*invalid_flag = inv_flag;
+	return 0;
+}
+
+static inline int ascii_to_int(char ch)
+{
+	if (ch >= '0' && ch <= '9') {
+		return ch - '0';
+	} else if (ch >= 'A' && ch <= 'Z') {
+		return ch - 'A'; 
+	} else if (ch >= 'a' && ch <= 'z') {
+		return ch - 'a';
+	} else
+		return 64;
+}
+
+static int read_be32(const char **pp, size_t *pleft, __be32 *value)
+{
+	__u32 result = 0;
+	int i = 0;
+
+	while (*pleft >= 1 && isxdigit(**pp) && i < 8) {
+		result = (result << 4) + ascii_to_int(**pp);
+		next(pp, pleft);
+		i++;
+	}
+	*value = __cpu_to_be32(result);
+	return i;
+}
+
+static inline int isname(char ch)
+{
+	return isgraph(ch) && ch != '-';
+}
+
+static int read_name(const char **pp, size_t *pleft, char *name, int len)
+{
+	int i = 0;
+	int last = len - 1;
+	
+	BUG_ON(len < 1);
+
+	while (*pleft >= 1 && isname(**pp) && i < last) {
+		name[i] = **pp;
+		next(pp, pleft);
+		i++;
+	}
+	name[i] = '\0';
+	return i;
+}
+
+static int read_type(const char **pp, size_t *pleft, xid_type_t *pty)
+{
+	BUILD_BUG_ON(sizeof(xid_type_t) != 4);
+
+	/* There must be at least a digit! */
+	if (read_be32(pp, pleft, pty) < 1) {
+		char name[MAX_PPAL_NAME_SIZE];
+		/* There must be at least a symbol. */
+		if (read_name(pp, pleft, name, sizeof(name)) < 1)
+			return -1;
+		*pty = ppal_name_to_type(name);
+	}
+
+	/* Not A Type is not a type! */
+	if (xia_is_nat(*pty))
+		return -1;
+
+	return 0;
+}
+
+static int read_xid(const char **pp, size_t *pleft, char *xid)
+{
+	int i;
+	__be32 *pxid = (__be32 *)xid;
+	BUILD_BUG_ON(XIA_XID_MAX != 20);
+
+	for (i = 0; i < 5; i++) {
+		if (read_be32(pp, pleft, pxid++) != 8)
+			return -1;
+	}
+	return 0;
+}
+
+static int read_edges(const char **pp, size_t *pleft, __u8 *edges,
+	int ignore_ce)
+{
+	int i;
+
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
+		edges[i] = XIA_EMPTY_EDGE;
+	if (read_sep(pp, pleft, '-')) {
+		/* No edges, we're done. */
+		return 0;
+	}
+
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		int ce = 0;
+		int e = XIA_EMPTY_EDGE;
+
+		if (!read_sep(pp, pleft, '>'))
+			ce = ignore_ce ? 0 : XIA_CHOSEN_EDGE;
+
+		if (*pleft >= 1 && isalnum(**pp)) {
+			e = ascii_to_int(**pp);
+			next(pp, pleft);
+		} else if (!read_sep(pp, pleft, '*')) {
+			/* e is already equal to XIA_EMPTY_EDGE. */
+		} else if (i == 0) {
+			/* At least an edge is necessary since we saw a '-'.
+			 * We don't support '+' because
+			 * one cannot know which value to associate to it.
+			 */
+			return -1;
+		} else {
+			break;
+		}
+		edges[i] = ce | e;
+	}
+	return 0;
+}
+
+static int read_row(const char **pp, size_t *pleft, struct xia_row *row,
+	int ignore_ce)
+{
+	if (read_type(pp, pleft, &row->s_xid_type))
+		return -1;
+	if (read_sep(pp, pleft, '-'))
+		return -1;
+	if (read_xid(pp, pleft, row->s_xid))
+		return -1;
+	if (read_edges(pp, pleft, row->s_edge.a, ignore_ce))
+		return -1;
+	return 0;
+}
+
+static int read_node_sep(const char **pp, size_t *pleft)
+{
+	if (read_sep(pp, pleft, ':'))
+		return -1;
+	read_sep(pp, pleft, '\n');
+	return 0;
+}
+
+int xia_pton(const char *src, size_t srclen, struct xia_addr *dst,
+	int ignore_ce, int *invalid_flag)
+{
+	const char *p = src;
+	size_t left = srclen;
+	int i = 0;
+ 
+	if (read_invalid_flag(&p, &left, invalid_flag))
+		return -1;
+
+	do {
+		if (read_row(&p, &left, &dst->s_row[i], ignore_ce))
+			return -1;
+		if (++i >= XIA_NODES_MAX)
+			return -1;
+	} while (!read_node_sep(&p, &left));
+
+	/* It's okay to have a newline on the last line. */
+	read_sep(&p, &left, '\n');
+
+	/* A whole address must be parsed. */
+	if (left != 0 && *p != '\0')
+		return -1;
+	return srclen - left;
+}
+EXPORT_SYMBOL(xia_pton);
+
+int xia_ptoxid(const char *src, size_t srclen, struct xia_xid *dst)
+{
+	const char *p = src;
+	size_t left = srclen;
+ 
+	if (read_type(&p, &left, &dst->xid_type))
+		return -1;
+	if (read_sep(&p, &left, '-'))
+		return -1;
+	if (read_xid(&p, &left, dst->xid_id))
+		return -1;
+
+	/* A whole XID must be parsed. */
+	if (left != 0 && *p != '\0')
+		return -1;
+	return srclen - left;
+}
+EXPORT_SYMBOL(xia_ptoxid);
+
+int xia_ptoid(const char *src, size_t srclen, struct xia_xid *dst)
+{
+	const char *p = src;
+	size_t left = srclen;
+ 
+	if (read_xid(&p, &left, dst->xid_id))
+		return -1;
+
+	/* A whole ID must be parsed. */
+	if (left != 0 && *p != '\0')
+		return -1;
+	return srclen - left;
+}
+EXPORT_SYMBOL(xia_ptoid);

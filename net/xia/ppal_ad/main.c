@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <net/xia_fib.h>
+#include <net/xia_dag.h>
 
 /* XXX Likely, this struct must vary for the main and local table! */
 struct fib_xid_ad {
@@ -125,10 +126,16 @@ static int __init xia_ad_init(void)
 	if (rc)
 		goto main_rtbl;
 
+	rc = ppal_add_map("ad", XIDTYPE_AD);
+	if (rc)
+		goto local_rtbl;
+
 	printk(KERN_ALERT "XIA Principal AD loaded\n");
 	rc = 0;
 	goto out;
 
+local_rtbl:
+	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
 main_rtbl:
 	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD);
 out:
@@ -141,6 +148,7 @@ out:
 static void __exit xia_ad_exit(void)
 {
 	/* XXX Is it really safe to unload a principal? */
+	ppal_del_map(XIDTYPE_AD);
 	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
 	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD);
 	printk(KERN_ALERT "XIA Principal AD UNloaded\n");
