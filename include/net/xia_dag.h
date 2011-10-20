@@ -1,6 +1,10 @@
 #ifndef _XIA_DAG_H
 #define _XIA_DAG_H
 
+#ifndef __KERNEL__
+#include <stdio.h>
+#endif
+
 #include <net/xia.h>
 
 /* It is assumed to be greater than, or equal to 4; it includes '\0'. */
@@ -11,16 +15,19 @@
  * NOTES
  *	In Kernel, it can be called concurrently with calls of
  *	ppal_add_map and ppal_del_map.
- *	If @name is not in the map, it returns XIDTYPE_NAT.
+ *	In userland, the caller must manage a lock.
+ *	If @name is not in the map, it returns -ESRCH; otherwise zero.
  */
-extern xid_type_t ppal_name_to_type(const char *name);
+extern int ppal_name_to_type(const char *name, xid_type_t *pty);
 
 /* ppal_type_to_name - provides the principal name for @type.
  *
  * NOTES
  *	In Kernel, it can be called concurrently with calls of
  *	ppal_add_map and ppal_del_map.
+ *	In userland, the caller must manage a lock.
  *	@name must be at least MAX_PPAL_NAME_SIZE large.
+ *	If @type is not in the map, it returns -ESRCH; otherwise zero.
  */
 extern int ppal_type_to_name(xid_type_t type, char *name);
 
@@ -29,6 +36,7 @@ extern int ppal_type_to_name(xid_type_t type, char *name);
  * NOTES
  *	In Kernel, ppal_add_map and ppal_del_map share a lock to make
  *	current changes safe.
+ *	In userland, the caller must manage a lock.
  *	@name and @type must be unique.
  */
 extern int ppal_add_map(const char *name, xid_type_t type);
@@ -38,6 +46,7 @@ extern int ppal_add_map(const char *name, xid_type_t type);
  * NOTES
  *	In Kernel, ppal_add_map and ppal_del_map share a lock to make
  *	current changes safe.
+ *	In userland, the caller must manage a lock.
  *	Caller must have a lock that guarantees multual exclusion.
  */
 extern int ppal_del_map(xid_type_t type);
@@ -82,8 +91,9 @@ extern int xia_test_addr(const struct xia_addr *addr);
 
 /** xia_ntop - convert an XIA address to a string.
  * src can be ill-formed, but xia_ntop won't report error and will return
- * a string that `approximates' that ill-formed address.
- * If include_nl is non-zero, '\n' is added after ':'.
+ * a string that 'approximates' that ill-formed address.
+ * If include_nl is non-zero, '\n' is added after ':', but not at the end of
+ * the address because it's easier to add a '\n' than remove it.
  * RETURN
  * 	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
