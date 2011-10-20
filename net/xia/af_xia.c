@@ -400,26 +400,34 @@ static int __init xia_init(void)
 {
 	int rc;
 
-	rc = proto_register(&xia_raw_prot, 1);
+	/* Add Not A Type principal. */
+	rc = ppal_add_map("nat", XIDTYPE_NAT);
 	if (rc)
 		goto out;
+
+	rc = proto_register(&xia_raw_prot, 1);
+	if (rc)
+		goto nat;
 
 	/*
 	 *	Tell SOCKET that we are alive...
 	 */
 	rc = sock_register(&xia_family_ops);
 	if (rc)
-		goto out_unregister_raw_prot;
+		goto raw_prot;
 
 	xia_fib_init();
 
-	rc = 0;
 	printk(KERN_ALERT "XIA loaded\n");
+	rc = 0;
+	goto out;
+
+raw_prot:
+	proto_unregister(&xia_raw_prot);
+nat:
+	ppal_del_map(XIDTYPE_NAT);
 out:
 	return rc;
-out_unregister_raw_prot:
-	proto_unregister(&xia_raw_prot);
-	goto out;
 }
 
 /*
@@ -429,6 +437,7 @@ static void __exit xia_exit(void)
 {
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
+	ppal_del_map(XIDTYPE_NAT);
 	printk(KERN_ALERT "XIA UNloaded\n");
 }
 
