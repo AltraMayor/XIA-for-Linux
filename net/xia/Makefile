@@ -5,3 +5,5 @@
 obj-$(CONFIG_XIA) += xia.o
 
 xia-objs :=	af_xia.o raw.o dag.o fib.o fib_frontend.o
+
+obj-$(CONFIG_XIA_PPAL_AD) += ppal_ad/
