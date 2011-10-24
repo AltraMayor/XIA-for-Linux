@@ -7,10 +7,15 @@
 
 #include <net/xia.h>
 
-/* It is assumed to be greater than, or equal to 4; it includes '\0'. */
+/* It is assumed to be greater than, or equal to 4, it includes '\0',
+ * and assumes to include the case when it's represented as a number.
+ */
 #define MAX_PPAL_NAME_SIZE	32
 
 /* ppal_name_to_type - provides the principal type for @name.
+ *
+ * RETURN
+ *	Zero for success, otherwise a negative number.
  *
  * NOTES
  *	In Kernel, it can be called concurrently with calls of
@@ -21,6 +26,9 @@
 extern int ppal_name_to_type(const char *name, xid_type_t *pty);
 
 /* ppal_type_to_name - provides the principal name for @type.
+ *
+ * RETURN
+ *	Zero for success, otherwise a negative number.
  *
  * NOTES
  *	In Kernel, it can be called concurrently with calls of
@@ -33,6 +41,9 @@ extern int ppal_type_to_name(xid_type_t type, char *name);
 
 /* ppal_add_map - Maps @name and @type.
  *
+ * RETURN
+ *	Zero for success, otherwise a negative number.
+ *
  * NOTES
  *	In Kernel, ppal_add_map and ppal_del_map share a lock to make
  *	current changes safe.
@@ -42,6 +53,9 @@ extern int ppal_type_to_name(xid_type_t type, char *name);
 extern int ppal_add_map(const char *name, xid_type_t type);
 
 /* ppal_del_map - Removes map for @type.
+ *
+ * RETURN
+ *	Zero for success, otherwise a negative number.
  *
  * NOTES
  *	In Kernel, ppal_add_map and ppal_del_map share a lock to make
@@ -72,32 +86,67 @@ enum xia_addr_error {
 };
 
 /** xia_test_addr - test addr.
+ *
  * RETURN
  *	Negative enum xia_addr_error - there is an error.
  *	Greater or equal to zero - Number of nodes.
  */
 extern int xia_test_addr(const struct xia_addr *addr);
 
+/* xia_tytop - convert @ty to a string (@dst).
+ * @dstlen is the size of buffer @dst, it must be at least MAX_PPAL_NAME_SIZE.
+ * The string will be a name if it is available, otherwise a number following
+ * the format 0xN.
+ *
+ * RETURN
+ * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *		include the trailing '\0'.
+ *	Total number of written bytes, NOT including the trailing '\0'.
+ */
+extern int xia_tytop(xid_type_t ty, char *dst, size_t dstlen);
+
+/* xia_idtop - convert @src->xid_id to a string (@dst).
+ * @dstlen is the size of buffer @dst, it must be at least XIA_MAX_STRID_SIZE.
+ *
+ * RETURN
+ * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *		include the trailing '\0'.
+ *	Total number of written bytes, NOT including the trailing '\0'.
+ */
+#define XIA_MAX_STRID_SIZE (XIA_XID_MAX * 2 + 1)
+extern int xia_idtop(const struct xia_xid *src, char *dst, size_t dstlen);
+
+/* xia_xidtop - convert @src to a string (@dst).
+ * @dstlen is the size of buffer @dst, it must be at least XIA_MAX_STRXID_SIZE.
+ *
+ * RETURN
+ * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *		include the trailing '\0'.
+ *	Total number of written bytes, NOT including the trailing '\0'.
+ */
+#define XIA_MAX_STRXID_SIZE (MAX_PPAL_NAME_SIZE + XIA_MAX_STRID_SIZE)
+extern int xia_xidtop(const struct xia_xid *src, char *dst, size_t dstlen);
+
 /** XIA_MAX_STRADDR_SIZE - The maximum size of an XIA address as a string
  *			   in bytes. It's a recomended size to call xia_ntop.
- * It includes space for the type and name of a nodes
+ * It includes space for invalid sign (i.e. '!'), the type and name of a nodes
  * in hexadecimal, the out-edges, the two separators (i.e. '-') per node,
  * the edge-chosen sign (i.e. '>') for each selected edge,
- * the node separators (i.e. ':'), and a string terminator (i.e. '\0').
+ * the node separators (i.e. ':' or ":\n"), a string terminator (i.e. '\0'),
+ * an extra '\n' at the end the caller may want to add.
  */
 #define XIA_MAX_STRADDR_SIZE (1 + XIA_NODES_MAX * \
-	((sizeof(xid_type_t) + XIA_XID_MAX + XIA_OUTDEGREE_MAX) * 2 + 3) + \
-	XIA_NODES_MAX)
+	(XIA_MAX_STRXID_SIZE + XIA_OUTDEGREE_MAX * 2 + 2) + 1)
 
 /** xia_ntop - convert an XIA address to a string.
  * src can be ill-formed, but xia_ntop won't report error and will return
  * a string that 'approximates' that ill-formed address.
  * If include_nl is non-zero, '\n' is added after ':', but not at the end of
  * the address because it's easier to add a '\n' than remove it.
+ *
  * RETURN
  * 	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
- *	-EINVAL - For unexpected cases; it shouldn't happen.
  *	Total number of written bytes, NOT including the trailing '\0'.
  */
 extern int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
