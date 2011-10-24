@@ -84,7 +84,7 @@ static int xia_release(struct socket *sock)
 }
 
 /* XXX This code should be moved to an SID module. */
-#define XIDTYPE_SID 0x13
+#define XIDTYPE_SID (__cpu_to_be32(0x13))
 static int xia_bind(struct socket *sock, struct sockaddr *uaddr,
 		int addr_len)
 {
@@ -113,7 +113,7 @@ static int xia_bind(struct socket *sock, struct sockaddr *uaddr,
 
 	/* XXX The only XID type supported now is XIDTYPE_SID. */
 	rc = -EXTYNOSUPPORT;
-	if (addr->sxia_addr.s_row[0].s_xid_type != __cpu_to_be32(XIDTYPE_SID))
+	if (addr->sxia_addr.s_row[0].s_xid.xid_type != XIDTYPE_SID)
 		goto out;
 
 	lock_sock(sk);
@@ -124,8 +124,8 @@ static int xia_bind(struct socket *sock, struct sockaddr *uaddr,
 	if (!xia_is_nat(xia->xia_sxid_type)) /* Double bind. */
 		goto out_release_sk;
 
-	xia->xia_sxid_type = addr->sxia_addr.s_row[0].s_xid_type;
-	memmove(xia->xia_sxid, addr->sxia_addr.s_row[0].s_xid,
+	xia->xia_sxid_type = addr->sxia_addr.s_row[0].s_xid.xid_type;
+	memmove(xia->xia_sxid, addr->sxia_addr.s_row[0].s_xid.xid_id,
 		sizeof(xia->xia_sxid));
 	/* Make sure we are allowed to bind here. */
 	rc = -EADDRINUSE;
@@ -178,7 +178,7 @@ static void copy_and_shade(struct xia_addr *dst, struct xia_addr *src)
 	struct xia_row *rsrc = src->s_row;
 
 	for (i = 0; i < XIA_NODES_MAX; i++) {
-		if (xia_is_nat(rsrc[i].s_xid_type)) {
+		if (xia_is_nat(rsrc[i].s_xid.xid_type)) {
 			memset(&rdst[i], 0,
 				(XIA_NODES_MAX - i) * sizeof(struct xia_row));
 			break;

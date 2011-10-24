@@ -13,7 +13,8 @@
  * XIA address
  */
 
-/* Not A Type */
+/* Not A Type.
+ * Notice that this constant is little and big endian at same time. */
 #define XIDTYPE_NAT 0
 /* The range 0x01--0x0f is reserved for future use.
  * Identification numbers for new principals should be requested from
@@ -31,15 +32,21 @@ struct xia_xid {
 };
 
 struct xia_row {
-	xid_type_t	s_xid_type;		/* XID type		*/
-	__u8		s_xid[XIA_XID_MAX];	/* eXpressive IDentifier*/
+	struct xia_xid	s_xid;
 	union {
 		__u8	a[XIA_OUTDEGREE_MAX];
 		__be32	i;
 	} s_edge;				/* Out edges		*/
 };
+
 #define XIA_CHOSEN_EDGE		0x80
 #define XIA_EMPTY_EDGE		0x7f
+
+/* Notice that this constant is little and big endian
+ * at same time up to 32bits.
+ */
+#define XIA_EMPTY_EDGES	(XIA_EMPTY_EDGE << 24 | XIA_EMPTY_EDGE << 16 |\
+			 XIA_EMPTY_EDGE <<  8 | XIA_EMPTY_EDGE)
 
 static inline int is_edge_chosen(__u8 e)
 {
@@ -59,12 +66,12 @@ struct xia_addr {
 
 static inline void xia_null_addr(struct xia_addr *addr)
 {
-	addr->s_row[0].s_xid_type = __cpu_to_be32(XIDTYPE_NAT);
+	addr->s_row[0].s_xid.xid_type = XIDTYPE_NAT;
 }
 
 static inline int xia_is_nat(xid_type_t ty)
 {
-	return ty == __cpu_to_be32(XIDTYPE_NAT);
+	return ty == XIDTYPE_NAT;
 }
 
 /* XXX This is only needed for applications.
