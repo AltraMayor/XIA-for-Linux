@@ -83,9 +83,9 @@ static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 {
 	switch (id) {
 	case XRTABLE_LOCAL_INDEX:
-		return net->xia.main_rtbl;
-	case XRTABLE_MAIN_INDEX:
 		return net->xia.local_rtbl;
+	case XRTABLE_MAIN_INDEX:
+		return net->xia.main_rtbl;
 	default:
 		return NULL;
 	}
@@ -94,6 +94,7 @@ static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 /* Exported by fib_frontend.c */
 
 void xia_fib_init(void);
+void xia_fib_exit(void);
 
 /* Exported by fib.c */
 

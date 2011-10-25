@@ -233,7 +233,7 @@ int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	struct fib_xid *old_fxid = find_xid(xtbl, fxid->fx_xid, &head);
 
 	if (old_fxid)
-		return -EINVAL;
+		return -ESRCH;
 
 	hlist_add_head(&fxid->fx_list, head);
 	xtbl->fxt_count++;

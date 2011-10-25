@@ -435,6 +435,7 @@ out:
  */
 static void __exit xia_exit(void)
 {
+	xia_fib_exit();
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
 	ppal_del_map(XIDTYPE_NAT);
