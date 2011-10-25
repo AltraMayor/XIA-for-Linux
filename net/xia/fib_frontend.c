@@ -210,38 +210,31 @@ static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
  *	Network namespace
  */
 
-static int __net_init xia_fib_net_init(struct net *net)
+static int __net_init fib_net_init(struct net *net)
 {
-	net->xia.main_rtbl = create_xia_rtable(XRTABLE_MAIN_INDEX);
-	if (!net->xia.main_rtbl)
-		goto error;
 	net->xia.local_rtbl = create_xia_rtable(XRTABLE_LOCAL_INDEX);
 	if (!net->xia.local_rtbl)
-		goto main_rtbl;
+		goto error;
+	net->xia.main_rtbl = create_xia_rtable(XRTABLE_MAIN_INDEX);
+	if (!net->xia.main_rtbl)
+		goto local;
 	return 0;
 
-main_rtbl:
-	destroy_xia_rtable(net->xia.main_rtbl);
+local:
+	destroy_xia_rtable(net->xia.local_rtbl);
+	net->xia.local_rtbl = NULL;
 error:
 	return -ENOMEM;
 }
 
-static void __net_exit xia_fib_net_exit(struct net *net)
+static void __net_exit fib_net_exit(struct net *net)
 {
 	rtnl_lock();
 	destroy_xia_rtable(net->xia.main_rtbl);
+	net->xia.main_rtbl = NULL;
 	destroy_xia_rtable(net->xia.local_rtbl);
+	net->xia.local_rtbl = NULL;
 	rtnl_unlock();
-}
-
-static int __net_init fib_net_init(struct net *net)
-{
-	return xia_fib_net_init(net);
-}
-
-static void __net_exit fib_net_exit(struct net *net)
-{
-	xia_fib_net_exit(net);
 }
 
 static struct pernet_operations fib_net_ops = {
@@ -260,4 +253,15 @@ void __init xia_fib_init(void)
 	register_netdevice_notifier(&fib_netdev_notifier);
 	register_inetaddr_notifier(&fib_inetaddr_notifier);
 	*/
+}
+
+void __exit xia_fib_exit(void)
+{
+	unregister_pernet_subsys(&fib_net_ops);
+
+	/* XXX Isn't a lock necessary here? unregister_pernet_subsys (above)
+	 * has its own lock. */
+	rtnl_unregister(PF_XIA, RTM_GETROUTE);
+	rtnl_unregister(PF_XIA, RTM_DELROUTE);
+	rtnl_unregister(PF_XIA, RTM_NEWROUTE);
 }
