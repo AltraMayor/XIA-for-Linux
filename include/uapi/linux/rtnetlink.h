@@ -303,6 +303,7 @@ enum rtattr_type_t {
 	RTA_TABLE,
 	RTA_MARK,
 	RTA_MFC_STATS,
+	RTA_LLADDR, /* Only used by XIA */
 	__RTA_MAX
 };
 
