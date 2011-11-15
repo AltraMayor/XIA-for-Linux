@@ -30,14 +30,16 @@ struct xia_fib_config {
 	u8			xfc_scope;
 	/* See rtm_type in linux/rtnetlink.h */
 	u8			xfc_type;
-	/* 2 bytes unused */
+	u8			xfc_lladdr_len;
+	/* 1 byte unused */
 
 	u32			xfc_flags;
 
 	struct xia_xid		*xfc_dst;
-	u32			xfc_oif;
+	struct net_device	*xfc_odev;
 	struct xia_xid		*xfc_gw;
-	
+	u8			*xfc_lladdr;
+
 	u32			xfc_nlflags;
 	struct nl_info		xfc_nlinfo;
 };
@@ -110,18 +112,32 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 
 void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
 
+/* Please don't call __xia_find_xtbl directly, prefer xia_find_xtbl. */
 struct fib_xid_table *__xia_find_xtbl(struct fib_xia_rtable *rtbl,
 				xid_type_t ty, struct hlist_head **phead);
+
 static inline struct fib_xid_table *xia_find_xtbl(struct fib_xia_rtable *rtbl,
 					xid_type_t ty)
 {
-	struct hlist_head *phead;
-	return __xia_find_xtbl(rtbl, ty, &phead);
+	struct hlist_head *head;
+	return __xia_find_xtbl(rtbl, ty, &head);
 }
 
 int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
+void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid);
+
+/* Please don't call __xia_find_xid, prefer xia_find_xid. */
+struct fib_xid *__xia_find_xid(struct fib_xid_table *xtbl,
+	const char *xid, struct hlist_head **phead);
+
+static inline struct fib_xid *xia_find_xid(struct fib_xid_table *xtbl,
+	const char *xid)
+{
+	struct hlist_head *head;
+	return __xia_find_xid(xtbl, xid, &head);
+}
 
 #endif /* __KERNEL__ */
 #endif /* _NET_XIA_FIB_H */

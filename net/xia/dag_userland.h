@@ -2,6 +2,7 @@
 
 #include <linux/ctype.h>
 #include <linux/spinlock.h>
+#include <linux/export.h>
 
 #define mymalloc(n)	kmalloc(n, GFP_KERNEL)
 #define myfree(p)	kfree(p)

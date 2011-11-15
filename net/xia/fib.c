@@ -1,6 +1,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/export.h>
 #include <net/xia_fib.h>
 
 /* TODO Review the code for concorrency! */
@@ -171,9 +172,9 @@ static inline int are_xids_equal(const char *xid1, const char *xid2)
 		n1[4] == n2[4];
 }
 
-static struct fib_xid *find_xid(struct fib_xid_table *xtbl,
-					const char *xid,
-					struct hlist_head **phead)
+struct fib_xid *__xia_find_xid(struct fib_xid_table *xtbl,
+				const char *xid,
+				struct hlist_head **phead)
 {
 	struct fib_xid *fxid;
 	struct hlist_node *p;
@@ -184,6 +185,7 @@ static struct fib_xid *find_xid(struct fib_xid_table *xtbl,
 	}
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(__xia_find_xid);
 
 static int rehash_xtbl(struct fib_xid_table *xtbl)
 {
@@ -230,7 +232,7 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
 int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct hlist_head *head;
-	struct fib_xid *old_fxid = find_xid(xtbl, fxid->fx_xid, &head);
+	struct fib_xid *old_fxid = __xia_find_xid(xtbl, fxid->fx_xid, &head);
 
 	if (old_fxid)
 		return -ESRCH;
@@ -251,16 +253,22 @@ int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 EXPORT_SYMBOL_GPL(fib_add_xid);
 
+void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	hlist_del(&fxid->fx_list);
+	xtbl->fxt_count--;
+}
+EXPORT_SYMBOL_GPL(fib_rm_fxid);
+
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid)
 {
 	struct hlist_head *head;
-	struct fib_xid *fxid = find_xid(xtbl, xid, &head);
+	struct fib_xid *fxid = __xia_find_xid(xtbl, xid, &head);
 
 	if (!fxid)
 		return NULL;
 
-	hlist_del(&fxid->fx_list);
-	xtbl->fxt_count--;
+	fib_rm_fxid(xtbl, fxid);
 	return fxid;
 }
 EXPORT_SYMBOL_GPL(fib_rm_xid);

@@ -9,6 +9,7 @@ const struct nla_policy rtm_xia_policy[RTA_MAX + 1] = {
 	[RTA_DST]		= XID_NLATTR,
 	[RTA_OIF]		= { .type = NLA_U32 },
 	[RTA_GATEWAY]		= XID_NLATTR,
+	[RTA_LLADDR]		= { .type = NLA_BINARY, .len = MAX_ADDR_LEN },
 };
 
 static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
@@ -48,11 +49,20 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 			if (cfg->xfc_dst_len != nla_len(attr))
 				return -EINVAL;
 			break;
-		case RTA_OIF:
-			cfg->xfc_oif = nla_get_u32(attr);
+		case RTA_OIF: {
+			ASSERT_RTNL();
+			cfg->xfc_odev = __dev_get_by_index(net,
+				nla_get_u32(attr));
+			if (!cfg->xfc_odev)
+				return -EINVAL;
 			break;
+		}
 		case RTA_GATEWAY:
 			cfg->xfc_gw = nla_data(attr);
+			break;
+		case RTA_LLADDR:
+			cfg->xfc_lladdr = nla_data(attr);
+			cfg->xfc_lladdr_len = nla_len(attr);
 			break;
 		default:
 			return -EINVAL;
@@ -78,7 +88,7 @@ static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 		return -EINVAL;
 	rtbl = xia_fib_get_table(net, cfg.xfc_table);
 	if (rtbl == NULL)
-		return -ESRCH;
+		return -EINVAL;
 	xtbl = xia_find_xtbl(rtbl, cfg.xfc_dst->xid_type);
 	if (xtbl == NULL)
 		return -EXTYNOSUPPORT;
@@ -103,7 +113,7 @@ static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 		return -EINVAL;
 	rtbl = xia_fib_get_table(net, cfg.xfc_table);
 	if (rtbl == NULL)
-		return -ESRCH;
+		return -EINVAL;
 	xtbl = xia_find_xtbl(rtbl, cfg.xfc_dst->xid_type);
 	if (xtbl == NULL)
 		return -EXTYNOSUPPORT;
