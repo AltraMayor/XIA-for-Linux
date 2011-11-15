@@ -7,7 +7,6 @@
 /* XXX Likely, this struct must vary for the main and local table! */
 struct fib_xid_ad {
 	struct fib_xid	xad_common;
-	u32		xad_oif;
 	struct xia_xid	xad_gw;
 };
 
@@ -27,7 +26,6 @@ static int newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 	memset(xad, 0, sizeof(*xad));
 
 	memmove(xad->xad_common.fx_xid, cfg->xfc_dst->xid_id, XIA_XID_MAX);
-	xad->xad_oif	= cfg->xfc_oif;
 	xad->xad_gw	= *cfg->xfc_gw;
 
 	rc = fib_add_xid(xtbl, (struct fib_xid *)xad);
@@ -87,8 +85,6 @@ static int dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 	NLA_PUT_TYPE(skb, struct xia_xid, RTA_DST, dst);
 
-	NLA_PUT_U32(skb, RTA_OIF, ad->xad_oif);
-
 	NLA_PUT_TYPE(skb, struct xia_xid, RTA_GATEWAY, ad->xad_gw);
 
 	return nlmsg_end(skb, nlh);
@@ -102,55 +98,55 @@ static const struct xia_ppal_rt_ops ad_rt_ops = {
 	.newroute = newroute,
 	.delroute = delroute,
 	.dump_xid = dump_ad,
-	
 };
 
 /* Autonomous Domain Principal */
 #define XIDTYPE_AD (__cpu_to_be32(0x10))
 
 /*
- * xia_init - this function is called when the module is loaded.
+ * xia_ad_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
 static int __init xia_ad_init(void)
 {
 	int rc;
 
-	/* XXX Add support to all/new struct nets. See xia_exit as well. */
+	/* XXX Add support to all/new struct nets. See xia_ad_exit as well. */
 	/* XXX A synchonizing lock is likely necessary here.
-	 * See xia_exit as well. */
-	rc = init_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD, &ad_rt_ops);
-	if (rc)
-		goto out;
+	 * See xia_ad_exit as well.
+	 */
 	rc = init_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD, &ad_rt_ops);
 	if (rc)
-		goto main_rtbl;
+		goto out;
+	rc = init_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD, &ad_rt_ops);
+	if (rc)
+		goto local_rtbl;
 
 	rc = ppal_add_map("ad", XIDTYPE_AD);
 	if (rc)
-		goto local_rtbl;
+		goto main_rtbl;
 
 	printk(KERN_ALERT "XIA Principal AD loaded\n");
 	rc = 0;
 	goto out;
 
-local_rtbl:
-	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
 main_rtbl:
 	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD);
+local_rtbl:
+	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
 out:
 	return rc;
 }
 
 /*
- * xia_exit - this function is called when the modlule is removed.
+ * xia_ad_exit - this function is called when the modlule is removed.
  */
 static void __exit xia_ad_exit(void)
 {
 	/* XXX Is it really safe to unload a principal? */
 	ppal_del_map(XIDTYPE_AD);
-	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
 	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD);
+	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
 	printk(KERN_ALERT "XIA Principal AD UNloaded\n");
 }
 
