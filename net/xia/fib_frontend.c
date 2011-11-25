@@ -142,7 +142,7 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 			if (dumped)
 				memset(&cb->args[5], 0, sizeof(cb->args) -
 						 5 *	sizeof(cb->args[0]));
-			if (xtbl->fxt_ops->dump_xid(fxid, xtbl, rtbl, skb, cb)
+			if (xtbl->fxt_ops->dump_fxid(fxid, xtbl, rtbl, skb, cb)
 				< 0)
 				goto out;
 			dumped = 1;

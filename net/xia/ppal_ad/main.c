@@ -97,7 +97,7 @@ nla_put_failure:
 static const struct xia_ppal_rt_ops ad_rt_ops = {
 	.newroute = newroute,
 	.delroute = delroute,
-	.dump_xid = dump_ad,
+	.dump_fxid = dump_ad,
 };
 
 /* Autonomous Domain Principal */
