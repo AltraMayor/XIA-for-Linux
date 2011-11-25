@@ -104,6 +104,41 @@ static const struct xia_ppal_rt_ops ad_rt_ops = {
 #define XIDTYPE_AD (__cpu_to_be32(0x10))
 
 /*
+ *	Network namespace
+ */
+
+static int __net_init ad_net_init(struct net *net)
+{
+	int rc;
+
+	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_AD, &ad_rt_ops);
+	if (rc)
+		goto out;
+	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_AD, &ad_rt_ops);
+	if (rc)
+		goto local_rtbl;
+	goto out;
+
+local_rtbl:
+	end_xid_table(net->xia.local_rtbl, XIDTYPE_AD);
+out:
+	return rc;
+}
+
+static void __net_exit ad_net_exit(struct net *net)
+{
+	rtnl_lock();
+	end_xid_table(net->xia.main_rtbl, XIDTYPE_AD);
+	end_xid_table(net->xia.local_rtbl, XIDTYPE_AD);
+	rtnl_unlock();
+}
+
+static struct pernet_operations ad_net_ops = {
+	.init = ad_net_init,
+	.exit = ad_net_exit,
+};
+
+/*
  * xia_ad_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
@@ -111,29 +146,19 @@ static int __init xia_ad_init(void)
 {
 	int rc;
 
-	/* XXX Add support to all/new struct nets. See xia_ad_exit as well. */
-	/* XXX A synchonizing lock is likely necessary here.
-	 * See xia_ad_exit as well.
-	 */
-	rc = init_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD, &ad_rt_ops);
+	rc = xia_register_pernet_subsys(&ad_net_ops);
 	if (rc)
 		goto out;
-	rc = init_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD, &ad_rt_ops);
-	if (rc)
-		goto local_rtbl;
 
 	rc = ppal_add_map("ad", XIDTYPE_AD);
 	if (rc)
-		goto main_rtbl;
+		goto net;
 
 	printk(KERN_ALERT "XIA Principal AD loaded\n");
-	rc = 0;
 	goto out;
 
-main_rtbl:
-	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD);
-local_rtbl:
-	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
+net:
+	unregister_pernet_subsys(&ad_net_ops);
 out:
 	return rc;
 }
@@ -143,10 +168,8 @@ out:
  */
 static void __exit xia_ad_exit(void)
 {
-	/* XXX Is it really safe to unload a principal? */
 	ppal_del_map(XIDTYPE_AD);
-	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_AD);
-	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_AD);
+	xia_unregister_pernet_subsys(&ad_net_ops);
 	printk(KERN_ALERT "XIA Principal AD UNloaded\n");
 }
 

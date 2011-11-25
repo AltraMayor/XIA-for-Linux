@@ -323,6 +323,43 @@ static const struct xia_ppal_rt_ops hid_rt_ops_main = {
 #define XIDTYPE_HID (__cpu_to_be32(0x11))
 
 /*
+ *	Network namespace
+ */
+
+static int __net_init hid_net_init(struct net *net)
+{
+	int rc;
+
+	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_HID,
+		&hid_rt_ops_local);
+	if (rc)
+		goto out;
+	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_HID,
+		&hid_rt_ops_main);
+	if (rc)
+		goto local_rtbl;
+	goto out;
+
+local_rtbl:
+	end_xid_table(net->xia.local_rtbl, XIDTYPE_HID);
+out:
+	return rc;
+}
+
+static void __net_exit hid_net_exit(struct net *net)
+{
+	rtnl_lock();
+	end_xid_table(net->xia.main_rtbl, XIDTYPE_HID);
+	end_xid_table(net->xia.local_rtbl, XIDTYPE_HID);
+	rtnl_unlock();
+}
+
+static struct pernet_operations hid_net_ops = {
+	.init = hid_net_init,
+	.exit = hid_net_exit,
+};
+
+/*
  * xia_hid_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
@@ -330,30 +367,19 @@ static int __init xia_hid_init(void)
 {
 	int rc;
 
-	/* XXX Add support to all/new struct nets. See xia_hid_exit as well. */
-	/* XXX A synchonizing lock is likely necessary here.
-	 * See xia_hid_exit as well. */
-	rc = init_xid_table(init_net.xia.local_rtbl, XIDTYPE_HID,
-		&hid_rt_ops_local);
+	rc = xia_register_pernet_subsys(&hid_net_ops);
 	if (rc)
 		goto out;
-	rc = init_xid_table(init_net.xia.main_rtbl, XIDTYPE_HID,
-		&hid_rt_ops_main);
-	if (rc)
-		goto local_rtbl;
 
 	rc = ppal_add_map("hid", XIDTYPE_HID);
 	if (rc)
-		goto main_rtbl;
+		goto net;
 
 	printk(KERN_ALERT "XIA Principal HID loaded\n");
-	rc = 0;
 	goto out;
 
-main_rtbl:
-	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_HID);
-local_rtbl:
-	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_HID);
+net:
+	unregister_pernet_subsys(&hid_net_ops);
 out:
 	return rc;
 }
@@ -363,10 +389,8 @@ out:
  */
 static void __exit xia_hid_exit(void)
 {
-	/* XXX Is it really safe to unload a principal? */
 	ppal_del_map(XIDTYPE_HID);
-	end_xid_table(init_net.xia.main_rtbl, XIDTYPE_HID);
-	end_xid_table(init_net.xia.local_rtbl, XIDTYPE_HID);
+	xia_unregister_pernet_subsys(&hid_net_ops);
 	printk(KERN_ALERT "XIA Principal HID UNloaded\n");
 }
 
