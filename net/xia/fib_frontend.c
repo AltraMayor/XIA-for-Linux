@@ -1,6 +1,7 @@
 #include <linux/init.h>
 #include <linux/socket.h>
 #include <net/rtnetlink.h>
+#include <linux/export.h>
 #include <net/xia_fib.h>
 
 #define XID_NLATTR	{ .len = sizeof(struct xia_xid) }
@@ -252,13 +253,20 @@ static struct pernet_operations fib_net_ops = {
 	.exit = fib_net_exit,
 };
 
+int xia_register_pernet_subsys(struct pernet_operations *ops)
+{
+	return register_pernet_subsys(ops);
+}
+EXPORT_SYMBOL_GPL(xia_register_pernet_subsys);
+
 void __init xia_fib_init(void)
 {
+	register_pernet_subsys(&fib_net_ops);
+
 	rtnl_register(PF_XIA, RTM_NEWROUTE, xia_rtm_newroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
 
-	register_pernet_subsys(&fib_net_ops);
 	/* XXX Don't we need to listen to notifiers as well?
 	register_netdevice_notifier(&fib_netdev_notifier);
 	register_inetaddr_notifier(&fib_inetaddr_notifier);
@@ -267,11 +275,11 @@ void __init xia_fib_init(void)
 
 void __exit xia_fib_exit(void)
 {
-	unregister_pernet_subsys(&fib_net_ops);
-
-	/* XXX Isn't a lock necessary here? unregister_pernet_subsys (above)
+	/* XXX Isn't a lock necessary here? unregister_pernet_subsys (below)
 	 * has its own lock. */
 	rtnl_unregister(PF_XIA, RTM_GETROUTE);
 	rtnl_unregister(PF_XIA, RTM_DELROUTE);
 	rtnl_unregister(PF_XIA, RTM_NEWROUTE);
+
+	unregister_pernet_subsys(&fib_net_ops);
 }

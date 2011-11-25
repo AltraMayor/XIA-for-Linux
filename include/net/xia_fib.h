@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <net/netlink.h>
+#include <net/net_namespace.h>
 #include <net/xia.h>
 
 struct xia_fib_config {
@@ -97,6 +98,20 @@ static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 
 void xia_fib_init(void);
 void xia_fib_exit(void);
+
+/* xia_register_pernet_subsys - is just a wrapper for
+ * register_pernet_subsys in order to guarantee that
+ * principals are initialized after XIA's core.
+ */
+int xia_register_pernet_subsys(struct pernet_operations *ops);
+
+/* xia_unregister_pernet_subsys is here just to simplify changes when it
+ * becomes necessary to do something while unregistering principals.
+ */
+static inline void xia_unregister_pernet_subsys(struct pernet_operations *ops)
+{
+	unregister_pernet_subsys(ops);
+}
 
 /* Exported by fib.c */
 
