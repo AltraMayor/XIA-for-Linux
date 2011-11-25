@@ -66,11 +66,17 @@ struct fib_xid_table {
 
 /* Operations needed to maintain a routing table of a principal. */
 struct xia_ppal_rt_ops {
+	/* RTNetlink support
+	 * All callbacks are required.
+	 */
 	int (*newroute)(struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
 	int (*delroute)(struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
-	int (*dump_xid)(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+	int (*dump_fxid)(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		struct fib_xia_rtable *rtbl, struct sk_buff *skb,
 		struct netlink_callback *cb);
+
+	/* Optional callback to release dependencies. */
+	void (*free_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 };
 
 /* One could use principal type as part of the hash function and have only

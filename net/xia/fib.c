@@ -86,10 +86,19 @@ out:
 }
 EXPORT_SYMBOL_GPL(init_xid_table);
 
+static void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	kfree(fxid);
+}
+
 static void end_xtbl(struct fib_xid_table *xtbl)
 {
+	void (*free_callback)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 	int rm_count = 0;
 	int i;
+
+	free_callback = xtbl->fxt_ops->free_fxid ?
+		xtbl->fxt_ops->free_fxid : free_fxid;
 
 	hlist_del(&xtbl->fxt_list);
 	for (i = 0; i < xtbl->fxt_divisor; i++) {
@@ -98,7 +107,7 @@ static void end_xtbl(struct fib_xid_table *xtbl)
 		struct hlist_head *head = &xtbl->fxt_buckets[i];
 		hlist_for_each_entry_safe(fxid, p, n, head, fx_list) {
 			hlist_del(p);
-			kfree(fxid);
+			free_callback(xtbl, fxid);
 			rm_count++;
 		}
 	}

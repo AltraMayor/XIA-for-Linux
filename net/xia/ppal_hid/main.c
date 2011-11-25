@@ -122,6 +122,7 @@ static struct hrdw_addr *new_ha(struct net_device *dev, u8 *lladdr)
 static inline void free_ha(struct hrdw_addr *ha)
 {
 	dev_put(ha->dev);
+	ha->dev = NULL;
 	kfree(ha);
 }
 
@@ -166,6 +167,15 @@ static void del_ha(struct list_head *head, u8 *str_ha, struct net_device *dev)
 		/* Listed is sorted. */
 		if (c1 > 0 || (!c1 && c2 > 0))
 			break;
+	}
+}
+
+static void free_haddrs(struct list_head *head)
+{
+	struct hrdw_addr *pos_ha, *nxt;
+	list_for_each_entry_safe(pos_ha, nxt, head, next) {
+		list_del(&pos_ha->next);
+		free_ha(pos_ha);
 	}
 }
 
@@ -307,16 +317,24 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+static void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_hid_main *mhid = (struct fib_xid_hid_main *)fxid;
+	free_haddrs(&mhid->xhm_haddrs);
+	kfree(fxid);
+}
+
 static const struct xia_ppal_rt_ops hid_rt_ops_local = {
 	.newroute = local_newroute,
 	.delroute = local_delroute,
-	.dump_xid = local_dump_hid,
+	.dump_fxid = local_dump_hid,
 };
 
 static const struct xia_ppal_rt_ops hid_rt_ops_main = {
 	.newroute = main_newroute,
 	.delroute = main_delroute,
-	.dump_xid = main_dump_hid,
+	.dump_fxid = main_dump_hid,
+	.free_fxid = main_free_hid,
 };
 
 /* Autonomous Domain Principal */
