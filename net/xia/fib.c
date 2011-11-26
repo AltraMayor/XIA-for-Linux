@@ -39,6 +39,7 @@ struct fib_xid_table *__xia_find_xtbl(struct fib_xia_rtable *rtbl,
 	}
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(__xia_find_xtbl);
 
 static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
 {
