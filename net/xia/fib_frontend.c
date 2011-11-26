@@ -266,20 +266,10 @@ void __init xia_fib_init(void)
 	rtnl_register(PF_XIA, RTM_NEWROUTE, xia_rtm_newroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
-
-	/* XXX Don't we need to listen to notifiers as well?
-	register_netdevice_notifier(&fib_netdev_notifier);
-	register_inetaddr_notifier(&fib_inetaddr_notifier);
-	*/
 }
 
 void __exit xia_fib_exit(void)
 {
-	/* XXX Isn't a lock necessary here? unregister_pernet_subsys (below)
-	 * has its own lock. */
-	rtnl_unregister(PF_XIA, RTM_GETROUTE);
-	rtnl_unregister(PF_XIA, RTM_DELROUTE);
-	rtnl_unregister(PF_XIA, RTM_NEWROUTE);
-
+	rtnl_unregister_all(PF_XIA);
 	unregister_pernet_subsys(&fib_net_ops);
 }

@@ -1,9 +1,13 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/netdevice.h>
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
+
+/* Host Principal */
+#define XIDTYPE_HID (__cpu_to_be32(0x11))
 
 struct fib_xid_hid_local {
 	struct fib_xid	xhl_common;
@@ -133,14 +137,14 @@ static int add_ha(struct list_head *head, struct hrdw_addr *ha)
 
 	list_for_each_entry(pos_ha, head, next) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
-		int c2 = pos_ha->dev->ifindex - ha->dev->ifindex;
-		if (unlikely(!c1 && !c2)) {
+		int c2 = pos_ha->dev == ha->dev;
+		if (unlikely(!c1 && c2)) {
 			/* It's a duplicate. */
 			free_ha(ha);
 			return -ESRCH;
 		}
 		/* Keep listed sorted. */
-		if (c1 > 0 || (!c1 && c2 > 0))
+		if (c1 > 0)
 			break;
 	}
 
@@ -148,7 +152,7 @@ static int add_ha(struct list_head *head, struct hrdw_addr *ha)
 	return 0;
 }
 
-static void del_ha(struct list_head *head, u8 *str_ha, struct net_device *dev)
+static int del_ha(struct list_head *head, u8 *str_ha, struct net_device *dev)
 {
 	struct hrdw_addr *pos_ha, *nxt;
 
@@ -158,15 +162,52 @@ static void del_ha(struct list_head *head, u8 *str_ha, struct net_device *dev)
 	 */
 	list_for_each_entry_safe(pos_ha, nxt, head, next) {
 		int c1 = memcmp(pos_ha->ha, str_ha, dev->addr_len);
-		int c2 = pos_ha->dev->ifindex - dev->ifindex;
-		if (unlikely(!c1 && !c2)) {
+		int c2 = pos_ha->dev == dev;
+		if (unlikely(!c1 && c2)) {
 			list_del(&pos_ha->next);
 			free_ha(pos_ha);
-			break;
+			return 0;
 		}
 		/* Listed is sorted. */
-		if (c1 > 0 || (!c1 && c2 > 0))
+		if (c1 > 0)
 			break;
+	}
+	return -ESRCH;
+}
+
+static void del_has_by_dev(struct list_head *head, struct net_device *dev)
+{
+	struct hrdw_addr *pos_ha, *nxt;
+	list_for_each_entry_safe(pos_ha, nxt, head, next)
+		if (pos_ha->dev == dev) {
+			list_del(&pos_ha->next);
+			free_ha(pos_ha);
+		}
+}
+
+static void free_neighs_by_dev(struct net_device *dev)
+{
+	struct net *net = dev_net(dev);
+	struct fib_xid_table *xtbl = xia_find_xtbl(net->xia.main_rtbl,
+		XIDTYPE_HID);
+	int divisor = xtbl->fxt_divisor;
+	int i;
+
+	ASSERT_RTNL();
+
+	for (i = 0; i < divisor; i++) {
+		struct fib_xid *fxid;
+		struct hlist_node *pos, *nxt;
+		struct hlist_head *head = &xtbl->fxt_buckets[i];
+		hlist_for_each_entry_safe(fxid, pos, nxt, head, fx_list) {
+			struct fib_xid_hid_main *mhid =
+				(struct fib_xid_hid_main *)fxid;
+			del_has_by_dev(&mhid->xhm_haddrs, dev);
+			if (list_empty(&mhid->xhm_haddrs)) {
+				fib_rm_fxid(xtbl, fxid);
+				kfree(mhid);
+			}
+		}
 	}
 }
 
@@ -230,6 +271,7 @@ out:
 static int main_delroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
 	struct fib_xid_hid_main *mhid;
+	int rc;
 
 	if (!cfg->xfc_odev)
 		return -EINVAL;
@@ -243,7 +285,10 @@ static int main_delroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 	if (!mhid)
 		return -ESRCH;
 
-	del_ha(&mhid->xhm_haddrs, cfg->xfc_lladdr, cfg->xfc_odev);
+	rc = del_ha(&mhid->xhm_haddrs, cfg->xfc_lladdr, cfg->xfc_odev);
+	if (rc)
+		return rc;
+
 	if (list_empty(&mhid->xhm_haddrs)) {
 		fib_rm_fxid(xtbl, (struct fib_xid *)mhid);
 		kfree(mhid);
@@ -337,9 +382,6 @@ static const struct xia_ppal_rt_ops hid_rt_ops_main = {
 	.free_fxid = main_free_hid,
 };
 
-/* Autonomous Domain Principal */
-#define XIDTYPE_HID (__cpu_to_be32(0x11))
-
 /*
  *	Network namespace
  */
@@ -378,6 +420,27 @@ static struct pernet_operations hid_net_ops = {
 };
 
 /*
+ *	Network Devices
+ */
+
+static int hid_netdev_event(struct notifier_block *nb,
+	unsigned long event, void *ptr)
+{
+	struct net_device *dev = ptr;
+
+	switch (event) {
+	case NETDEV_DOWN:
+		free_neighs_by_dev(dev);
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block hid_netdev_notifier = {
+	.notifier_call = hid_netdev_event,
+};
+
+/*
  * xia_hid_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
@@ -389,13 +452,19 @@ static int __init xia_hid_init(void)
 	if (rc)
 		goto out;
 
-	rc = ppal_add_map("hid", XIDTYPE_HID);
+	rc = register_netdevice_notifier(&hid_netdev_notifier);
 	if (rc)
 		goto net;
+
+	rc = ppal_add_map("hid", XIDTYPE_HID);
+	if (rc)
+		goto dev;
 
 	printk(KERN_ALERT "XIA Principal HID loaded\n");
 	goto out;
 
+dev:
+	unregister_netdevice_notifier(&hid_netdev_notifier);
 net:
 	unregister_pernet_subsys(&hid_net_ops);
 out:
@@ -408,6 +477,7 @@ out:
 static void __exit xia_hid_exit(void)
 {
 	ppal_del_map(XIDTYPE_HID);
+	unregister_netdevice_notifier(&hid_netdev_notifier);
 	xia_unregister_pernet_subsys(&hid_net_ops);
 	printk(KERN_ALERT "XIA Principal HID UNloaded\n");
 }
