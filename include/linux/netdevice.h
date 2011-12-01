@@ -1618,6 +1618,9 @@ struct net_device {
 	void			*ax25_ptr;
 	struct wireless_dev	*ieee80211_ptr;
 	struct wpan_dev		*ieee802154_ptr;
+#if defined(CONFIG_XIA) || defined(CONFIG_XIA_MODULE)
+	struct xip_dev __rcu	*xip_ptr;
+#endif
 
 /*
  * Cache lines mostly used on receive path (including eth_type_trans())
