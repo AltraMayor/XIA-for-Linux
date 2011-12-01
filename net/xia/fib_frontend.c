@@ -1,12 +1,13 @@
 #include <linux/init.h>
 #include <linux/socket.h>
-#include <net/rtnetlink.h>
 #include <linux/export.h>
+#include <asm/cache.h>
+#include <net/rtnetlink.h>
 #include <net/xia_fib.h>
 
 #define XID_NLATTR	{ .len = sizeof(struct xia_xid) }
 
-const struct nla_policy rtm_xia_policy[RTA_MAX + 1] = {
+static const struct nla_policy rtm_xia_policy[RTA_MAX + 1] = {
 	[RTA_DST]		= XID_NLATTR,
 	[RTA_OIF]		= { .type = NLA_U32 },
 	[RTA_GATEWAY]		= XID_NLATTR,
@@ -248,7 +249,7 @@ static void __net_exit fib_net_exit(struct net *net)
 	rtnl_unlock();
 }
 
-static struct pernet_operations fib_net_ops = {
+static struct pernet_operations fib_net_ops __read_mostly = {
 	.init = fib_net_init,
 	.exit = fib_net_exit,
 };
@@ -259,16 +260,30 @@ int xia_register_pernet_subsys(struct pernet_operations *ops)
 }
 EXPORT_SYMBOL_GPL(xia_register_pernet_subsys);
 
-void __init xia_fib_init(void)
+int xia_fib_init(void)
 {
-	register_pernet_subsys(&fib_net_ops);
+	int rc;
+
+	rc = register_pernet_subsys(&fib_net_ops);
+	if (rc)
+		goto out;
 
 	rtnl_register(PF_XIA, RTM_NEWROUTE, xia_rtm_newroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
+	goto out;
+
+/*
+rtnl:
+	rtnl_unregister_all(PF_XIA);
+net:
+	unregister_pernet_subsys(&fib_net_ops);
+*/
+out:
+	return rc;
 }
 
-void __exit xia_fib_exit(void)
+void xia_fib_exit(void)
 {
 	rtnl_unregister_all(PF_XIA);
 	unregister_pernet_subsys(&fib_net_ops);

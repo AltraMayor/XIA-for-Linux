@@ -1559,6 +1559,9 @@ struct net_device {
 	struct inet6_dev __rcu	*ip6_ptr;
 	void			*ax25_ptr;
 	struct wireless_dev	*ieee80211_ptr;
+#if defined(CONFIG_XIA) || defined(CONFIG_XIA_MODULE)
+	struct xip_dev __rcu	*xip_ptr;
+#endif
 
 /*
  * Cache lines mostly used on receive path (including eth_type_trans())

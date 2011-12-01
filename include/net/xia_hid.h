@@ -24,4 +24,31 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 		(((char*)rtha) + NLMSG_ALIGN(rtha->hha_len));
 }
 
+#ifdef __KERNEL__
+
+#include <linux/timer.h>
+
+/* TODO Rename it to xia_hid_net. */
+struct xia_hid_state {
+	/* TODO Use attomic here! */
+	u8	new_hids_to_announce;
+
+	/* 3 bytes free. */
+
+	struct timer_list announce_timer;
+};
+
+/* Exported by nwp.c */
+
+int hid_nwp_init(void);
+void hid_nwp_exit(void);
+
+int hid_new_hid_state(struct net *net);
+void hid_free_hid_state(struct net *net);
+
+void announce_myself(struct net *net);
+void stop_announcements(struct net *net);
+
+#endif /* __KERNEL__ */
+
 #endif /* _NET_XIA_HID_H */

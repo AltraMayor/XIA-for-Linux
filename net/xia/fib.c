@@ -1,20 +1,19 @@
 #include <linux/kernel.h>
-#include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/export.h>
+#include <asm/atomic.h>
 #include <net/xia_fib.h>
 
 /* TODO Review the code for concorrency! */
-/* TODO Some structures may need a slab for better performance. */
+/* XXX Some structures may need a slab for better performance. */
 
 struct fib_xia_rtable *create_xia_rtable(int tbl_id)
 {
-	struct fib_xia_rtable *rtbl = kmalloc(sizeof(*rtbl), GFP_KERNEL);
+	struct fib_xia_rtable *rtbl = kzalloc(sizeof(*rtbl), GFP_KERNEL);
 
 	if (!rtbl)
 		return NULL;
 
-	memset(rtbl, 0, sizeof(*rtbl));
 	rtbl->tbl_id = tbl_id;
 	return rtbl;
 }
@@ -44,10 +43,9 @@ EXPORT_SYMBOL_GPL(__xia_find_xtbl);
 static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
 {
 	size_t size = sizeof(**pbuckets) * num;
-	*pbuckets = kmalloc(size, GFP_KERNEL);
+	*pbuckets = kzalloc(size, GFP_KERNEL);
 	if (!*pbuckets)
 		return -ENOMEM;
-	memset(*pbuckets, 0, size);
 	return 0;
 }
 
@@ -65,7 +63,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 		goto out; /* Duplicate. */
 
 	rc = -ENOMEM;
-	new_xtbl = kmalloc(sizeof(*new_xtbl), GFP_KERNEL);
+	new_xtbl = kzalloc(sizeof(*new_xtbl), GFP_KERNEL);
 	if (!new_xtbl)
 		goto out;
 	if (alloc_buckets(&new_xtbl->fxt_buckets, XTBL_INITIAL_DIV))
@@ -74,7 +72,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	new_xtbl->fxt_ppal_type = ty;
 	new_xtbl->fxt_ops = ops;
 	new_xtbl->fxt_divisor = XTBL_INITIAL_DIV;
-	new_xtbl->fxt_count = 0;
+	atomic_set(&new_xtbl->fxt_count, 0);
 	hlist_add_head(&new_xtbl->fxt_list, head);
 
 	rc = 0;
@@ -96,7 +94,7 @@ static void end_xtbl(struct fib_xid_table *xtbl)
 {
 	void (*free_callback)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 	int rm_count = 0;
-	int i;
+	int i, c;
 
 	free_callback = xtbl->fxt_ops->free_fxid ?
 		xtbl->fxt_ops->free_fxid : free_fxid;
@@ -118,12 +116,12 @@ static void end_xtbl(struct fib_xid_table *xtbl)
 	/* It doesn't return an error here because there's nothing
          * the caller can do about this error/bug.
 	 */
-	if (xtbl->fxt_count != rm_count)
+	c = atomic_read(&xtbl->fxt_count);
+	if (c != rm_count)
 		printk(KERN_ERR "While freeing XID table of principal %x "
 			"%i entries were found, whereas %i are counted! "
 			"Ignoring it, but it's a serious bug!\n",
-			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count,
-			xtbl->fxt_count);
+			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
 
 	kfree(xtbl);
 }
@@ -200,7 +198,7 @@ EXPORT_SYMBOL_GPL(__xia_find_xid);
 static int rehash_xtbl(struct fib_xid_table *xtbl)
 {
 	struct hlist_head *new_buckets;
-	int rc, i;
+	int rc, i, c;
 	int old_divisor = xtbl->fxt_divisor;
 	int new_divisor = old_divisor * 2;
 	int mv_count = 0;
@@ -227,13 +225,13 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
 	/* It doesn't return an error here because there's nothing
          * the caller can do about this error/bug.
 	 */
-	if (xtbl->fxt_count != mv_count) {
+	c = atomic_read(&xtbl->fxt_count);
+	if (c != mv_count) {
 		printk(KERN_ERR "While rehashing XID table of principal %x "
 			"%i entries were found, whereas %i are counted! "
 			"Fixing the counter for now, but it's a serious bug!\n",
-			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count,
-			xtbl->fxt_count);
-		xtbl->fxt_count = mv_count;
+			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count, c);
+		atomic_set(&xtbl->fxt_count, mv_count);
 	}
 
 	return 0;
@@ -243,15 +241,16 @@ int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct hlist_head *head;
 	struct fib_xid *old_fxid = __xia_find_xid(xtbl, fxid->fx_xid, &head);
+	int c;
 
 	if (old_fxid)
 		return -ESRCH;
 
 	hlist_add_head(&fxid->fx_list, head);
-	xtbl->fxt_count++;
+	c = atomic_inc_return(&xtbl->fxt_count);
 
 	/* Grow table as needed. */
-	if (xtbl->fxt_count / xtbl->fxt_divisor > 2) {
+	if (c / xtbl->fxt_divisor > 2) {
 		int rc = rehash_xtbl(xtbl);
 		if (rc)
 			printk(KERN_ERR
@@ -266,7 +265,7 @@ EXPORT_SYMBOL_GPL(fib_add_xid);
 void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	hlist_del(&fxid->fx_list);
-	xtbl->fxt_count--;
+	atomic_dec(&xtbl->fxt_count);
 }
 EXPORT_SYMBOL_GPL(fib_rm_fxid);
 

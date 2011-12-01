@@ -101,7 +101,7 @@ struct sockaddr_xia {
 #ifdef __KERNEL__
 
 /*
- * sock structs
+ *	Sock structs
  */
 
 /** struct xia_sock - representation of XIA sockets

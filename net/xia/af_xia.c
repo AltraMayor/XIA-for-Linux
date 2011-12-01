@@ -17,6 +17,7 @@
 #include <net/xia.h>
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
+#include <net/xia_dev.h>
 #include <net/sock.h>
 
 static void xia_sock_destruct(struct sock *sk)
@@ -405,9 +406,17 @@ static int __init xia_init(void)
 	if (rc)
 		goto out;
 
-	rc = proto_register(&xia_raw_prot, 1);
+	rc = xipdev_init();
 	if (rc)
 		goto nat;
+
+	rc = xia_fib_init();
+	if (rc)
+		goto xipdev;
+
+	rc = proto_register(&xia_raw_prot, 1);
+	if (rc)
+		goto fib;
 
 	/*
 	 *	Tell SOCKET that we are alive...
@@ -416,14 +425,19 @@ static int __init xia_init(void)
 	if (rc)
 		goto raw_prot;
 
-	xia_fib_init();
-
 	printk(KERN_ALERT "XIA loaded\n");
-	rc = 0;
 	goto out;
 
+/*
+sock:
+	sock_unregister(PF_XIA);
+*/
 raw_prot:
 	proto_unregister(&xia_raw_prot);
+fib:
+	xia_fib_exit();
+xipdev:
+	xipdev_exit();
 nat:
 	ppal_del_map(XIDTYPE_NAT);
 out:
@@ -435,9 +449,10 @@ out:
  */
 static void __exit xia_exit(void)
 {
-	xia_fib_exit();
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
+	xia_fib_exit();
+	xipdev_exit();
 	ppal_del_map(XIDTYPE_NAT);
 	printk(KERN_ALERT "XIA UNloaded\n");
 }
