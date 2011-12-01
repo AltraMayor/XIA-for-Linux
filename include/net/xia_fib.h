@@ -60,7 +60,7 @@ struct fib_xid_table {
 	const struct xia_ppal_rt_ops	*fxt_ops;
 	struct hlist_head	*fxt_buckets;	/* Heads of bucket lists. */
 	int			fxt_divisor;	/* Number of buckets.	  */
-	int			fxt_count;	/* Number of entries.	  */
+	atomic_t		fxt_count;	/* Number of entries.	  */
 	struct hlist_node	fxt_list; /* To be added in fib_xia_rtable. */
 };
 
@@ -102,7 +102,7 @@ static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 
 /* Exported by fib_frontend.c */
 
-void xia_fib_init(void);
+int xia_fib_init(void);
 void xia_fib_exit(void);
 
 /* xia_register_pernet_subsys - is just a wrapper for

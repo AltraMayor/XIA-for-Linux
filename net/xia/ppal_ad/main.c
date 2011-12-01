@@ -20,10 +20,9 @@ static int newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 		goto out;
 
 	rc = -ENOMEM;
-	xad = kmalloc(sizeof(*xad), GFP_KERNEL);
+	xad = kzalloc(sizeof(*xad), GFP_KERNEL);
 	if (!xad)
 		goto out;
-	memset(xad, 0, sizeof(*xad));
 
 	memmove(xad->xad_common.fx_xid, cfg->xfc_dst->xid_id, XIA_XID_MAX);
 	xad->xad_gw	= *cfg->xfc_gw;
@@ -133,7 +132,7 @@ static void __net_exit ad_net_exit(struct net *net)
 	rtnl_unlock();
 }
 
-static struct pernet_operations ad_net_ops = {
+static struct pernet_operations ad_net_ops __read_mostly = {
 	.init = ad_net_init,
 	.exit = ad_net_exit,
 };
@@ -158,7 +157,7 @@ static int __init xia_ad_init(void)
 	goto out;
 
 net:
-	unregister_pernet_subsys(&ad_net_ops);
+	xia_unregister_pernet_subsys(&ad_net_ops);
 out:
 	return rc;
 }
