@@ -1,8 +1,10 @@
 #include <linux/init.h>
 #include <linux/socket.h>
 #include <linux/export.h>
+#include <linux/jhash.h>
 #include <asm/cache.h>
 #include <net/rtnetlink.h>
+#include <net/netns/hash.h>
 #include <net/xia_fib.h>
 
 #define XID_NLATTR	{ .len = sizeof(struct xia_xid) }
@@ -219,6 +221,34 @@ static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 }
 
 /*
+ * XIA lock table
+ */
+
+static struct xia_lock_table xia_lock_table __read_mostly;
+
+static inline u32 fib_hash(struct net *net, struct xia_xid *xid)
+{
+	BUILD_BUG_ON(sizeof(xid->xid_type) != sizeof(u32));
+	BUILD_BUG_ON(sizeof(xid->xid_id) != sizeof(u32) * 5);
+	return jhash_2words(net_hash_mix(net), xid->xid_type,
+		jhash2((const u32 *)xid->xid_id, 5, 0));
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+void xia_fib_lock(struct net *net, struct xia_xid *xid)
+{
+	xia_lock_table_lock(&xia_lock_table, fib_hash(net, xid));
+}
+EXPORT_SYMBOL_GPL(xia_fib_lock);
+
+/* Don't make this function inline, it's bigger than it looks like! */
+void xia_fib_unlock(struct net *net, struct xia_xid *xid)
+{
+	xia_lock_table_unlock(&xia_lock_table, fib_hash(net, xid));
+}
+EXPORT_SYMBOL_GPL(xia_fib_unlock);
+
+/*
  *	Network namespace
  */
 
@@ -262,15 +292,24 @@ EXPORT_SYMBOL_GPL(xia_register_pernet_subsys);
 
 int xia_fib_init(void)
 {
-	int rc;
+	int rc, size, n;
+
+	rc = xia_lock_table_init(&xia_lock_table);
+	if (rc < 0)
+		goto out;
+	size = rc;
 
 	rc = register_pernet_subsys(&fib_net_ops);
 	if (rc)
-		goto out;
+		goto locks;
 
 	rtnl_register(PF_XIA, RTM_NEWROUTE, xia_rtm_newroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
+
+	n = xia_lock_table.mask + 1;
+	printk(KERN_INFO "XIA lock table entries: %i = 2^%i (%i bytes)\n",
+		n, ilog2(n), size);
 	goto out;
 
 /*
@@ -279,6 +318,8 @@ rtnl:
 net:
 	unregister_pernet_subsys(&fib_net_ops);
 */
+locks:
+	xia_lock_table_finish(&xia_lock_table);
 out:
 	return rc;
 }
@@ -287,4 +328,5 @@ void xia_fib_exit(void)
 {
 	rtnl_unregister_all(PF_XIA);
 	unregister_pernet_subsys(&fib_net_ops);
+	xia_lock_table_finish(&xia_lock_table);
 }
