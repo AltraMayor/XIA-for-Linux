@@ -1,11 +1,12 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/export.h>
+#include <linux/jhash.h>
+#include <linux/cpumask.h>
 #include <asm/atomic.h>
 #include <net/xia_fib.h>
 
 /* TODO Review the code for concorrency! */
-/* XXX Some structures may need a slab for better performance. */
 
 struct fib_xia_rtable *create_xia_rtable(int tbl_id)
 {
@@ -155,17 +156,11 @@ int destroy_xia_rtable(struct fib_xia_rtable *rtbl)
 	return 0;
 }
 
-static inline u32 sum_xid(const char *xid)
-{
-	const u32 *n = (const u32 *)xid;
-	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const u32) * 5);
-	return n[0] + n[1] + n[2] + n[3] + n[4];
-}
-
 static inline struct hlist_head *xidhead(struct hlist_head *buckets,
 					const char *xid, int divisor)
 {
-	return &buckets[sum_xid(xid) % divisor];
+	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const u32) * 5);
+	return &buckets[jhash2((const u32 *)xid, 5, 0) % divisor];
 }
 
 static inline int are_xids_equal(const char *xid1, const char *xid2)
@@ -200,6 +195,7 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
 	struct hlist_head *new_buckets;
 	int rc, i, c;
 	int old_divisor = xtbl->fxt_divisor;
+	/* XXX Enforce that divisor is a power of 2 and simplify xidhead. */
 	int new_divisor = old_divisor * 2;
 	int mv_count = 0;
 
@@ -281,3 +277,55 @@ struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid)
 	return fxid;
 }
 EXPORT_SYMBOL_GPL(fib_rm_xid);
+
+/*
+ *	Lock tables
+ */
+
+int xia_lock_table_init(struct xia_lock_table *lock_table)
+{
+	int cpus = num_possible_cpus();
+	int i, nlocks;
+	size_t size;
+	spinlock_t *locks;
+
+	BUG_ON(cpus <= 0);
+	nlocks = roundup_pow_of_two(cpus) * 0x100;
+	BUG_ON(!is_power_of_2(nlocks));
+
+	size = sizeof(spinlock_t) * nlocks;
+	locks = kmalloc(size, GFP_KERNEL);
+	if (!locks)
+		return -ENOMEM;
+	for (i = 0; i < nlocks; i++)
+		spin_lock_init(&locks[i]);
+
+	lock_table->locks = locks;
+	lock_table->mask = nlocks - 1;
+	return size;
+}
+EXPORT_SYMBOL_GPL(xia_lock_table_init);
+
+void xia_lock_table_finish(struct xia_lock_table *lock_table)
+{
+	spinlock_t *locks = lock_table->locks;
+	int i, n, warn;
+
+	if (!locks)
+		return;
+
+	n = lock_table->mask + 1;
+	warn = 0;
+	for (i = 0; i < n; n++)
+		if (spin_is_locked(&locks[i])) {
+			warn = 1;
+			break;
+		}
+	if (warn)
+		pr_err("Freeing alive lock table %p\n", lock_table);
+
+	kfree(locks);
+	lock_table->locks = NULL;
+	lock_table->mask = 0;
+}
+EXPORT_SYMBOL_GPL(xia_lock_table_finish);

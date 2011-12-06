@@ -100,7 +100,9 @@ static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
 	}
 }
 
-/* Exported by fib_frontend.c */
+/*
+ * Exported by fib_frontend.c
+ */
 
 int xia_fib_init(void);
 void xia_fib_exit(void);
@@ -119,7 +121,16 @@ static inline void xia_unregister_pernet_subsys(struct pernet_operations *ops)
 	unregister_pernet_subsys(ops);
 }
 
-/* Exported by fib.c */
+/* If a principal's routing table is edited by other entity than RTNetlink,
+ * it must manage the required locks with the following functions.
+ * If only RTNetlink edits, RTNL lock is enough.
+ */
+void xia_fib_lock(struct net *net, struct xia_xid *xid);
+void xia_fib_unlock(struct net *net, struct xia_xid *xid);
+
+/*
+ *	Exported by fib.c
+ */
 
 /* Create and return a fib_xia_rtable.
  * It returns the struct, otherwise NULL.
@@ -158,6 +169,49 @@ static inline struct fib_xid *xia_find_xid(struct fib_xid_table *xtbl,
 {
 	struct hlist_head *head;
 	return __xia_find_xid(xtbl, xid, &head);
+}
+
+/*
+ *	Lock tables
+ */
+
+struct xia_lock_table {
+	spinlock_t	*locks;
+	int		mask;
+};
+
+/*
+ * The following functions are only intended if xia_fib_lock and xia_fib_unlock
+ * are not enough.
+ */
+
+/* RETURN
+ *	Return the size in bytes of the vector of locks; otherwise a negative
+ *	number with the error.
+ * NOTE
+ *	The number of locks in the table is a power of two, and
+ *	depends on the number of CPUS.
+ */
+int xia_lock_table_init(struct xia_lock_table *lock_table);
+
+/* NOTE
+ *	It does NOT free @lock_table since this function can be used on
+ *	static and stack-allocated structures.
+ *
+ *	Caller must make sure that the table is NOT being used anymore.
+ */
+void xia_lock_table_finish(struct xia_lock_table *lock_table);
+
+static inline void xia_lock_table_lock(struct xia_lock_table *lock_table,
+	u32 hash)
+{
+	spin_lock(&lock_table->locks[hash & lock_table->mask]);
+}
+
+static inline void xia_lock_table_unlock(struct xia_lock_table *lock_table,
+	u32 hash)
+{
+	spin_unlock(&lock_table->locks[hash & lock_table->mask]);
 }
 
 #endif /* __KERNEL__ */
