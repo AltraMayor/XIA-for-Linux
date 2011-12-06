@@ -454,6 +454,11 @@ static void __exit xia_exit(void)
 	xia_fib_exit();
 	xipdev_exit();
 	ppal_del_map(XIDTYPE_NAT);
+
+	/* TODO check if rc_barrier must be called here, and principals.
+	rcu_barrier();
+	*/
+
 	printk(KERN_ALERT "XIA UNloaded\n");
 }
 
