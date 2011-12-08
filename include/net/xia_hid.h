@@ -27,8 +27,15 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 #ifdef __KERNEL__
 
 #include <linux/timer.h>
+#include <linux/rtnetlink.h>
 
-/* TODO Rename it to xia_hid_net. */
+/*
+ *	Neighborhood Watch Protocol (NWP)
+ *
+ * 	Exported by nwp.c
+ */
+
+/* struct xia_hid_state keeps the state of HID principal per struct net. */
 struct xia_hid_state {
 	/* TODO Use attomic here! */
 	u8	new_hids_to_announce;
@@ -38,8 +45,6 @@ struct xia_hid_state {
 	struct timer_list announce_timer;
 };
 
-/* Exported by nwp.c */
-
 int hid_nwp_init(void);
 void hid_nwp_exit(void);
 
@@ -48,6 +53,62 @@ void hid_free_hid_state(struct net *net);
 
 void announce_myself(struct net *net);
 void stop_announcements(struct net *net);
+
+/*
+ *	HID Device
+ */
+
+struct hid_dev {
+	/* These fields are inspired by struct in_device. */
+	struct net_device	*dev;
+	atomic_t		refcnt;
+	int			dead;
+	struct rcu_head		rcu_head;
+
+	atomic_t		neigh_cnt;
+	spinlock_t		neigh_lock; /* Lock for the neighs list. */
+	struct list_head	neighs;
+};
+
+static inline struct hid_dev *__hid_dev_get_rcu(const struct net_device *dev)
+{
+	return rcu_dereference(dev->hid_ptr);
+}
+
+static inline struct hid_dev *hid_dev_get(const struct net_device *dev)
+{
+	struct hid_dev *hdev;
+
+	rcu_read_lock();
+	hdev = __hid_dev_get_rcu(dev);
+	if (hdev)
+		atomic_inc(&hdev->refcnt);
+	rcu_read_unlock();
+	return hdev;
+}
+
+static inline struct hid_dev *__hid_dev_get_rtnl(const struct net_device *dev)
+{
+	return rtnl_dereference(dev->hid_ptr);
+}
+
+void hid_dev_finish_destroy(struct hid_dev *hdev);
+
+static inline void hid_dev_put(struct hid_dev *hdev)
+{
+	if (atomic_dec_and_test(&hdev->refcnt))
+		hid_dev_finish_destroy(hdev);
+}
+
+static inline void __hid_dev_put(struct hid_dev *hdev)
+{
+	atomic_dec(&hdev->refcnt);
+}
+
+static inline void hid_dev_hold(struct hid_dev *hdev)
+{
+	atomic_inc(&hdev->refcnt);
+}
 
 #endif /* __KERNEL__ */
 
