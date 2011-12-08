@@ -103,16 +103,119 @@ static struct packet_type nwp_packet_type __read_mostly = {
 };
 
 /*
+ *	Network Devices
+ */
+
+void hid_dev_finish_destroy(struct hid_dev *hdev)
+{
+	struct net_device *dev = hdev->dev;
+
+#ifdef NET_REFCNT_DEBUG
+	printk(KERN_DEBUG "%s: %p=%s\n", __FUNCTION__, hdev, dev->name);
+#endif
+	if (!hdev->dead)
+		pr_err("%s: freeing alive hid_dev %p=%s\n",
+			__FUNCTION__, hdev, dev->name);
+
+	dev_put(dev);
+	kfree(hdev);
+}
+
+static struct hid_dev *hdev_init(struct net_device *dev)
+{
+	struct hid_dev *hdev;
+
+	ASSERT_RTNL();
+
+	hdev = kzalloc(sizeof(*hdev), GFP_KERNEL);
+	if (!hdev)
+		return NULL;
+
+	hdev->dev = dev;
+	dev_hold(dev);
+
+	spin_lock_init(&hdev->neigh_lock);
+	INIT_LIST_HEAD(&hdev->neighs);
+
+	hid_dev_hold(hdev);
+	RCU_INIT_POINTER(dev->hid_ptr, hdev);
+	return hdev;
+}
+
+static void hid_dev_rcu_put(struct rcu_head *head)
+{
+	struct hid_dev *hdev = container_of(head, struct hid_dev, rcu_head);
+	hid_dev_put(hdev);
+}
+
+static void hdev_destroy(struct hid_dev *hdev)
+{
+	ASSERT_RTNL();
+	hdev->dead = 1;
+	RCU_INIT_POINTER(hdev->dev->hid_ptr, NULL);
+
+	/* TODO Remove neighbors from neighs list. Is it the right place? */
+
+	call_rcu(&hdev->rcu_head, hid_dev_rcu_put);
+}
+
+static int hid_netdev_event(struct notifier_block *nb,
+	unsigned long event, void *ptr)
+{
+	struct net_device *dev = ptr;
+	struct hid_dev *hdev;
+
+	ASSERT_RTNL();
+	hdev = __hid_dev_get_rtnl(dev);
+
+	switch (event) {
+	case NETDEV_REGISTER:
+		BUG_ON(hdev);
+		hdev = hdev_init(dev);
+		if (!hdev)
+			return notifier_from_errno(-ENOMEM);
+		break;
+	case NETDEV_UNREGISTER:
+		hdev_destroy(hdev);
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block hid_netdev_notifier __read_mostly = {
+	.notifier_call = hid_netdev_event,
+};
+
+/*
  *	Initialize NWP
  */
 
 int hid_nwp_init(void)
 {
+	int rc;
+
+	rc = register_netdevice_notifier(&hid_netdev_notifier);
+	if (rc)
+		goto out;
+
 	dev_add_pack(&nwp_packet_type);
-	return 0;
+
+out:
+	return rc;
 }
 
 void hid_nwp_exit(void)
 {
+	struct net *net;
+	struct net_device *dev;
+
 	dev_remove_pack(&nwp_packet_type);
+	unregister_netdevice_notifier(&hid_netdev_notifier);
+
+	/* Remove hid_dev from all devices. */
+	rtnl_lock();
+	for_each_net(net)
+		for_each_netdev(net, dev)
+			hdev_destroy(__hid_dev_get_rtnl(dev));
+	rtnl_unlock();
 }
