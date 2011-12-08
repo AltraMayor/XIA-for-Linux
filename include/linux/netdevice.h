@@ -1208,8 +1208,8 @@ struct net_device {
 	struct in_device __rcu	*ip_ptr;	/* IPv4 specific data	*/
 	struct dn_dev __rcu     *dn_ptr;        /* DECnet specific data */
 	struct inet6_dev __rcu	*ip6_ptr;       /* IPv6 specific data */
-#if defined(CONFIG_XIA) || defined(CONFIG_XIA_MODULE)
-	struct xip_dev __rcu	*xip_ptr;	/* XIP specific data */
+#if defined(CONFIG_XIA_PPAL_HID) || defined(CONFIG_XIA_PPAL_HID_MODULE)
+	struct hid_dev __rcu	*hid_ptr;	/* XIA HID principal's data */
 #endif
 	void			*ec_ptr;	/* Econet specific data	*/
 	void			*ax25_ptr;	/* AX.25 specific data */
