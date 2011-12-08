@@ -17,7 +17,6 @@
 #include <net/xia.h>
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
-#include <net/xia_dev.h>
 #include <net/sock.h>
 
 static void xia_sock_destruct(struct sock *sk)
@@ -406,13 +405,9 @@ static int __init xia_init(void)
 	if (rc)
 		goto out;
 
-	rc = xipdev_init();
-	if (rc)
-		goto nat;
-
 	rc = xia_fib_init();
 	if (rc)
-		goto xipdev;
+		goto nat;
 
 	rc = proto_register(&xia_raw_prot, 1);
 	if (rc)
@@ -436,8 +431,6 @@ raw_prot:
 	proto_unregister(&xia_raw_prot);
 fib:
 	xia_fib_exit();
-xipdev:
-	xipdev_exit();
 nat:
 	ppal_del_map(XIDTYPE_NAT);
 out:
@@ -452,7 +445,6 @@ static void __exit xia_exit(void)
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
 	xia_fib_exit();
-	xipdev_exit();
 	ppal_del_map(XIDTYPE_NAT);
 
 	/* TODO check if rc_barrier must be called here, and principals.
