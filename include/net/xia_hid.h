@@ -4,6 +4,9 @@
 #include <linux/netdevice.h>
 #include <linux/netlink.h>
 
+/* Host Principal */
+#define XIDTYPE_HID (__cpu_to_be32(0x11))
+
 struct rtnl_xia_hid_hdw_addrs {
 	__u16		hha_len;
 	__u8		hha_addr_len;
@@ -28,6 +31,7 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 
 #include <linux/timer.h>
 #include <linux/rtnetlink.h>
+#include <net/xia_fib.h>
 
 /*
  *	Neighborhood Watch Protocol (NWP)
@@ -35,24 +39,35 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
  * 	Exported by nwp.c
  */
 
-/* struct xia_hid_state keeps the state of HID principal per struct net. */
-struct xia_hid_state {
-	/* TODO Use attomic here! */
-	u8	new_hids_to_announce;
+/*
+ *	Neighbor Table
+ */
 
-	/* 3 bytes free. */
-
-	struct timer_list announce_timer;
+/* Hardware Address. */
+struct hrdw_addr {
+	struct fib_xid_hid_main	*mhid;
+	struct list_head	ha_list;
+	struct list_head	hdev_list;
+	struct net_device	*dev;
+	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
+	 * enforce alignment, otherwise use the following line:
+	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
+	 */
+	u8			ha[MAX_ADDR_LEN];
 };
 
-int hid_nwp_init(void);
-void hid_nwp_exit(void);
+struct fib_xid_hid_main {
+	struct fib_xid		xhm_common;
+	struct list_head	xhm_haddrs;
+};
 
-int hid_new_hid_state(struct net *net);
-void hid_free_hid_state(struct net *net);
+int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
+	struct net_device *dev, const u8 *lladdr);
 
-void announce_myself(struct net *net);
-void stop_announcements(struct net *net);
+int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
+	struct net_device *dev, const u8 *lladdr);
+
+void free_mhid(struct fib_xid_hid_main *mhid);
 
 /*
  *	HID Device
@@ -109,6 +124,29 @@ static inline void hid_dev_hold(struct hid_dev *hdev)
 {
 	atomic_inc(&hdev->refcnt);
 }
+
+/*
+ *	NWP state per struct net
+ */
+
+/* struct xia_hid_state keeps the state of NWP per struct net. */
+struct xia_hid_state {
+	/* TODO Use attomic here! */
+	u8	new_hids_to_announce;
+
+	/* 3 bytes free. */
+
+	struct timer_list announce_timer;
+};
+
+int hid_nwp_init(void);
+void hid_nwp_exit(void);
+
+int hid_new_hid_state(struct net *net);
+void hid_free_hid_state(struct net *net);
+
+void announce_myself(struct net *net);
+void stop_announcements(struct net *net);
 
 #endif /* __KERNEL__ */
 
