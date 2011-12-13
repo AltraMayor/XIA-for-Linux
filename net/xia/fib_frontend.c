@@ -1,10 +1,7 @@
 #include <linux/init.h>
 #include <linux/socket.h>
 #include <linux/export.h>
-#include <linux/jhash.h>
-#include <asm/cache.h>
 #include <net/rtnetlink.h>
-#include <net/netns/hash.h>
 #include <net/xia_fib.h>
 
 #define XID_NLATTR	{ .len = sizeof(struct xia_xid) }
@@ -93,11 +90,19 @@ static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	rtbl = xia_fib_get_table(net, cfg.xfc_table);
 	if (rtbl == NULL)
 		return -EINVAL;
-	xtbl = xia_find_xtbl(rtbl, cfg.xfc_dst->xid_type);
-	if (xtbl == NULL)
-		return -EXTYNOSUPPORT;
 
-	return xtbl->fxt_ops->newroute(xtbl, &cfg);
+	rcu_read_lock();
+	xtbl = xia_find_xtbl_rcu(rtbl, cfg.xfc_dst->xid_type);
+	if (xtbl == NULL) {
+		rcu_read_unlock();
+		return -EXTYNOSUPPORT;
+	}
+	xtbl_hold(xtbl);
+	rcu_read_unlock();
+
+	rc = xtbl->fxt_eops->newroute(xtbl, &cfg);
+	xtbl_put(xtbl);
+	return rc;
 }
 
 static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
@@ -118,43 +123,57 @@ static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	rtbl = xia_fib_get_table(net, cfg.xfc_table);
 	if (rtbl == NULL)
 		return -EINVAL;
-	xtbl = xia_find_xtbl(rtbl, cfg.xfc_dst->xid_type);
-	if (xtbl == NULL)
-		return -EXTYNOSUPPORT;
 
-	return xtbl->fxt_ops->delroute(xtbl, &cfg);
+	rcu_read_lock();
+	xtbl = xia_find_xtbl_rcu(rtbl, cfg.xfc_dst->xid_type);
+	if (xtbl == NULL) {
+		rcu_read_unlock();
+		return -EXTYNOSUPPORT;
+	}
+	xtbl_hold(xtbl);
+	rcu_read_unlock();
+
+	rc = xtbl->fxt_eops->delroute(xtbl, &cfg);
+	xtbl_put(xtbl);
+	return rc;
 }
 
 static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
+	struct fib_xid_buckets *abranch;
 	long i, j = 0;
 	long first_j = cb->args[4];
 	int dumped = 0;
-	int divisor = xtbl->fxt_divisor;
+	int divisor, aindex;
 
+	rcu_read_lock();
+	abranch = rcu_dereference(xtbl->fxt_active_branch);
+	divisor = abranch->divisor;
+	aindex = abranch->index;
 	for (i = cb->args[3]; i < divisor; i++, first_j = 0) {
 		struct fib_xid *fxid;
 		struct hlist_node *p;
-		struct hlist_head *head = &xtbl->fxt_buckets[i];
+		struct hlist_head *head = &abranch->buckets[i];
 		j = 0;
-		hlist_for_each_entry(fxid, p, head, fx_list) {
+		hlist_for_each_entry_rcu(fxid, p, head,
+			fx_branch_list[aindex]) {
 			if (j < first_j)
 				goto next;
 			if (dumped)
 				memset(&cb->args[5], 0, sizeof(cb->args) -
 						 5 *	sizeof(cb->args[0]));
-			if (xtbl->fxt_ops->dump_fxid(fxid, xtbl, rtbl, skb, cb)
+			if (xtbl->fxt_eops->dump_fxid(fxid, xtbl, rtbl, skb, cb)
 				< 0)
 				goto out;
 			dumped = 1;
 next:
 			j++;
 		}
-
 	}
 out:
+	rcu_read_unlock();
 	cb->args[3] = i;
 	cb->args[4] = j;
 	return skb->len;
@@ -172,19 +191,22 @@ static int xia_fib_dump_rtable(struct fib_xia_rtable *rtbl, struct sk_buff *skb,
 		struct hlist_node *p;
 		struct hlist_head *head = &rtbl->ppal[i];
 		j = 0;
-		hlist_for_each_entry(xtbl, p, head, fxt_list) {
+		rcu_read_lock();
+		hlist_for_each_entry_rcu(xtbl, p, head, fxt_list) {
 			if (j < first_j)
 				goto next;
 			if (dumped)
 				memset(&cb->args[3], 0, sizeof(cb->args) -
 						 3 *	sizeof(cb->args[0]));
-			if (xia_fib_dump_ppal(xtbl, rtbl, skb, cb) < 0)
+			if (xia_fib_dump_ppal(xtbl, rtbl, skb, cb) < 0) {
+				rcu_read_unlock();
 				goto out;
+			}
 			dumped = 1;
 next:
 			j++;
 		}
-
+		rcu_read_unlock();
 	}
 out:
 	cb->args[1] = i;
@@ -221,50 +243,23 @@ static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 }
 
 /*
- * XIA lock table
- */
-
-static struct xia_lock_table xia_lock_table __read_mostly;
-
-static inline u32 fib_hash(struct net *net, struct xia_xid *xid)
-{
-	BUILD_BUG_ON(sizeof(xid->xid_type) != sizeof(u32));
-	BUILD_BUG_ON(sizeof(xid->xid_id) != sizeof(u32) * 5);
-	return jhash_2words(net_hash_mix(net), xid->xid_type,
-		jhash2((const u32 *)xid->xid_id, 5, 0));
-}
-
-/* Don't make this function inline, it's bigger than it looks like! */
-void xia_fib_lock(struct net *net, struct xia_xid *xid)
-{
-	xia_lock_table_lock(&xia_lock_table, fib_hash(net, xid));
-}
-EXPORT_SYMBOL_GPL(xia_fib_lock);
-
-/* Don't make this function inline, it's bigger than it looks like! */
-void xia_fib_unlock(struct net *net, struct xia_xid *xid)
-{
-	xia_lock_table_unlock(&xia_lock_table, fib_hash(net, xid));
-}
-EXPORT_SYMBOL_GPL(xia_fib_unlock);
-
-/*
  *	Network namespace
  */
 
 static int __net_init fib_net_init(struct net *net)
 {
-	net->xia.local_rtbl = create_xia_rtable(XRTABLE_LOCAL_INDEX);
+	RCU_INIT_POINTER(net->xia.local_rtbl,
+		create_xia_rtable(XRTABLE_LOCAL_INDEX));
 	if (!net->xia.local_rtbl)
 		goto error;
-	net->xia.main_rtbl = create_xia_rtable(XRTABLE_MAIN_INDEX);
+	RCU_INIT_POINTER(net->xia.main_rtbl,
+		create_xia_rtable(XRTABLE_MAIN_INDEX));
 	if (!net->xia.main_rtbl)
 		goto local;
 	return 0;
 
 local:
-	destroy_xia_rtable(net->xia.local_rtbl);
-	net->xia.local_rtbl = NULL;
+	destroy_xia_rtable(&net->xia.local_rtbl);
 error:
 	return -ENOMEM;
 }
@@ -272,10 +267,8 @@ error:
 static void __net_exit fib_net_exit(struct net *net)
 {
 	rtnl_lock();
-	destroy_xia_rtable(net->xia.main_rtbl);
-	net->xia.main_rtbl = NULL;
-	destroy_xia_rtable(net->xia.local_rtbl);
-	net->xia.local_rtbl = NULL;
+	destroy_xia_rtable(&net->xia.main_rtbl);
+	destroy_xia_rtable(&net->xia.local_rtbl);
 	rtnl_unlock();
 }
 
@@ -294,10 +287,9 @@ int xia_fib_init(void)
 {
 	int rc, size, n;
 
-	rc = xia_lock_table_init(&xia_lock_table);
-	if (rc < 0)
+	rc = init_main_lock_table(&size, &n);
+	if (rc)
 		goto out;
-	size = rc;
 
 	rc = register_pernet_subsys(&fib_net_ops);
 	if (rc)
@@ -307,7 +299,6 @@ int xia_fib_init(void)
 	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
 
-	n = xia_lock_table.mask + 1;
 	printk(KERN_INFO "XIA lock table entries: %i = 2^%i (%i bytes)\n",
 		n, ilog2(n), size);
 	goto out;
@@ -319,7 +310,7 @@ net:
 	unregister_pernet_subsys(&fib_net_ops);
 */
 locks:
-	xia_lock_table_finish(&xia_lock_table);
+	destroy_main_lock_table();
 out:
 	return rc;
 }
@@ -328,5 +319,5 @@ void xia_fib_exit(void)
 {
 	rtnl_unregister_all(PF_XIA);
 	unregister_pernet_subsys(&fib_net_ops);
-	xia_lock_table_finish(&xia_lock_table);
+	destroy_main_lock_table();
 }

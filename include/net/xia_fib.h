@@ -49,23 +49,53 @@ struct xia_fib_config {
  * A bucket list for a give principal should define a struct that has it
  * as fist element. */
 struct fib_xid {
-	struct hlist_node	fx_list;		/* Bucket list.	*/
-	u8			fx_xid[XIA_XID_MAX];	/* XID		*/
+	/* Bucket lists. */
+	struct hlist_node	fx_branch_list[2];
+	/* XID */
+	u8			fx_xid[XIA_XID_MAX];
 };
 
-struct xia_ppal_rt_ops;
+struct xia_ppal_rt_eops;
+struct xia_ppal_rt_iops;
+
+struct fib_xid_buckets {
+	/* Heads of bucket lists. */
+	struct hlist_head	*buckets;
+	/* Number of buckets; it is a power of 2. */
+	int			divisor;
+	/* Index of this branch. One should use it to scan struct fib_xid's. */
+	int			index;
+};
 
 struct fib_xid_table {
-	xid_type_t		fxt_ppal_type;
-	const struct xia_ppal_rt_ops	*fxt_ops;
-	struct hlist_head	*fxt_buckets;	/* Heads of bucket lists. */
-	int			fxt_divisor;	/* Number of buckets.	  */
-	atomic_t		fxt_count;	/* Number of entries.	  */
-	struct hlist_node	fxt_list; /* To be added in fib_xia_rtable. */
+	atomic_t			refcnt;
+	struct rcu_head			rcu_head;
+
+	/* Principal type. */
+	xid_type_t			fxt_ppal_type;
+
+	/* Buckets. */
+	struct fib_xid_buckets __rcu	*fxt_active_branch;
+	struct fib_xid_buckets		fxt_branch[2];
+	/* Number of entries. */
+	atomic_t			fxt_count;
+
+	/* To be added in fib_xia_rtable. */
+	struct hlist_node		fxt_list;
+
+	const struct xia_ppal_rt_eops	*fxt_eops;
+	const struct xia_ppal_rt_iops	*fxt_iops;
+
+	/* The following fields are only needed when this struct is
+	 * instantiated to support multiple writers.
+	 */
+	char extra[0];
+	u32				fxt_seed;
+	rwlock_t			fxt_writers_lock;
 };
 
-/* Operations needed to maintain a routing table of a principal. */
-struct xia_ppal_rt_ops {
+/* Operations implemented externally by the code that instantiates an xtbl. */
+struct xia_ppal_rt_eops {
 	/* RTNetlink support
 	 * All callbacks are required.
 	 */
@@ -79,12 +109,28 @@ struct xia_ppal_rt_ops {
 	void (*free_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 };
 
-/* One could use principal type as part of the hash function and have only
+/* Operations implemented internally according to the chosen lock mechanism. */
+struct xia_ppal_rt_iops {
+	struct fib_xid *(*find_xid_lock)(struct fib_xid_table *xtbl,
+		const u8 *xid);
+	void (*iterate_xids)(struct fib_xid_table *xtbl,
+		void (*locked_callback)(struct fib_xid_table *xtbl,
+			struct fib_xid *fxid, void *arg),
+		void *arg);
+	int (*add_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+	void (*rm_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+	void (*unlock_xid)(struct fib_xid_table *xtbl, const u8 *xid);
+};
+
+/* XIA Routing Table
+ *
+ * One could use principal type as part of the hash function and have only
  * a big hash table, but this would require a full table scan when a principal
  * were removed from the stack.
  */
 struct fib_xia_rtable {
 	int			tbl_id;
+	struct rcu_head		rcu_head;
 	struct hlist_head	ppal[NUM_PRINCIPAL_HINT];
 };
 
@@ -121,97 +167,176 @@ static inline void xia_unregister_pernet_subsys(struct pernet_operations *ops)
 	unregister_pernet_subsys(ops);
 }
 
-/* If a principal's routing table is edited by other entity than RTNetlink,
- * it must manage the required locks with the following functions.
- * If only RTNetlink edits, RTNL lock is enough.
- */
-void xia_fib_lock(struct net *net, struct xia_xid *xid);
-void xia_fib_unlock(struct net *net, struct xia_xid *xid);
-
 /*
  *	Exported by fib.c
  */
 
-/* Create and return a fib_xia_rtable.
- * It returns the struct, otherwise NULL.
+int init_main_lock_table(int *size_byte, int *n);
+void destroy_main_lock_table(void);
+
+/** create_xia_rtable - Create and return a fib_xia_rtable.
+ * RETURN
+ * 	It returns the struct on success, otherwise NULL.
+ * NOTE
+ *	Caller should use RCU_INIT_POINTER to assign it to the final pointer.
  */
 struct fib_xia_rtable *create_xia_rtable(int tbl_id);
 
-int destroy_xia_rtable(struct fib_xia_rtable *rtbl);
+/** destroy_xia_rtable - destroy @rtbl.
+ * NOTE
+ *	Caller must hold lock to avoid races with init_xid_table and
+ *	end_xid_table, *AND* no XID table held in @rtbl, if present,
+ *	can be being used or referenced outside of @rtbl.
+ */
+void destroy_xia_rtable(struct fib_xia_rtable **prtbl);
 
+/** init_xid_table - create a new XID table for type @ty.
+ * RETURN
+ *	-ESRCH in case an XID table for type @ty already exists.
+ *	0 on success.
+ * NOTE
+ *	Caller must hold lock to avoid races with end_xid_table and
+ *	destroy_xia_rtable.
+ *
+ *	If @xtbl is single writer, calls such as xia_find_xid_lock expect that
+ *	the lock is the same that the caller is already supposed to hold.
+ *	However, these calls make it easy to switch between single writer,
+ *	and multiple writers.
+ */
 int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
-			const struct xia_ppal_rt_ops *ops);
+	const struct xia_ppal_rt_eops *eops, int single_writer);
 
+/** end_xid_table - terminate XID table for type @ty.
+ * NOTE
+ *	Caller must hold lock to avoid races with init_xid_table and
+ *	destroy_xia_rtable.
+ */
 void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
 
-/* Please don't call __xia_find_xtbl directly, prefer xia_find_xtbl. */
-struct fib_xid_table *__xia_find_xtbl(struct fib_xia_rtable *rtbl,
-				xid_type_t ty, struct hlist_head **phead);
-
-static inline struct fib_xid_table *xia_find_xtbl(struct fib_xia_rtable *rtbl,
-					xid_type_t ty)
-{
-	struct hlist_head *head;
-	return __xia_find_xtbl(rtbl, ty, &head);
-}
-
-int fib_add_xid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
-
-void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
-struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const char *xid);
-
-/* Please don't call __xia_find_xid, prefer xia_find_xid. */
-struct fib_xid *__xia_find_xid(struct fib_xid_table *xtbl,
-	const char *xid, struct hlist_head **phead);
-
-static inline struct fib_xid *xia_find_xid(struct fib_xid_table *xtbl,
-	const char *xid)
-{
-	struct hlist_head *head;
-	return __xia_find_xid(xtbl, xid, &head);
-}
-
-/*
- *	Lock tables
- */
-
-struct xia_lock_table {
-	spinlock_t	*locks;
-	int		mask;
-};
-
-/*
- * The following functions are only intended if xia_fib_lock and xia_fib_unlock
- * are not enough.
- */
-
-/* RETURN
- *	Return the size in bytes of the vector of locks; otherwise a negative
- *	number with the error.
+/** xia_find_xtbl_rcu - Find XID table of type @ty.
+ * RETURN
+ * 	It returns the struct on success, otherwise NULL.
  * NOTE
- *	The number of locks in the table is a power of two, and
- *	depends on the number of CPUS.
- */
-int xia_lock_table_init(struct xia_lock_table *lock_table);
-
-/* NOTE
- *	It does NOT free @lock_table since this function can be used on
- *	static and stack-allocated structures.
+ * 	Caller must hold an RCU read lock to be safe against paralel calls to
+ * 	init_xid_table, end_xid_table, and destroy_xia_rtable.
  *
- *	Caller must make sure that the table is NOT being used anymore.
+ *	If the caller must keep the reference after an RCU read lock,
+ *	it must call xtbl_hold before releasing the RCU lock.
  */
-void xia_lock_table_finish(struct xia_lock_table *lock_table);
+struct fib_xid_table *xia_find_xtbl_rcu(struct fib_xia_rtable *rtbl,
+	xid_type_t ty);
 
-static inline void xia_lock_table_lock(struct xia_lock_table *lock_table,
-	u32 hash)
+/* Don't call this function directly, use xtbl_put instead. */
+void xtbl_finish_destroy(struct fib_xid_table *xtbl);
+
+static inline void xtbl_put(struct fib_xid_table *xtbl)
 {
-	spin_lock(&lock_table->locks[hash & lock_table->mask]);
+	if (atomic_dec_and_test(&xtbl->refcnt))
+		xtbl_finish_destroy(xtbl);
 }
 
-static inline void xia_lock_table_unlock(struct xia_lock_table *lock_table,
-	u32 hash)
+static inline void xtbl_hold(struct fib_xid_table *xtbl)
 {
-	spin_unlock(&lock_table->locks[hash & lock_table->mask]);
+	atomic_inc(&xtbl->refcnt);
+}
+
+void init_fxid(struct fib_xid *fxid, const u8 *xid);
+
+/* @fxid must not be in any XID table!
+ * @xtbl is just to invoke virtual methods.
+ */
+void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
+/** xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
+ * RETURN
+ * 	It returns the struct on success, otherwise NULL.
+ * NOTE
+ * 	Caller must hold an RCU read lock to be safe against paralel calls to
+ * 	fib_add_fxid, fib_rm_fxid, fib_rm_xid, and end_xid_table.
+ */
+struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
+
+/** xia_find_xid_lock - Find struct fib_xid in @xtbl that has key @xid.
+ * RETURN
+ * 	It returns the struct on success, otherwise NULL.
+ * NOTE
+ * 	Caller must always unlock with xia_fib_unlock_xid or xia_fib_unlock
+ *	afterwards.
+ */
+static inline struct fib_xid *xia_find_xid_lock(struct fib_xid_table *xtbl,
+	const u8 *xid)
+{
+	return xtbl->fxt_iops->find_xid_lock(xtbl, xid);
+}
+
+/** xia_iterate_xids - Visit all XIDs in @xtbl.
+ * NOTE
+ *	The lock is held when @locked_callback is called.
+ *	@locked_callback may remove the received @fxid it received.
+ */
+static inline void xia_iterate_xids(struct fib_xid_table *xtbl,
+	void (*locked_callback)(struct fib_xid_table *xtbl,
+		struct fib_xid *fxid, void *arg),
+	void *arg)
+{
+	xtbl->fxt_iops->iterate_xids(xtbl, locked_callback, arg);
+}
+
+/** fib_add_fxid - Add @fxid into @xtbl.
+ * RETURN
+ *	-ESRCH in case an fxid with same XID is already in @xtbl.
+ *	0 on success.
+ * NOTE
+ *	If @single_writer was true when init_xid_table was called,
+ *	caller must hold lock to avoid races with fib_rm_fxid and fib_rm_xid.
+ *
+ *	If @single_writer was false, then @xtbl will handle locks internally.
+ */
+static inline int fib_add_fxid(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid)
+{
+	return xtbl->fxt_iops->add_fxid(xtbl, fxid);
+}
+
+/** fib_rm_fxid - Remove @fxid from @xtbl.
+ * NOTE
+ *	If @single_writer was true when init_xid_table was called,
+ *	caller must hold lock to avoid races with fib_add_fxid and fib_rm_xid.
+ *
+ *	If @single_writer was false, then @xtbl will handle locks internally.
+ */
+static inline void fib_rm_fxid(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid)
+{
+	xtbl->fxt_iops->rm_fxid(xtbl, fxid);
+}
+
+/* Same as fib_rm_fxid, but it assumes that the lock is already held.
+ * BE VERY CAREFUL when calling this function because if the needed lock
+ * is not held, it may corrupt @xtbl!
+ */
+void fib_rm_fxid_locked(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
+/** fib_rm_xid - Remove @xid from @xtbl.
+ * RETURN
+ * 	It returns the fxid with same @xid on success, otherwise NULL.
+ * NOTE
+ *	If @single_writer was true when init_xid_table was called,
+ *	caller must hold lock to avoid races with fib_add_fxid and fib_rm_fxid.
+ *
+ *	If @single_writer was false, then @xtbl will handle locks internally.
+ */
+struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
+
+static inline void fib_unlock_xid(struct fib_xid_table *xtbl, const u8 *xid)
+{
+	xtbl->fxt_iops->unlock_xid(xtbl, xid);
+}
+
+static inline void fib_unlock_fxid(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid)
+{
+	fib_unlock_xid(xtbl, fxid->fx_xid);
 }
 
 #endif /* __KERNEL__ */
