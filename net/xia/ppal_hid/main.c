@@ -3,7 +3,7 @@
 #include <net/xia_hid.h>
 
 struct fib_xid_hid_local {
-	struct fib_xid	xhl_common;
+	struct fib_xid	xhl_common; /* It must be first field! */
 
 	/* XXX Adding a list of devs in which the HID is valid, would allow
 	 * a network administrator to enforce physical network isolations;
@@ -23,10 +23,9 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	lhid = kzalloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		goto out;
+	init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id);
 
-	memmove(lhid->xhl_common.fx_xid, cfg->xfc_dst->xid_id, XIA_XID_MAX);
-
-	rc = fib_add_xid(xtbl, (struct fib_xid *)lhid);
+	rc = fib_add_fxid(xtbl, &lhid->xhl_common);
 	if (rc)
 		goto lhid;
 
@@ -37,7 +36,7 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	goto out;
 
 lhid:
-	kfree(lhid);
+	free_fxid(xtbl, &lhid->xhl_common);
 out:
 	return rc;
 }
@@ -48,7 +47,7 @@ static int local_delroute(struct fib_xid_table *xtbl,
 	struct fib_xid *fxid = fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
 	if (!fxid)
 		return -ESRCH;
-	kfree(fxid);
+	free_fxid(xtbl, fxid);
 
 	/* TODO If xtbl is empty, stop announcements.
 	stop_announcements(net);
@@ -190,18 +189,19 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+/* Don't call this function! Use free_fxid instead. */
 static void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	free_mhid((struct fib_xid_hid_main *)fxid);
 }
 
-static const struct xia_ppal_rt_ops hid_rt_ops_local = {
+static const struct xia_ppal_rt_eops hid_rt_eops_local = {
 	.newroute = local_newroute,
 	.delroute = local_delroute,
 	.dump_fxid = local_dump_hid,
 };
 
-static const struct xia_ppal_rt_ops hid_rt_ops_main = {
+static const struct xia_ppal_rt_eops hid_rt_eops_main = {
 	.newroute = main_newroute,
 	.delroute = main_delroute,
 	.dump_fxid = main_dump_hid,
@@ -217,12 +217,12 @@ static int __net_init hid_net_init(struct net *net)
 	int rc;
 
 	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_HID,
-		&hid_rt_ops_local);
+		&hid_rt_eops_local, 1);
 	if (rc)
 		goto out;
 
 	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_HID,
-		&hid_rt_ops_main);
+		&hid_rt_eops_main, 0);
 	if (rc)
 		goto local_rtbl;
 
@@ -293,6 +293,9 @@ static void __exit xia_hid_exit(void)
 	ppal_del_map(XIDTYPE_HID);
 	hid_nwp_exit();
 	xia_unregister_pernet_subsys(&hid_net_ops);
+
+	rcu_barrier();
+
 	printk(KERN_ALERT "XIA Principal HID UNloaded\n");
 }
 

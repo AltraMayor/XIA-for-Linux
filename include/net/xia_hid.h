@@ -57,7 +57,7 @@ struct hrdw_addr {
 };
 
 struct fib_xid_hid_main {
-	struct fib_xid		xhm_common;
+	struct fib_xid		xhm_common; /* It must be first field! */
 	struct list_head	xhm_haddrs;
 };
 
@@ -73,6 +73,9 @@ void free_mhid(struct fib_xid_hid_main *mhid);
  *	HID Device
  */
 
+/* TODO This struct should have a pointer to main xtbl. After adding it,
+ * edit function free_neighs_by_dev.
+ */
 struct hid_dev {
 	/* These fields are inspired by struct in_device. */
 	struct net_device	*dev;
@@ -113,11 +116,6 @@ static inline void hid_dev_put(struct hid_dev *hdev)
 {
 	if (atomic_dec_and_test(&hdev->refcnt))
 		hid_dev_finish_destroy(hdev);
-}
-
-static inline void __hid_dev_put(struct hid_dev *hdev)
-{
-	atomic_dec(&hdev->refcnt);
 }
 
 static inline void hid_dev_hold(struct hid_dev *hdev)

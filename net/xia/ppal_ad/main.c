@@ -6,7 +6,7 @@
 
 /* XXX Likely, this struct must vary for the main and local table! */
 struct fib_xid_ad {
-	struct fib_xid	xad_common;
+	struct fib_xid	xad_common; /* It must be first field! */
 	struct xia_xid	xad_gw;
 };
 
@@ -24,16 +24,16 @@ static int newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 	if (!xad)
 		goto out;
 
-	memmove(xad->xad_common.fx_xid, cfg->xfc_dst->xid_id, XIA_XID_MAX);
-	xad->xad_gw	= *cfg->xfc_gw;
+	init_fxid(&xad->xad_common, cfg->xfc_dst->xid_id);
+	xad->xad_gw = *cfg->xfc_gw;
 
-	rc = fib_add_xid(xtbl, (struct fib_xid *)xad);
+	rc = fib_add_fxid(xtbl, &xad->xad_common);
 	if (rc)
 		goto xad;
 	goto out;
 
 xad:
-	kfree(xad);
+	free_fxid(xtbl, &xad->xad_common);
 out:
 	return rc;
 }
@@ -43,7 +43,7 @@ static int delroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 	struct fib_xid *fxid = fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
 	if (!fxid)
 		return -ESRCH;
-	kfree(fxid);
+	free_fxid(xtbl, fxid);
 	return 0;
 }
 
@@ -93,7 +93,7 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-static const struct xia_ppal_rt_ops ad_rt_ops = {
+static const struct xia_ppal_rt_eops ad_rt_eops = {
 	.newroute = newroute,
 	.delroute = delroute,
 	.dump_fxid = dump_ad,
@@ -110,10 +110,10 @@ static int __net_init ad_net_init(struct net *net)
 {
 	int rc;
 
-	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_AD, &ad_rt_ops);
+	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_AD, &ad_rt_eops, 1);
 	if (rc)
 		goto out;
-	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_AD, &ad_rt_ops);
+	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_AD, &ad_rt_eops, 1);
 	if (rc)
 		goto local_rtbl;
 	goto out;
