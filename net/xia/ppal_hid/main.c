@@ -17,25 +17,40 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
 	struct fib_xid_hid_local *lhid;
+	u8 *xid;
+	struct net *net;
+	struct fib_xid_table *main_xtbl;
 	int rc;
 
+	/* Allocating @lhid before aquiring locks to be able to sleep if
+	 * necessary.
+	 */
 	rc = -ENOMEM;
 	lhid = kzalloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		goto out;
-	init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id);
+	xid = cfg->xfc_dst->xid_id;
+	init_fxid(&lhid->xhl_common, xid);
+
+	rc = -EINVAL;
+	net = xtbl_net(xtbl);
+	main_xtbl = xia_find_xtbl_hold(net->xia.main_rtbl, XIDTYPE_HID);
+	BUG_ON(net != xtbl_net(main_xtbl));
+	if (xia_find_xid_lock(main_xtbl, xid))
+		goto unlock_main;
 
 	rc = fib_add_fxid(xtbl, &lhid->xhl_common);
 	if (rc)
-		goto lhid;
+		goto unlock_main;
 
-	/* TODO Request announcement of this new HID.
-	announce_myself(net);
-	*/
-
+	fib_unlock_xid(main_xtbl, xid);
+	xtbl_put(main_xtbl);
+	atomic_inc(&net->xia.hid_state->to_announce);
 	goto out;
 
-lhid:
+unlock_main:
+	fib_unlock_xid(main_xtbl, xid);
+	xtbl_put(main_xtbl);
 	free_fxid(xtbl, &lhid->xhl_common);
 out:
 	return rc;
@@ -48,10 +63,6 @@ static int local_delroute(struct fib_xid_table *xtbl,
 	if (!fxid)
 		return -ESRCH;
 	free_fxid(xtbl, fxid);
-
-	/* TODO If xtbl is empty, stop announcements.
-	stop_announcements(net);
-	*/
 	return 0;
 }
 
@@ -107,7 +118,7 @@ static int main_newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 		return -EINVAL;
 
 	return insert_neigh(xtbl, cfg->xfc_dst->xid_id, cfg->xfc_odev,
-		cfg->xfc_lladdr);
+		cfg->xfc_lladdr, GFP_KERNEL);
 }
 
 static int main_delroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
