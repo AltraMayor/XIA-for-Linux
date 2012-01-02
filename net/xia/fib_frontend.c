@@ -91,14 +91,9 @@ static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (rtbl == NULL)
 		return -EINVAL;
 
-	rcu_read_lock();
-	xtbl = xia_find_xtbl_rcu(rtbl, cfg.xfc_dst->xid_type);
-	if (xtbl == NULL) {
-		rcu_read_unlock();
+	xtbl = xia_find_xtbl_hold(rtbl, cfg.xfc_dst->xid_type);
+	if (!xtbl)
 		return -EXTYNOSUPPORT;
-	}
-	xtbl_hold(xtbl);
-	rcu_read_unlock();
 
 	rc = xtbl->fxt_eops->newroute(xtbl, &cfg);
 	xtbl_put(xtbl);
@@ -124,14 +119,9 @@ static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (rtbl == NULL)
 		return -EINVAL;
 
-	rcu_read_lock();
-	xtbl = xia_find_xtbl_rcu(rtbl, cfg.xfc_dst->xid_type);
-	if (xtbl == NULL) {
-		rcu_read_unlock();
+	xtbl = xia_find_xtbl_hold(rtbl, cfg.xfc_dst->xid_type);
+	if (!xtbl)
 		return -EXTYNOSUPPORT;
-	}
-	xtbl_hold(xtbl);
-	rcu_read_unlock();
 
 	rc = xtbl->fxt_eops->delroute(xtbl, &cfg);
 	xtbl_put(xtbl);
@@ -249,11 +239,11 @@ static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 static int __net_init fib_net_init(struct net *net)
 {
 	RCU_INIT_POINTER(net->xia.local_rtbl,
-		create_xia_rtable(XRTABLE_LOCAL_INDEX));
+		create_xia_rtable(net, XRTABLE_LOCAL_INDEX));
 	if (!net->xia.local_rtbl)
 		goto error;
 	RCU_INIT_POINTER(net->xia.main_rtbl,
-		create_xia_rtable(XRTABLE_MAIN_INDEX));
+		create_xia_rtable(net, XRTABLE_MAIN_INDEX));
 	if (!net->xia.main_rtbl)
 		goto local;
 	return 0;
