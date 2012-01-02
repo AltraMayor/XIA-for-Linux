@@ -74,6 +74,9 @@ struct fib_xid_table {
 	/* Principal type. */
 	xid_type_t			fxt_ppal_type;
 
+	/* Context. */
+	struct net			*fxt_net;
+
 	/* Buckets. */
 	struct fib_xid_buckets __rcu	*fxt_active_branch;
 	struct fib_xid_buckets		fxt_branch[2];
@@ -94,6 +97,11 @@ struct fib_xid_table {
 	rwlock_t			fxt_writers_lock;
 };
 
+static inline struct net *xtbl_net(struct fib_xid_table *xtbl)
+{
+	return xtbl->fxt_net;
+}
+
 /* Operations implemented externally by the code that instantiates an xtbl. */
 struct xia_ppal_rt_eops {
 	/* RTNetlink support
@@ -113,8 +121,8 @@ struct xia_ppal_rt_eops {
 struct xia_ppal_rt_iops {
 	struct fib_xid *(*find_xid_lock)(struct fib_xid_table *xtbl,
 		const u8 *xid);
-	void (*iterate_xids)(struct fib_xid_table *xtbl,
-		void (*locked_callback)(struct fib_xid_table *xtbl,
+	int (*iterate_xids)(struct fib_xid_table *xtbl,
+		int (*locked_callback)(struct fib_xid_table *xtbl,
 			struct fib_xid *fxid, void *arg),
 		void *arg);
 	int (*add_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
@@ -129,9 +137,12 @@ struct xia_ppal_rt_iops {
  * were removed from the stack.
  */
 struct fib_xia_rtable {
+	/* Context. */
+	struct net		*tbl_net;
 	int			tbl_id;
-	struct rcu_head		rcu_head;
+
 	struct hlist_head	ppal[NUM_PRINCIPAL_HINT];
+	struct rcu_head		rcu_head;
 };
 
 static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
@@ -180,7 +191,7 @@ void destroy_main_lock_table(void);
  * NOTE
  *	Caller should use RCU_INIT_POINTER to assign it to the final pointer.
  */
-struct fib_xia_rtable *create_xia_rtable(int tbl_id);
+struct fib_xia_rtable *create_xia_rtable(struct net *net, int tbl_id);
 
 /** destroy_xia_rtable - destroy @rtbl.
  * NOTE
@@ -240,6 +251,14 @@ static inline void xtbl_hold(struct fib_xid_table *xtbl)
 	atomic_inc(&xtbl->refcnt);
 }
 
+struct fib_xid_table *xia_find_xtbl_hold(struct fib_xia_rtable *rtbl,
+	xid_type_t ty);
+
+static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
+{
+	return atomic_read(&xtbl->fxt_count);
+}
+
 void init_fxid(struct fib_xid *fxid, const u8 *xid);
 
 /* @fxid must not be in any XID table!
@@ -273,13 +292,19 @@ static inline struct fib_xid *xia_find_xid_lock(struct fib_xid_table *xtbl,
  * NOTE
  *	The lock is held when @locked_callback is called.
  *	@locked_callback may remove the received @fxid it received.
+ *
+ *	If @locked_callback returns non-zero, the iterator is aborted.
+ *
+ * RETURN
+ *	Zero if all xids were visited, or the value that @locked_callback
+ *	returned when it aborted.
  */
-static inline void xia_iterate_xids(struct fib_xid_table *xtbl,
-	void (*locked_callback)(struct fib_xid_table *xtbl,
+static inline int xia_iterate_xids(struct fib_xid_table *xtbl,
+	int (*locked_callback)(struct fib_xid_table *xtbl,
 		struct fib_xid *fxid, void *arg),
 	void *arg)
 {
-	xtbl->fxt_iops->iterate_xids(xtbl, locked_callback, arg);
+	return xtbl->fxt_iops->iterate_xids(xtbl, locked_callback, arg);
 }
 
 /** fib_add_fxid - Add @fxid into @xtbl.
