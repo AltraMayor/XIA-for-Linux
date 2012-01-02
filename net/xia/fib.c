@@ -137,13 +137,15 @@ void destroy_main_lock_table(void)
  *	Routing tables
  */
 
-struct fib_xia_rtable *create_xia_rtable(int tbl_id)
+struct fib_xia_rtable *create_xia_rtable(struct net *net, int tbl_id)
 {
 	struct fib_xia_rtable *rtbl = kzalloc(sizeof(*rtbl), GFP_KERNEL);
 
 	if (!rtbl)
 		return NULL;
 
+	rtbl->tbl_net = net;
+	hold_net(net);
 	rtbl->tbl_id = tbl_id;
 	return rtbl;
 }
@@ -182,6 +184,19 @@ struct fib_xid_table *xia_find_xtbl_rcu(struct fib_xia_rtable *rtbl,
 }
 EXPORT_SYMBOL_GPL(xia_find_xtbl_rcu);
 
+struct fib_xid_table *xia_find_xtbl_hold(struct fib_xia_rtable *rtbl,
+	xid_type_t ty)
+{
+	struct fib_xid_table *xtbl;
+	rcu_read_lock();
+	xtbl = xia_find_xtbl_rcu(rtbl, ty);
+	if (xtbl)
+		xtbl_hold(xtbl);
+	rcu_read_unlock();
+	return xtbl;
+}
+EXPORT_SYMBOL_GPL(xia_find_xtbl_hold);
+
 static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
 {
 	size_t size = sizeof(**pbuckets) * num;
@@ -192,7 +207,10 @@ static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
 }
 
 /* XTBL_INITIAL_DIV must be a power of 2. */
-#define XTBL_INITIAL_DIV 1
+/* TODO Once the problem with rehash has been sort out, change
+ * XTBL_INITIAL_DIV to 1.
+ */
+#define XTBL_INITIAL_DIV 4096
 
 static const struct xia_ppal_rt_iops single_writer_ops;
 static const struct xia_ppal_rt_iops multi_writers_ops;
@@ -222,6 +240,8 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 		goto new_xtbl;
 
 	new_xtbl->fxt_ppal_type = ty;
+	new_xtbl->fxt_net = rtbl->tbl_net;
+	hold_net(new_xtbl->fxt_net);
 	BUILD_BUG_ON_NOT_POWER_OF_2(XTBL_INITIAL_DIV);
 	abranch->divisor = XTBL_INITIAL_DIV;
 	abranch->index = 0;
@@ -299,6 +319,7 @@ void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
 
+	release_net(xtbl->fxt_net);
 	kfree(xtbl);
 }
 EXPORT_SYMBOL_GPL(xtbl_finish_destroy);
@@ -348,6 +369,7 @@ static void end_rtbl_rcu(struct rcu_head *head)
 			xtbl_put(xtbl);
 		}
 	}
+	release_net(rtbl->tbl_net);
 	kfree(rtbl);
 }
 
@@ -547,14 +569,15 @@ static struct fib_xid *sw_find_xid_lock(struct fib_xid_table *xtbl,
 	return xia_find_xid_locked(xtbl->fxt_active_branch, xid, &head);
 }
 
-static void sw_iterate_xids(struct fib_xid_table *xtbl,
-	void (*locked_callback)(struct fib_xid_table *xtbl,
+static int sw_iterate_xids(struct fib_xid_table *xtbl,
+	int (*locked_callback)(struct fib_xid_table *xtbl,
 		struct fib_xid *fxid, void *arg),
 	void *arg)
 {
 	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
 	int aindex = abranch->index;
 	u32 bucket;
+	int rc = 0;
 
 	for (bucket = 0; bucket < abranch->divisor; bucket++) {
 		struct fib_xid *fxid;
@@ -562,9 +585,14 @@ static void sw_iterate_xids(struct fib_xid_table *xtbl,
 		struct hlist_head *head = __xidhead(abranch->buckets, bucket);
 		hlist_for_each_entry_safe(fxid, p, nxt, head,
 			fx_branch_list[aindex]) {
-			locked_callback(xtbl, fxid, arg);
+			rc = locked_callback(xtbl, fxid, arg);
+			if (rc)
+				goto out;
 		}
 	}
+
+out:
+	return rc;
 }
 
 static int sw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
@@ -649,14 +677,15 @@ static struct fib_xid *mw_find_xid_lock(struct fib_xid_table *xtbl,
 	return NULL;
 }
 
-static void mw_iterate_xids(struct fib_xid_table *xtbl,
-	void (*locked_callback)(struct fib_xid_table *xtbl,
+static int mw_iterate_xids(struct fib_xid_table *xtbl,
+	int (*locked_callback)(struct fib_xid_table *xtbl,
 		struct fib_xid *fxid, void *arg),
 	void *arg)
 {
 	struct fib_xid_buckets *abranch;
 	int aindex;
 	u32 bucket;
+	int rc = 0;
 
 	read_lock(&xtbl->fxt_writers_lock);
 	abranch = xtbl->fxt_active_branch;
@@ -669,12 +698,18 @@ static void mw_iterate_xids(struct fib_xid_table *xtbl,
 		bucket_lock(xtbl, bucket);
 		hlist_for_each_entry_safe(fxid, p, nxt, head,
 			fx_branch_list[aindex]) {
-			locked_callback(xtbl, fxid, arg);
+			rc = locked_callback(xtbl, fxid, arg);
+			if (rc) {
+				bucket_unlock(xtbl, bucket);
+				goto out;
+			}
 		}
 		bucket_unlock(xtbl, bucket);
 	}
 
+out:
 	read_unlock(&xtbl->fxt_writers_lock);
+	return rc;
 }
 
 static int mw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)

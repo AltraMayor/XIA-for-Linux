@@ -62,7 +62,7 @@ struct fib_xid_hid_main {
 };
 
 int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
-	struct net_device *dev, const u8 *lladdr);
+	struct net_device *dev, const u8 *lladdr, gfp_t flags);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	struct net_device *dev, const u8 *lladdr);
@@ -73,9 +73,6 @@ void free_mhid(struct fib_xid_hid_main *mhid);
  *	HID Device
  */
 
-/* TODO This struct should have a pointer to main xtbl. After adding it,
- * edit function free_neighs_by_dev.
- */
 struct hid_dev {
 	/* These fields are inspired by struct in_device. */
 	struct net_device	*dev;
@@ -127,13 +124,13 @@ static inline void hid_dev_hold(struct hid_dev *hdev)
  *	NWP state per struct net
  */
 
+/* XXX This struct should have pointers to local and main HID tables to
+ * simplify the code that often looks up those table.
+ */
 /* struct xia_hid_state keeps the state of NWP per struct net. */
 struct xia_hid_state {
-	/* TODO Use attomic here! */
-	u8	new_hids_to_announce;
-
-	/* 3 bytes free. */
-
+	atomic_t	to_announce;
+	atomic_t	announced;
 	struct timer_list announce_timer;
 };
 
@@ -142,9 +139,6 @@ void hid_nwp_exit(void);
 
 int hid_new_hid_state(struct net *net);
 void hid_free_hid_state(struct net *net);
-
-void announce_myself(struct net *net);
-void stop_announcements(struct net *net);
 
 #endif /* __KERNEL__ */
 
