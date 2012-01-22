@@ -116,21 +116,25 @@ struct xia_ppal_rt_eops {
 		struct fib_xia_rtable *rtbl, struct sk_buff *skb,
 		struct netlink_callback *cb);
 
-	/* Optional callback to release dependencies. */
+	/* Optional callback to release dependencies.
+	 * If this callback is defined, consider having a call to
+	 * rcu_barrier() while unloading your module.
+	 */
 	void (*free_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 };
 
 /* Operations implemented internally according to the chosen lock mechanism. */
 struct xia_ppal_rt_iops {
-	struct fib_xid *(*find_xid_lock)(struct fib_xid_table *xtbl,
-		const u8 *xid);
+	struct fib_xid *(*find_xid_lock)(u32 *bucket,
+		struct fib_xid_table *xtbl, const u8 *xid);
 	int (*iterate_xids)(struct fib_xid_table *xtbl,
 		int (*locked_callback)(struct fib_xid_table *xtbl,
 			struct fib_xid *fxid, void *arg),
 		void *arg);
 	int (*add_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 	void (*rm_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
-	void (*unlock_xid)(struct fib_xid_table *xtbl, const u8 *xid);
+	void (*unlock_bucket)(struct fib_xid_table *xtbl, u32 bucket);
+	void (*need_to_rehash)(struct fib_xid_table *xtbl);
 };
 
 /* XIA Routing Table
@@ -287,13 +291,18 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
  * RETURN
  * 	It returns the struct on success, otherwise NULL.
  * NOTE
- * 	Caller must always unlock with xia_fib_unlock_xid or xia_fib_unlock
- *	afterwards.
+ * 	@pbucket always receives the bucket to be unlocked later.
+ *	Caller must always unlock with fib_unlock_bucket afterwards.
+ *
+ *	Although this function works for single_writer instances of xtbl,
+ *	it doesn't lock anything because locks are managed externally in
+ *	single writer mode. Thus, if you need this function, consider
+ *	switching to multiple writers mode. 
  */
-static inline struct fib_xid *xia_find_xid_lock(struct fib_xid_table *xtbl,
-	const u8 *xid)
+static inline struct fib_xid *xia_find_xid_lock(u32 *pbucket,
+	struct fib_xid_table *xtbl, const u8 *xid)
 {
-	return xtbl->fxt_iops->find_xid_lock(xtbl, xid);
+	return xtbl->fxt_iops->find_xid_lock(pbucket, xtbl, xid);
 }
 
 /** xia_iterate_xids - Visit all XIDs in @xtbl.
@@ -331,6 +340,15 @@ static inline int fib_add_fxid(struct fib_xid_table *xtbl,
 	return xtbl->fxt_iops->add_fxid(xtbl, fxid);
 }
 
+/** fib_add_fxid_locked - Same as fib_add_fxid, but
+ *		it assumes that the lock is already held.Add @fxid into @xtbl.
+ * NOTE
+ *	BE VERY CAREFUL when calling this function because if the needed lock
+ *	is not held, it may corrupt @xtbl!
+ */
+int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+	struct fib_xid *fxid);
+
 /** fib_rm_fxid - Remove @fxid from @xtbl.
  * NOTE
  *	If @single_writer was true when init_xid_table was called,
@@ -344,11 +362,14 @@ static inline void fib_rm_fxid(struct fib_xid_table *xtbl,
 	xtbl->fxt_iops->rm_fxid(xtbl, fxid);
 }
 
-/* Same as fib_rm_fxid, but it assumes that the lock is already held.
- * BE VERY CAREFUL when calling this function because if the needed lock
- * is not held, it may corrupt @xtbl!
+/** fib_rm_fxid_locked - Same as fib_rm_fxid, but
+ *			it assumes that the lock is already held.
+ * NOTE
+ *	BE VERY CAREFUL when calling this function because if the needed lock
+ *	is not held, it may corrupt @xtbl!
  */
-void fib_rm_fxid_locked(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+	struct fib_xid *fxid);
 
 /** fib_rm_xid - Remove @xid from @xtbl.
  * RETURN
@@ -361,15 +382,9 @@ void fib_rm_fxid_locked(struct fib_xid_table *xtbl, struct fib_xid *fxid);
  */
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
 
-static inline void fib_unlock_xid(struct fib_xid_table *xtbl, const u8 *xid)
+static inline void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 {
-	xtbl->fxt_iops->unlock_xid(xtbl, xid);
-}
-
-static inline void fib_unlock_fxid(struct fib_xid_table *xtbl,
-	struct fib_xid *fxid)
-{
-	fib_unlock_xid(xtbl, fxid->fx_xid);
+	xtbl->fxt_iops->unlock_bucket(xtbl, bucket);
 }
 
 #endif /* __KERNEL__ */

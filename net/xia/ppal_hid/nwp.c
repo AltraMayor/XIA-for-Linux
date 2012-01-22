@@ -169,6 +169,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 		struct hrdw_addr *ha;
 		u8 xid[XIA_XID_MAX];
 		struct fib_xid_hid_main *mhid;
+		u32 bucket;
 
 		/* Obtain xid of the first entry in @hdev->neighs.
 		 *
@@ -186,80 +187,88 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 		rcu_read_unlock();
 
 		/* We don't lock hdev->neigh_lock to avoid deadlock. */
-		mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(xtbl, xid);
+		mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(&bucket,
+			xtbl, xid);
 		if (mhid) {
 			/* We must test mhid != NULL because
 			 * we didn't hold a lock before the find.
 			 */
 			del_has_by_dev(&mhid->xhm_haddrs, dev);
 			if (list_empty(&mhid->xhm_haddrs)) {
-				fib_rm_fxid_locked(xtbl, &mhid->xhm_common);
+				fib_rm_fxid_locked(bucket, xtbl,
+					&mhid->xhm_common);
 				free_fxid(xtbl, &mhid->xhm_common);
 			}
 		}
-		fib_unlock_xid(xtbl, xid);
+		fib_unlock_bucket(xtbl, bucket);
 	}
 
 	xtbl_put(xtbl);
 }
 
 int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
-	struct net_device *dev, const u8 *lladdr, gfp_t flags)
+	struct net_device *dev, const u8 *lladdr)
 {
 	struct net *net;
 	struct fib_xid_table *local_xtbl;
 	struct fib_xid_hid_main *mhid;
 	struct hrdw_addr *ha;
-	int rc, is_me;
+	u32 local_bucket, main_bucket;
+	int rc;
 
-	rc = -EINVAL;
 	if (!(dev->flags & IFF_UP) || (dev->flags & IFF_LOOPBACK))
-		goto out;
+		return -EINVAL;
 
-	/* XXX The test below isn't race free, one can add the entry to local
-	 * xtbl after it's tested, and before the neighbor table is updated.
+	/*
+	 * The sequence of locks in this function must be careful to avoid
+	 * deadlock with main.c:local_newroute.
 	 */
+
 	/* Test if @xid is already inserted in the local xtbl. */
 	rc = -EINVAL;
 	net = xtbl_net(xtbl);
 	local_xtbl = xia_find_xtbl_hold(net->xia.local_rtbl, XIDTYPE_HID);
 	BUG_ON(xtbl == local_xtbl);
 	BUG_ON(net != xtbl_net(local_xtbl));
-	rcu_read_lock();
-	is_me = xia_find_xid_rcu(local_xtbl, xid) != NULL;
-	rcu_read_unlock();
-	xtbl_put(local_xtbl);
-	if (is_me)
+	/* Notice that having xia_find_xid_lock on @local_xtbl requires
+	 * @local_xtbl to support multiple writers.
+	 */
+	if (xia_find_xid_lock(&local_bucket, local_xtbl, xid)) {
+		/* We don't issue a warning here because if this host has two
+		 * interfaces connected to the same medium, it would lead to
+		 * a false positive.
+		 */
 		goto out;
+	}
 
 	rc = -ENOMEM;
-	ha = new_ha(dev, lladdr, flags);
+	ha = new_ha(dev, lladdr, GFP_ATOMIC);
 	if (!ha)
 		goto out;
 
-	mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(xtbl, xid);
+	mhid = (struct fib_xid_hid_main *)
+		xia_find_xid_lock(&main_bucket, xtbl, xid);
 	if (mhid) {
 		rc = add_ha(mhid, ha);
-		fib_unlock_xid(xtbl, xid);
+		fib_unlock_bucket(xtbl, main_bucket);
 		if (rc)
 			goto ha;
 		goto out;
 	}
-	fib_unlock_xid(xtbl, xid);
 
-	/* XXX Avoid call fib_unlock_xid above and implement
-	 * fib_add_fxid_locked, thus one can't add it before us.
-	 */
 	/* Add new @mhid. */
 	rc = -ENOMEM;
-	mhid = kzalloc(sizeof(*mhid), flags);
-	if (!mhid)
+	mhid = kzalloc(sizeof(*mhid), GFP_ATOMIC);
+	if (!mhid) {
+		fib_unlock_bucket(xtbl, main_bucket);
 		goto ha;
+	}
 	init_fxid(&mhid->xhm_common, xid);
 	INIT_LIST_HEAD(&mhid->xhm_haddrs);
 	rc = add_ha(mhid, ha);
 	BUG_ON(rc);
-	rc = fib_add_fxid(xtbl, &mhid->xhm_common);
+	rc = fib_add_fxid_locked(main_bucket, xtbl, &mhid->xhm_common);
+	fib_unlock_bucket(xtbl, main_bucket);
 	if (rc)
 		free_fxid(xtbl, &mhid->xhm_common);
 	goto out;
@@ -267,33 +276,36 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 ha:
 	free_ha(ha);
 out:
+	fib_unlock_bucket(local_xtbl, local_bucket);
+	xtbl_put(local_xtbl);
 	return rc;
 }
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	struct net_device *dev, const u8 *lladdr)
 {
+	u32 bucket;
 	struct fib_xid_hid_main *mhid;
 	int rc;
 
-	mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(xtbl, xid);
+	mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(&bucket, xtbl, xid);
 	if (!mhid) {
-		fib_unlock_xid(xtbl, xid);
+		fib_unlock_bucket(xtbl, bucket);
 		return -ESRCH;
 	}
 
 	rc = del_ha_from_mhid(mhid, lladdr, dev);
 	if (rc) {
-		fib_unlock_xid(xtbl, xid);
+		fib_unlock_bucket(xtbl, bucket);
 		return rc;
 	}
 
 	if (list_empty(&mhid->xhm_haddrs)) {
-		fib_rm_fxid_locked(xtbl, &mhid->xhm_common);
+		fib_rm_fxid_locked(bucket, xtbl, &mhid->xhm_common);
 		free_fxid(xtbl, &mhid->xhm_common);
 	}
 
-	fib_unlock_xid(xtbl, xid);
+	fib_unlock_bucket(xtbl, bucket);
 	return 0;
 }
 
@@ -698,7 +710,7 @@ static void read_announcement(struct sk_buff *skb)
 			break;
 		}
 		/* Ignore errors. */
-		insert_neigh(main_xtbl, xid, skb->dev, nwp->haddr, GFP_ATOMIC);
+		insert_neigh(main_xtbl, xid, skb->dev, nwp->haddr);
 		xid = next_xid;
 		count--;
 	}
@@ -788,8 +800,7 @@ static int process_neigh_list(struct sk_buff *skb)
 				goto out_loop;
 			}
 
-			insert_neigh(main_xtbl, xid, dev, haddr_or_xid,
-				GFP_ATOMIC);
+			insert_neigh(main_xtbl, xid, dev, haddr_or_xid);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
