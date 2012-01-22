@@ -441,25 +441,18 @@ static inline int are_xids_equal(const u8 *xid1, const u8 *xid2)
 		n1[4] == n2[4];
 }
 
-static struct fib_xid *__xia_find_xid_locked(struct fib_xid_buckets *abranch,
+static struct fib_xid *find_xid_locked(struct fib_xid_buckets *abranch,
 	u32 bucket, const u8 *xid, struct hlist_head **phead)
 {
 	struct fib_xid *fxid;
 	struct hlist_node *p;
+	int aindex = abranch->index;
 	*phead = __xidhead(abranch->buckets, bucket);
-	hlist_for_each_entry(fxid, p, *phead, fx_branch_list[abranch->index]) {
+	hlist_for_each_entry(fxid, p, *phead, fx_branch_list[aindex]) {
 		if (are_xids_equal(fxid->fx_xid, xid))
 			return fxid;
 	}
 	return NULL;
-}
-
-static inline struct fib_xid *xia_find_xid_locked(
-	struct fib_xid_buckets *abranch,
-	const u8 *xid, struct hlist_head **phead)
-{
-	return __xia_find_xid_locked(abranch, get_bucket(xid, abranch->divisor),
-		xid, phead);
 }
 
 struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid)
@@ -563,6 +556,28 @@ static void rehash_xtbl(struct fib_xid_table *xtbl)
 	}
 }
 
+int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+	struct fib_xid *fxid)
+{
+	struct hlist_head *head;
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int should_rehash;
+
+	if (find_xid_locked(abranch, bucket, fxid->fx_xid, &head))
+		return -ESRCH;
+
+	hlist_add_head_rcu(&fxid->fx_branch_list[abranch->index], head);
+	should_rehash =
+		atomic_inc_return(&xtbl->fxt_count) / abranch->divisor > 2;
+
+	/* Grow table as needed. */
+	if (should_rehash)
+		xtbl->fxt_iops->need_to_rehash(xtbl);
+	
+	return 0;
+}
+EXPORT_SYMBOL_GPL(fib_add_fxid_locked);
+
 static inline void __rm_fxid(struct fib_xid_table *xtbl,
 	struct fib_xid_buckets *abranch, struct fib_xid *fxid)
 {
@@ -570,8 +585,10 @@ static inline void __rm_fxid(struct fib_xid_table *xtbl,
 	atomic_dec(&xtbl->fxt_count);
 }
 
-void fib_rm_fxid_locked(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+	struct fib_xid *fxid)
 {
+	/* Currently, @bucket is not necessary. */
 	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
 	synchronize_rcu();
 }
@@ -579,13 +596,14 @@ EXPORT_SYMBOL_GPL(fib_rm_fxid_locked);
 
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid)
 {
-	struct fib_xid *fxid = xia_find_xid_lock(xtbl, xid);
+	u32 bucket;
+	struct fib_xid *fxid = xia_find_xid_lock(&bucket, xtbl, xid);
 	if (!fxid) {
-		fib_unlock_xid(xtbl, xid);
+		fib_unlock_bucket(xtbl, bucket);
 		return NULL;
 	}
 	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
-	fib_unlock_xid(xtbl, xid);
+	fib_unlock_bucket(xtbl, bucket);
 	synchronize_rcu();
 	return fxid;
 }
@@ -595,11 +613,13 @@ EXPORT_SYMBOL_GPL(fib_rm_xid);
  *	Single Writer (SW)
  */
 
-static struct fib_xid *sw_find_xid_lock(struct fib_xid_table *xtbl,
-	const u8 *xid)
+static struct fib_xid *sw_find_xid_lock(u32 *pbucket,
+	struct fib_xid_table *xtbl, const u8 *xid)
 {
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
 	struct hlist_head *head;
-	return xia_find_xid_locked(xtbl->fxt_active_branch, xid, &head);
+	*pbucket = get_bucket(xid, abranch->divisor);
+	return find_xid_locked(abranch, *pbucket, xid, &head);
 }
 
 static int sw_iterate_xids(struct fib_xid_table *xtbl,
@@ -630,35 +650,37 @@ out:
 
 static int sw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct fib_xid_buckets *abranch;
-	struct hlist_head *head;
-	int c;
-
-	abranch = xtbl->fxt_active_branch;
-	if (xia_find_xid_locked(abranch, fxid->fx_xid, &head))
-		return -ESRCH;
-
-	hlist_add_head_rcu(&fxid->fx_branch_list[abranch->index], head);
-	c = atomic_inc_return(&xtbl->fxt_count);
-
-	/* Grow table as needed. */
-	if (c / abranch->divisor > 2)
-		rehash_xtbl(xtbl);
-
-	return 0;
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	u32 bucket = get_bucket(fxid->fx_xid, abranch->divisor);
+	return fib_add_fxid_locked(bucket, xtbl, fxid);
 }
 
-static void sw_unlock_xid(struct fib_xid_table *xtbl, const u8 *xid)
+static void sw_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
+	synchronize_rcu();
+}
+
+static void sw_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 {
 	/* Empty. */
+}
+
+static void sw_need_to_rehash(struct fib_xid_table *xtbl)
+{
+	/* One cannot defer work here because the lock is managed
+	 * outside of @xtbl.
+	 */
+	rehash_xtbl(xtbl);
 }
 
 static const struct xia_ppal_rt_iops single_writer_ops = {
 	.find_xid_lock	= sw_find_xid_lock,
 	.iterate_xids	= sw_iterate_xids,
 	.add_fxid	= sw_add_fxid,
-	.rm_fxid	= fib_rm_fxid_locked,
-	.unlock_xid	= sw_unlock_xid,
+	.rm_fxid	= sw_rm_fxid,
+	.unlock_bucket	= sw_unlock_bucket,
+	.need_to_rehash	= sw_need_to_rehash,
 };
 
 /*
@@ -685,24 +707,14 @@ static inline void mw_unlock(struct fib_xid_table *xtbl, u32 bucket)
 	read_unlock(&xtbl->fxt_writers_lock);
 }
 
-static struct fib_xid *mw_find_xid_lock(struct fib_xid_table *xtbl,
-	const u8 *xid)
+static struct fib_xid *mw_find_xid_lock(u32 *pbucket,
+	struct fib_xid_table *xtbl, const u8 *xid)
 {
-	u32 bucket;
 	struct fib_xid_buckets *abranch;
-	int aindex;
-	struct fib_xid *fxid;
-	struct hlist_node *p;
 	struct hlist_head *head;
-	bucket = mw_lock_xid(xtbl, xid);
+	*pbucket = mw_lock_xid(xtbl, xid);
 	abranch = xtbl->fxt_active_branch;
-	aindex = abranch->index;
-	head = __xidhead(abranch->buckets, bucket);
-	hlist_for_each_entry(fxid, p, head, fx_branch_list[aindex]) {
-		if (are_xids_equal(fxid->fx_xid, xid))
-			return fxid;
-	}
-	return NULL;
+	return find_xid_locked(abranch, *pbucket, xid, &head);
 }
 
 static int mw_iterate_xids(struct fib_xid_table *xtbl,
@@ -767,28 +779,13 @@ static void rehash_work(struct work_struct *work)
 
 static int mw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct fib_xid_buckets *abranch;
-	struct hlist_head *head;
-	int should_rehash;
 	u32 bucket;
+	int rc;
 
 	bucket = mw_lock(xtbl, fxid);
-
-	abranch = xtbl->fxt_active_branch;
-	if (__xia_find_xid_locked(abranch, bucket, fxid->fx_xid, &head)) {
-		mw_unlock(xtbl, bucket);
-		return -ESRCH;
-	}
-
-	hlist_add_head_rcu(&fxid->fx_branch_list[abranch->index], head);
-	should_rehash =
-		atomic_inc_return(&xtbl->fxt_count) / abranch->divisor > 2;
-
+	rc = fib_add_fxid_locked(bucket, xtbl, fxid);
 	mw_unlock(xtbl, bucket);
-
-	if (should_rehash)
-		schedule_work(&xtbl->fxt_rehash_work);
-	return 0;
+	return rc;
 }
 
 static void mw_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
@@ -799,9 +796,14 @@ static void mw_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	synchronize_rcu();
 }
 
-static void mw_unlock_xid(struct fib_xid_table *xtbl, const u8 *xid)
+static void mw_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 {
-	mw_unlock(xtbl, get_bucket(xid, xtbl->fxt_active_branch->divisor));
+	mw_unlock(xtbl, bucket);
+}
+
+static void mw_need_to_rehash(struct fib_xid_table *xtbl)
+{
+	schedule_work(&xtbl->fxt_rehash_work);
 }
 
 static const struct xia_ppal_rt_iops multi_writers_ops = {
@@ -809,5 +811,6 @@ static const struct xia_ppal_rt_iops multi_writers_ops = {
 	.iterate_xids	= mw_iterate_xids,
 	.add_fxid	= mw_add_fxid,
 	.rm_fxid	= mw_rm_fxid,
-	.unlock_xid	= mw_unlock_xid,
+	.unlock_bucket	= mw_unlock_bucket,
+	.need_to_rehash	= mw_need_to_rehash,
 };
