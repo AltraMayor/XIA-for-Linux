@@ -447,7 +447,11 @@ static void __exit xia_exit(void)
 	xia_fib_exit();
 	ppal_del_map(XIDTYPE_NAT);
 
+	/* The order of the following two calls is critical to properly
+	 * release XID tables!
+	 */
 	rcu_barrier();
+	flush_scheduled_work();
 
 	printk(KERN_ALERT "XIA UNloaded\n");
 }
