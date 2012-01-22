@@ -80,6 +80,7 @@ struct fib_xid_table {
 	/* Buckets. */
 	struct fib_xid_buckets __rcu	*fxt_active_branch;
 	struct fib_xid_buckets		fxt_branch[2];
+	struct work_struct 		fxt_rehash_work;
 	/* Number of entries. */
 	atomic_t			fxt_count;
 
@@ -88,6 +89,8 @@ struct fib_xid_table {
 
 	const struct xia_ppal_rt_eops	*fxt_eops;
 	const struct xia_ppal_rt_iops	*fxt_iops;
+
+	int				fxt_single_writer;
 
 	/* The following fields are only needed when this struct is
 	 * instantiated to support multiple writers.
@@ -213,6 +216,11 @@ void destroy_xia_rtable(struct fib_xia_rtable **prtbl);
  *	the lock is the same that the caller is already supposed to hold.
  *	However, these calls make it easy to switch between single writer,
  *	and multiple writers.
+ *
+ *	When @single_writer is true, currently, it's assumed that the xtbl is
+ *	going to be only used in process context, so calls to change it can
+ *	sleep, whereas under multiple writers calls to change it are atomic.
+ *	This may change in the future having both cases running atomicly.
  */
 int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	const struct xia_ppal_rt_eops *eops, int single_writer);
