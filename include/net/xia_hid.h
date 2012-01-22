@@ -62,7 +62,7 @@ struct fib_xid_hid_main {
 };
 
 int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
-	struct net_device *dev, const u8 *lladdr, gfp_t flags);
+	struct net_device *dev, const u8 *lladdr);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	struct net_device *dev, const u8 *lladdr);
