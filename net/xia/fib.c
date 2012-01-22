@@ -197,23 +197,35 @@ struct fib_xid_table *xia_find_xtbl_hold(struct fib_xia_rtable *rtbl,
 }
 EXPORT_SYMBOL_GPL(xia_find_xtbl_hold);
 
-static inline int alloc_buckets(struct hlist_head **pbuckets, size_t num)
+/* This function must be called in process context due to virtual memory. */
+static int alloc_buckets(struct fib_xid_buckets *abranch, size_t num)
 {
-	size_t size = sizeof(**pbuckets) * num;
-	*pbuckets = kzalloc(size, GFP_KERNEL);
-	if (!*pbuckets)
+	struct hlist_head *buckets;
+	size_t size = sizeof(*buckets) * num;
+	buckets = vmalloc(size);
+	if (!buckets)
 		return -ENOMEM;
+	memset(buckets, 0, size);
+	abranch->buckets = buckets;
+	abranch->divisor = num;
 	return 0;
 }
 
+/* This function must be called in process context due to virtual memory. */
+static inline void free_buckets(struct fib_xid_buckets *abranch)
+{
+	vfree(abranch->buckets);
+	abranch->buckets = NULL;
+	abranch->divisor = 0;
+}
+
 /* XTBL_INITIAL_DIV must be a power of 2. */
-/* TODO Once the problem with rehash has been sort out, change
- * XTBL_INITIAL_DIV to 1.
- */
-#define XTBL_INITIAL_DIV 4096
+#define XTBL_INITIAL_DIV 1
 
 static const struct xia_ppal_rt_iops single_writer_ops;
 static const struct xia_ppal_rt_iops multi_writers_ops;
+
+static void rehash_work(struct work_struct *work);
 
 int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	const struct xia_ppal_rt_eops *eops, int single_writer)
@@ -236,26 +248,30 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 		goto out;
 	abranch = &new_xtbl->fxt_branch[0];
 	new_xtbl->fxt_active_branch = abranch;
-	if (alloc_buckets(&abranch->buckets, XTBL_INITIAL_DIV))
+	BUILD_BUG_ON_NOT_POWER_OF_2(XTBL_INITIAL_DIV);
+	if (alloc_buckets(abranch, XTBL_INITIAL_DIV))
 		goto new_xtbl;
 
 	new_xtbl->fxt_ppal_type = ty;
 	new_xtbl->fxt_net = rtbl->tbl_net;
 	hold_net(new_xtbl->fxt_net);
-	BUILD_BUG_ON_NOT_POWER_OF_2(XTBL_INITIAL_DIV);
-	abranch->divisor = XTBL_INITIAL_DIV;
 	abranch->index = 0;
 	new_xtbl->fxt_branch[1].index = 1;
 	atomic_set(&new_xtbl->fxt_count, 0);
 
 	new_xtbl->fxt_eops = eops;
+	new_xtbl->fxt_single_writer = single_writer;
 	if (!single_writer) {
 		new_xtbl->fxt_iops = &multi_writers_ops;
 		get_random_bytes(&new_xtbl->fxt_seed,
 			sizeof(new_xtbl->fxt_seed));
 		rwlock_init(&new_xtbl->fxt_writers_lock);
-	} else
+		INIT_WORK(&new_xtbl->fxt_rehash_work, rehash_work);
+	} else {
 		new_xtbl->fxt_iops = &single_writer_ops;
+		/* The following forces an exception if there is a bug. */
+		INIT_WORK(&new_xtbl->fxt_rehash_work, NULL);
+	}
 
 	atomic_set(&new_xtbl->refcnt, 1);
 	hlist_add_head_rcu(&new_xtbl->fxt_list, head);
@@ -286,11 +302,35 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 EXPORT_SYMBOL_GPL(free_fxid);
 
+static void free_xtbl_work(struct work_struct *work)
+{
+	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
+		fxt_rehash_work);
+	free_buckets(xtbl->fxt_active_branch);
+	kfree(xtbl);
+}
+
+static void free_xtbl_in_process_context(struct fib_xid_table *xtbl)
+{
+	/* One can resuse xtbl->fxt_rehash_work at this point because
+	 * @xtbl's data has already been released.
+	 */
+	INIT_WORK(&xtbl->fxt_rehash_work, free_xtbl_work);
+	if (!in_interrupt()) {
+		free_xtbl_work(&xtbl->fxt_rehash_work);
+		return;
+	}
+	schedule_work(&xtbl->fxt_rehash_work);
+}
+
 void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 {
 	struct fib_xid_buckets *abranch;
 	int rm_count = 0;
 	int i, c, aindex;
+
+	if (!xtbl->fxt_single_writer)
+		cancel_work_sync(&xtbl->fxt_rehash_work);
 
 	abranch = xtbl->fxt_active_branch;
 	aindex = abranch->index;
@@ -305,9 +345,6 @@ void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 			rm_count++;
 		}
 	}
-	kfree(abranch->buckets);
-	abranch->buckets = NULL;
-	abranch->divisor = 0;
 
 	/* It doesn't return an error here because there's nothing
          * the caller can do about this error/bug.
@@ -320,7 +357,7 @@ void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
 
 	release_net(xtbl->fxt_net);
-	kfree(xtbl);
+	free_xtbl_in_process_context(xtbl);
 }
 EXPORT_SYMBOL_GPL(xtbl_finish_destroy);
 
@@ -443,26 +480,26 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid)
 }
 EXPORT_SYMBOL_GPL(xia_find_xid_rcu);
 
-static int rehash_xtbl(struct fib_xid_table *xtbl)
+static void rehash_xtbl(struct fib_xid_table *xtbl)
 {
 	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
 	int aindex = abranch->index;
+	int nindex = 1 - aindex;
+	/* Next branch. */
+	struct fib_xid_buckets *nbranch = &xtbl->fxt_branch[nindex];
+	int new_divisor = abranch->divisor * 2;
 	int mv_count1 = 0;
 	int mv_count2 = 0;
-	struct hlist_head *new_buckets;
-	int new_divisor = abranch->divisor * 2;
-	int nindex = 1 - aindex;
-	struct fib_xid_buckets *nbranch; /* Next branch. */
 	int rc, i, c;
 
 	BUG_ON(!is_power_of_2(new_divisor));
-	rc = alloc_buckets(&new_buckets, new_divisor);
-	if (rc)
-		return rc;
-
-	nbranch = &xtbl->fxt_branch[nindex];
-	nbranch->buckets = new_buckets;
-	nbranch->divisor = new_divisor;
+	rc = alloc_buckets(nbranch, new_divisor);
+	if (rc) {
+		printk(KERN_ERR
+		"Rehashing XID table %x was not possible due to error %i.\n",
+			__be32_to_cpu(xtbl->fxt_ppal_type), rc);
+		return;
+	}
 
 	for (i = 0; i < abranch->divisor; i++) {
 		struct fib_xid *fxid;
@@ -502,9 +539,7 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
 		}
 	}
 
-	kfree(abranch->buckets);
-	abranch->buckets = NULL;
-	abranch->divisor = 0;
+	free_buckets(abranch);
 
 	/* It doesn't return an error here because there's nothing
          * the caller can do about this error/bug.
@@ -526,8 +561,6 @@ static int rehash_xtbl(struct fib_xid_table *xtbl)
 		/* "Fixing" bug. */
 		atomic_set(&xtbl->fxt_count, mv_count1);
 	}
-
-	return 0;
 }
 
 static inline void __rm_fxid(struct fib_xid_table *xtbl,
@@ -609,13 +642,8 @@ static int sw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	c = atomic_inc_return(&xtbl->fxt_count);
 
 	/* Grow table as needed. */
-	if (c / abranch->divisor > 2) {
-		int rc = rehash_xtbl(xtbl);
-		if (rc)
-			printk(KERN_ERR
-		"Rehashing XID table %x was not possible due to error %i.\n",
-				__be32_to_cpu(xtbl->fxt_ppal_type), rc);
-	}
+	if (c / abranch->divisor > 2)
+		rehash_xtbl(xtbl);
 
 	return 0;
 }
@@ -712,13 +740,37 @@ out:
 	return rc;
 }
 
+static void rehash_work(struct work_struct *work)
+{
+	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
+		fxt_rehash_work);
+	int should_rehash;
+
+	/* Grow table as needed. */
+
+	write_lock(&xtbl->fxt_writers_lock);
+
+	/* We must test if we @should_rehash again because we may be
+	 * following another rehash_work that just finished.
+	 * Even if we're not following another rehash_work, fxt_count may have
+	 * changed while we waited on write_lock() or to be scheduled, and
+	 * a rehash became unnecessary.
+	 */
+	should_rehash = atomic_read(&xtbl->fxt_count) /
+		xtbl->fxt_active_branch->divisor > 2;
+
+	if (should_rehash)
+		rehash_xtbl(xtbl);
+
+	write_unlock(&xtbl->fxt_writers_lock);
+}
+
 static int mw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_buckets *abranch;
 	struct hlist_head *head;
 	int should_rehash;
 	u32 bucket;
-	int rc;
 
 	bucket = mw_lock(xtbl, fxid);
 
@@ -734,31 +786,8 @@ static int mw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 
 	mw_unlock(xtbl, bucket);
 
-	if (!should_rehash)
-		return 0;
-
-	/* Grow table as needed. */
-
-	write_lock(&xtbl->fxt_writers_lock);
-
-	/* We must refresh @abranch and @should_rehash because
-	 * we may be following another writer!
-	 * Even if we're not following another writer, fxt_count may have
-	 * changed while we waited on write_lock(), and a rehash became
-	 * unnecessary.
-	 */
-	abranch = xtbl->fxt_active_branch;
-	should_rehash = atomic_read(&xtbl->fxt_count) / abranch->divisor > 2;
-
-	rc = should_rehash ? rehash_xtbl(xtbl) : 0;
-
-	write_unlock(&xtbl->fxt_writers_lock);
-
-	if (rc)
-		printk(KERN_ERR "Rehashing XID table %x was not possible "
-			"due to error %i.\n",
-			__be32_to_cpu(xtbl->fxt_ppal_type), rc);
-
+	if (should_rehash)
+		schedule_work(&xtbl->fxt_rehash_work);
 	return 0;
 }
 
