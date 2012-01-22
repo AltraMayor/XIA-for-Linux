@@ -20,39 +20,52 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	u8 *xid;
 	struct net *net;
 	struct fib_xid_table *main_xtbl;
+	u32 local_bucket, main_bucket;
 	int rc;
+
+	/*
+	 * The sequence of locks in this function must be careful to avoid
+	 * deadlock with nwp.c:insert_neigh.
+	 */
 
 	/* Allocating @lhid before aquiring locks to be able to sleep if
 	 * necessary.
 	 */
-	rc = -ENOMEM;
 	lhid = kzalloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
-		goto out;
+		return -ENOMEM;
 	xid = cfg->xfc_dst->xid_id;
 	init_fxid(&lhid->xhl_common, xid);
+
+	rc = -ESRCH;
+	/* Notice that having xia_find_xid_lock on @local_xtbl requires
+	 * @local_xtbl to support multiple writers.
+	 */
+	if (xia_find_xid_lock(&local_bucket, xtbl, xid))
+		goto out;
 
 	rc = -EINVAL;
 	net = xtbl_net(xtbl);
 	main_xtbl = xia_find_xtbl_hold(net->xia.main_rtbl, XIDTYPE_HID);
 	BUG_ON(net != xtbl_net(main_xtbl));
-	if (xia_find_xid_lock(main_xtbl, xid))
+	if (xia_find_xid_lock(&main_bucket, main_xtbl, xid))
 		goto unlock_main;
 
-	rc = fib_add_fxid(xtbl, &lhid->xhl_common);
+	rc = fib_add_fxid_locked(local_bucket, xtbl, &lhid->xhl_common);
 	if (rc)
 		goto unlock_main;
 
-	fib_unlock_xid(main_xtbl, xid);
+	fib_unlock_bucket(main_xtbl, main_bucket);
 	xtbl_put(main_xtbl);
 	atomic_inc(&net->xia.hid_state->to_announce);
 	goto out;
 
 unlock_main:
-	fib_unlock_xid(main_xtbl, xid);
+	fib_unlock_bucket(main_xtbl, main_bucket);
 	xtbl_put(main_xtbl);
 	free_fxid(xtbl, &lhid->xhl_common);
 out:
+	fib_unlock_bucket(xtbl, local_bucket);
 	return rc;
 }
 
@@ -118,7 +131,7 @@ static int main_newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 		return -EINVAL;
 
 	return insert_neigh(xtbl, cfg->xfc_dst->xid_id, cfg->xfc_odev,
-		cfg->xfc_lladdr, GFP_KERNEL);
+		cfg->xfc_lladdr);
 }
 
 static int main_delroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
@@ -228,7 +241,7 @@ static int __net_init hid_net_init(struct net *net)
 	int rc;
 
 	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_HID,
-		&hid_rt_eops_local, 1);
+		&hid_rt_eops_local, 0);
 	if (rc)
 		goto out;
 
