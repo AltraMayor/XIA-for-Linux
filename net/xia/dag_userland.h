@@ -4,7 +4,7 @@
 #include <linux/spinlock.h>
 #include <linux/export.h>
 
-#define mymalloc(n)	kmalloc(n, GFP_KERNEL)
+#define mymalloc(n)	kmalloc(n, GFP_ATOMIC)
 #define myfree(p)	kfree(p)
 
 #else /* Userland */

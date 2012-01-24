@@ -69,7 +69,7 @@ struct fib_xid_buckets {
 
 struct fib_xid_table {
 	atomic_t			refcnt;
-	struct rcu_head			rcu_head;
+	int				dead;
 
 	/* Principal type. */
 	xid_type_t			fxt_ppal_type;
@@ -89,8 +89,6 @@ struct fib_xid_table {
 
 	const struct xia_ppal_rt_eops	*fxt_eops;
 	const struct xia_ppal_rt_iops	*fxt_iops;
-
-	int				fxt_single_writer;
 
 	/* The following fields are only needed when this struct is
 	 * instantiated to support multiple writers.
@@ -117,8 +115,8 @@ struct xia_ppal_rt_eops {
 		struct netlink_callback *cb);
 
 	/* Optional callback to release dependencies.
-	 * If this callback is defined, consider having a call to
-	 * rcu_barrier() while unloading your module.
+	 * If this callback is defined, consider call flush_scheduled_work()
+	 * when unloading your module.
 	 */
 	void (*free_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 };
@@ -231,8 +229,12 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 
 /** end_xid_table - terminate XID table for type @ty.
  * NOTE
- *	Caller must hold lock to avoid races with init_xid_table and
- *	destroy_xia_rtable.
+ *	Caller must
+ *		1. Hold lock to avoid races with init_xid_table and
+ *		   destroy_xia_rtable.
+ *		2. Make sure that that the XID table isn't being modified.
+ *
+ *	This function may sleep.
  */
 void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
 

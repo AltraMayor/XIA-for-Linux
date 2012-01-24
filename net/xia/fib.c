@@ -260,7 +260,6 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	atomic_set(&new_xtbl->fxt_count, 0);
 
 	new_xtbl->fxt_eops = eops;
-	new_xtbl->fxt_single_writer = single_writer;
 	if (!single_writer) {
 		new_xtbl->fxt_iops = &multi_writers_ops;
 		get_random_bytes(&new_xtbl->fxt_seed,
@@ -302,39 +301,17 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 EXPORT_SYMBOL_GPL(free_fxid);
 
-static void free_xtbl_work(struct work_struct *work)
+static void xtbl_finish_destroy_work(struct work_struct *work)
 {
 	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
 		fxt_rehash_work);
-	free_buckets(xtbl->fxt_active_branch);
-	kfree(xtbl);
-}
-
-static void free_xtbl_in_process_context(struct fib_xid_table *xtbl)
-{
-	/* One can resuse xtbl->fxt_rehash_work at this point because
-	 * @xtbl's data has already been released.
-	 */
-	INIT_WORK(&xtbl->fxt_rehash_work, free_xtbl_work);
-	if (!in_interrupt()) {
-		free_xtbl_work(&xtbl->fxt_rehash_work);
-		return;
-	}
-	schedule_work(&xtbl->fxt_rehash_work);
-}
-
-void xtbl_finish_destroy(struct fib_xid_table *xtbl)
-{
-	struct fib_xid_buckets *abranch;
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int adivisor = abranch->divisor;
+	int aindex = abranch->index;
 	int rm_count = 0;
-	int i, c, aindex;
+	int i, c;
 
-	if (!xtbl->fxt_single_writer)
-		cancel_work_sync(&xtbl->fxt_rehash_work);
-
-	abranch = xtbl->fxt_active_branch;
-	aindex = abranch->index;
-	for (i = 0; i < abranch->divisor; i++) {
+	for (i = 0; i < adivisor; i++) {
 		struct fib_xid *fxid;
 		struct hlist_node *p, *n;
 		struct hlist_head *head = &abranch->buckets[i];
@@ -357,29 +334,46 @@ void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
 
 	release_net(xtbl->fxt_net);
-	free_xtbl_in_process_context(xtbl);
+	free_buckets(abranch);
+	kfree(xtbl);
+}
+
+void xtbl_finish_destroy(struct fib_xid_table *xtbl)
+{
+	if (!in_interrupt()) {
+		xtbl_finish_destroy_work(&xtbl->fxt_rehash_work);
+		return;
+	}
+	schedule_work(&xtbl->fxt_rehash_work);
 }
 EXPORT_SYMBOL_GPL(xtbl_finish_destroy);
-
-static void xtbl_rcu_put(struct rcu_head *head)
-{
-	struct fib_xid_table *xtbl =
-		container_of(head, struct fib_xid_table, rcu_head);
-	xtbl_put(xtbl);
-}
 
 void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
 {
 	struct hlist_head *head;
 	struct fib_xid_table *xtbl = __xia_find_xtbl(rtbl, ty, &head);
-	if (xtbl) {
-		hlist_del_rcu(&xtbl->fxt_list);
-		call_rcu(&xtbl->rcu_head, xtbl_rcu_put);
-	} else {
+	if (!xtbl) {
 		printk(KERN_ERR "Not found XID table %x when running %s. "
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(ty), __FUNCTION__);
+		return;
 	}
+
+	xtbl->dead = 1;
+	barrier(); /* Announce that @xtbl is dead as soon as possible. */
+
+	/* Avoid new readers. */
+	hlist_del_rcu(&xtbl->fxt_list);
+	synchronize_rcu();
+
+	/* This is the function that requires that @xtbl
+	 * isn't being modified to make sure that @fxt_rehash_work isn't
+	 * scheduled after the call of cancel_work_sync.
+	 */
+	cancel_work_sync(&xtbl->fxt_rehash_work);
+
+	INIT_WORK(&xtbl->fxt_rehash_work, xtbl_finish_destroy_work);
+	xtbl_put(xtbl);
 }
 EXPORT_SYMBOL_GPL(end_xid_table);
 
@@ -389,6 +383,9 @@ static void end_rtbl_rcu(struct rcu_head *head)
 		container_of(head, struct fib_xia_rtable, rcu_head);
 	int i;
 
+	/* XXX This won't work because the counter may go to zero,
+	 * and xtbl_finish_destroy is called before end_xid_table!
+	 */
 	/* This loop is here for redundancy, the most appropriate case
 	 * is calling destroy_xia_rtable with an empty routing table.
 	 */
@@ -514,8 +511,11 @@ static void rehash_xtbl(struct fib_xid_table *xtbl)
 	 * Also, the synchronize_rcu() is necessary to clean
 	 * fxid->fx_branch_list[aindex]'s below.
 	 */
+	/* XXX This is called under a spinlock when it's in multiple writers
+	 * mode!
+	 */
 	synchronize_rcu();
-	
+
 	/* From now on, readers are using nbranch. */
 
 	/* The following isn't strictly necessary, but having
@@ -532,6 +532,9 @@ static void rehash_xtbl(struct fib_xid_table *xtbl)
 		}
 	}
 
+	/* XXX This is called under a spinlock when it's in multiple writers
+	 * mode!
+	 */
 	free_buckets(abranch);
 
 	/* It doesn't return an error here because there's nothing
@@ -571,7 +574,7 @@ int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 		atomic_inc_return(&xtbl->fxt_count) / abranch->divisor > 2;
 
 	/* Grow table as needed. */
-	if (should_rehash)
+	if (should_rehash && !xtbl->dead)
 		xtbl->fxt_iops->need_to_rehash(xtbl);
 	
 	return 0;
@@ -590,6 +593,7 @@ void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 {
 	/* Currently, @bucket is not necessary. */
 	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
+	/* XXX Make this atomic! */
 	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(fib_rm_fxid_locked);
@@ -604,6 +608,7 @@ struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid)
 	}
 	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
 	fib_unlock_bucket(xtbl, bucket);
+	/* XXX Make this atomic! */
 	synchronize_rcu();
 	return fxid;
 }
@@ -658,6 +663,7 @@ static int sw_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 static void sw_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
+	/* XXX Make this atomic! */
 	synchronize_rcu();
 }
 
@@ -793,6 +799,7 @@ static void mw_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	u32 bucket = mw_lock(xtbl, fxid);
 	__rm_fxid(xtbl, xtbl->fxt_active_branch, fxid);
 	mw_unlock(xtbl, bucket);
+	/* XXX Make this atomic! */
 	synchronize_rcu();
 }
 

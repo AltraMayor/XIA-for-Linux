@@ -188,7 +188,6 @@ int ppal_del_map(xid_type_t type)
 {
 	struct ppal_node *map;
 	struct hlist_node *p;
-	int rc = -ESRCH;
 
 	spin_lock(&map_lock);
 
@@ -196,15 +195,16 @@ int ppal_del_map(xid_type_t type)
 		if (map->type == type) {
 			hlist_del_rcu(&map->lst_per_name);
 			hlist_del_rcu(&map->lst_per_type);
+
+			spin_unlock(&map_lock);
+
 			synchronize_rcu();
 			myfree(map);
-			rc = 0;
-			goto out;
+			return 0;
 		}
 
-out:
 	spin_unlock(&map_lock);
-	return rc;
+	return -ESRCH;
 }
 EXPORT_SYMBOL(ppal_del_map);
 

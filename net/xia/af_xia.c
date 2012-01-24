@@ -448,7 +448,7 @@ static void __exit xia_exit(void)
 	ppal_del_map(XIDTYPE_NAT);
 
 	/* The order of the following two calls is critical to properly
-	 * release XID tables!
+	 * release structures that use call_rcu, or work queues.
 	 */
 	rcu_barrier();
 	flush_scheduled_work();
