@@ -319,6 +319,7 @@ static void __exit xia_hid_exit(void)
 	xia_unregister_pernet_subsys(&hid_net_ops);
 
 	rcu_barrier();
+	flush_scheduled_work();
 
 	printk(KERN_ALERT "XIA Principal HID UNloaded\n");
 }
