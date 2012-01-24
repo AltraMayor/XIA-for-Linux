@@ -111,6 +111,7 @@ static void del_ha(struct hrdw_addr *ha)
 
 	hid_dev_put(hdev);
 
+	/* XXX Once NWP supports removing entries, this must be made atomic! */
 	synchronize_rcu();
 	ha->mhid = NULL;
 }
