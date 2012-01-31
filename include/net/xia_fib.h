@@ -49,14 +49,25 @@ struct xia_fib_config {
  * A bucket list for a give principal should define a struct that has it
  * as fist element. */
 struct fib_xid {
-	/* Bucket lists. */
-	struct hlist_node	fx_branch_list[2];
+	union {
+		/* Pointers to add this struct in bucket lists of
+		 * an XID table.
+		 */
+		struct hlist_node	fx_branch_list[2];
+
+		/* Once function free_fxid is called, the previous struct
+		 * isn't being used anymore, so the following struct is used
+		 * to support function call_rcu instead of synchronize_rcu.
+		 */
+		struct {
+			struct fib_xid_table	*xtbl;
+			struct rcu_head		rcu_head;
+		} dead;
+	} u;
+
 	/* XID */
 	u8			fx_xid[XIA_XID_MAX];
 };
-
-struct xia_ppal_rt_eops;
-struct xia_ppal_rt_iops;
 
 struct fib_xid_buckets {
 	/* Heads of bucket lists. */
@@ -103,6 +114,8 @@ static inline struct net *xtbl_net(struct fib_xid_table *xtbl)
 	return xtbl->fxt_net;
 }
 
+typedef void (*free_fxid_t)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
 /* Operations implemented externally by the code that instantiates an xtbl. */
 struct xia_ppal_rt_eops {
 	/* RTNetlink support
@@ -115,10 +128,11 @@ struct xia_ppal_rt_eops {
 		struct netlink_callback *cb);
 
 	/* Optional callback to release dependencies.
+	 * Please notice that this callback runs in atomic context.
 	 * If this callback is defined, consider call flush_scheduled_work()
 	 * when unloading your module.
 	 */
-	void (*free_fxid)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+	free_fxid_t free_fxid;
 };
 
 /* Operations implemented internally according to the chosen lock mechanism. */
@@ -275,8 +289,8 @@ static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
 
 void init_fxid(struct fib_xid *fxid, const u8 *xid);
 
-/* @fxid must not be in any XID table!
- * @xtbl is just to invoke virtual methods.
+/* NOTE
+ *	@fxid must not be in any XID table!
  */
 void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
