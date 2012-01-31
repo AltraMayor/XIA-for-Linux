@@ -225,6 +225,7 @@ static inline void free_buckets(struct fib_xid_buckets *abranch)
 static const struct xia_ppal_rt_iops single_writer_ops;
 static const struct xia_ppal_rt_iops multi_writers_ops;
 
+static void xtbl_death_work(struct work_struct *work);
 static void rehash_work(struct work_struct *work);
 
 int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
@@ -273,6 +274,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	}
 
 	atomic_set(&new_xtbl->refcnt, 1);
+	INIT_WORK(&new_xtbl->fxt_death_work, xtbl_death_work);
 	hlist_add_head_rcu(&new_xtbl->fxt_list, head);
 
 	rc = 0;
@@ -315,15 +317,32 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 EXPORT_SYMBOL_GPL(free_fxid);
 
-static void xtbl_finish_destroy_work(struct work_struct *work)
+void free_fxid_norcu(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	free_fxid_t f = xtbl->fxt_eops->free_fxid;
+	if (f)
+		f(xtbl, fxid);
+	kfree(fxid);
+}
+EXPORT_SYMBOL_GPL(free_fxid_norcu);
+
+static void xtbl_death_work(struct work_struct *work)
 {
 	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
-		fxt_rehash_work);
-	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
-	int adivisor = abranch->divisor;
-	int aindex = abranch->index;
+		fxt_death_work);
+	struct fib_xid_buckets *abranch;
+	int adivisor, aindex;
 	int rm_count = 0;
 	int i, c;
+
+	cancel_work_sync(&xtbl->fxt_rehash_work);
+	/* Now it's safe to obtain the following variables. */
+	abranch = xtbl->fxt_active_branch;
+	adivisor = abranch->divisor;
+	aindex = abranch->index;
+
+	/* Make sure that we don't have any reader. */
+	synchronize_rcu();
 
 	for (i = 0; i < adivisor; i++) {
 		struct fib_xid *fxid;
@@ -332,7 +351,7 @@ static void xtbl_finish_destroy_work(struct work_struct *work)
 		hlist_for_each_entry_safe(fxid, p, n, head,
 					u.fx_branch_list[aindex]) {
 			hlist_del(p);
-			free_fxid(xtbl, fxid);
+			free_fxid_norcu(xtbl, fxid);
 			rm_count++;
 		}
 	}
@@ -354,11 +373,14 @@ static void xtbl_finish_destroy_work(struct work_struct *work)
 
 void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 {
-	if (!in_interrupt()) {
-		xtbl_finish_destroy_work(&xtbl->fxt_rehash_work);
-		return;
+	xtbl->dead = 1;
+	barrier(); /* Announce that @xtbl is dead as soon as possible. */
+
+	if (in_interrupt()) {
+		schedule_work(&xtbl->fxt_death_work);
+	} else {
+		xtbl_death_work(&xtbl->fxt_death_work);
 	}
-	schedule_work(&xtbl->fxt_rehash_work);
 }
 EXPORT_SYMBOL_GPL(xtbl_finish_destroy);
 
@@ -372,21 +394,7 @@ void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
 			__be32_to_cpu(ty), __FUNCTION__);
 		return;
 	}
-
-	xtbl->dead = 1;
-	barrier(); /* Announce that @xtbl is dead as soon as possible. */
-
-	/* Avoid new readers. */
 	hlist_del_rcu(&xtbl->fxt_list);
-	synchronize_rcu();
-
-	/* This is the function that requires that @xtbl
-	 * isn't being modified to make sure that @fxt_rehash_work isn't
-	 * scheduled after the call of cancel_work_sync.
-	 */
-	cancel_work_sync(&xtbl->fxt_rehash_work);
-
-	INIT_WORK(&xtbl->fxt_rehash_work, xtbl_finish_destroy_work);
 	xtbl_put(xtbl);
 }
 EXPORT_SYMBOL_GPL(end_xid_table);
@@ -397,9 +405,6 @@ static void end_rtbl_rcu(struct rcu_head *head)
 		container_of(head, struct fib_xia_rtable, rcu_head);
 	int i;
 
-	/* XXX This won't work because the counter may go to zero,
-	 * and xtbl_finish_destroy is called before end_xid_table!
-	 */
 	/* This loop is here for redundancy, the most appropriate case
 	 * is calling destroy_xia_rtable with an empty routing table.
 	 */
@@ -410,8 +415,6 @@ static void end_rtbl_rcu(struct rcu_head *head)
 		hlist_for_each_entry_safe(xtbl, p, n, head, fxt_list) {
 			/* Notice that hlist_del_rcu(p) is not necessary
 			 * because we are inside an RCU call.
-			 * In fact, even hlist_del is unnecessary because
-			 * we're freeing the whole rtbl.
 			 */
 			hlist_del(p);
 			xtbl_put(xtbl);
