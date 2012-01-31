@@ -472,96 +472,6 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid)
 }
 EXPORT_SYMBOL_GPL(xia_find_xid_rcu);
 
-static void rehash_xtbl(struct fib_xid_table *xtbl)
-{
-	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
-	int aindex = abranch->index;
-	int nindex = 1 - aindex;
-	/* Next branch. */
-	struct fib_xid_buckets *nbranch = &xtbl->fxt_branch[nindex];
-	int new_divisor = abranch->divisor * 2;
-	int mv_count1 = 0;
-	int mv_count2 = 0;
-	int rc, i, c;
-
-	BUG_ON(!is_power_of_2(new_divisor));
-	rc = alloc_buckets(nbranch, new_divisor);
-	if (rc) {
-		printk(KERN_ERR
-		"Rehashing XID table %x was not possible due to error %i.\n",
-			__be32_to_cpu(xtbl->fxt_ppal_type), rc);
-		return;
-	}
-
-	for (i = 0; i < abranch->divisor; i++) {
-		struct fib_xid *fxid;
-		struct hlist_node *p;
-		struct hlist_head *head = &abranch->buckets[i];
-		hlist_for_each_entry(fxid, p, head, u.fx_branch_list[aindex]) {
-			struct hlist_head *new_head = xidhead(nbranch,
-				fxid->fx_xid);
-			hlist_add_head(&fxid->u.fx_branch_list[nindex],
-				new_head);
-			mv_count1++;
-		}
-	}
-	rcu_assign_pointer(xtbl->fxt_active_branch, nbranch);
-
-	/* In order to speed up the "update", we have used hlist_add_head
-	 * instead of hlist_add_head_rcu to add fxid's in the next branch,
-	 * so in order to be safe, we must synchronize.
-	 *
-	 * Also, the synchronize_rcu() is necessary to clean
-	 * fxid->u.fx_branch_list[aindex]'s below.
-	 */
-	/* XXX This is called under a spinlock when it's in multiple writers
-	 * mode!
-	 */
-	synchronize_rcu();
-
-	/* From now on, readers are using nbranch. */
-
-	/* The following isn't strictly necessary, but having
-	 * fxid->u.fx_branch_list[aindex]'s clean may help finding bugs.
-	 */
-	for (i = 0; i < abranch->divisor; i++) {
-		struct fib_xid *fxid;
-		struct hlist_node *p, *n;
-		struct hlist_head *head = &abranch->buckets[i];
-		hlist_for_each_entry_safe(fxid, p, n, head,
-				u.fx_branch_list[aindex]) {
-			hlist_del(p);
-			mv_count2++;
-		}
-	}
-
-	/* XXX This is called under a spinlock when it's in multiple writers
-	 * mode!
-	 */
-	free_buckets(abranch);
-
-	/* It doesn't return an error here because there's nothing
-         * the caller can do about this error/bug.
-	 */
-	c = atomic_read(&xtbl->fxt_count);
-	if (mv_count1 != mv_count2) {
-		printk(KERN_ERR "While rehashing XID table of principal %x, "
-			"the counters didn't match %i != %i, whereas "
-			"the table has %i registered entries. "
-			"Ignoreing for now, but it's a serious bug!\n",
-			__be32_to_cpu(xtbl->fxt_ppal_type),
-			mv_count1, mv_count2, c);
-	}
-	if (c != mv_count1) {
-		printk(KERN_ERR "While rehashing XID table of principal %x, "
-			"%i entries were found, whereas %i are registered! "
-			"Fixing the counter for now, but it's a serious bug!\n",
-			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count1, c);
-		/* "Fixing" bug. */
-		atomic_set(&xtbl->fxt_count, mv_count1);
-	}
-}
-
 static u32 fib_lock_bucket_xid(struct fib_xid_table *xtbl, const u8 *xid)
 {
 	u32 bucket;
@@ -631,13 +541,29 @@ out:
 }
 EXPORT_SYMBOL_GPL(xia_iterate_xids);
 
+/* Grow table as needed. */
 static void rehash_work(struct work_struct *work)
 {
 	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
 		fxt_rehash_work);
-	int should_rehash;
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int aindex = abranch->index;
+	int nindex = 1 - aindex;
+	/* The next branch. */
+	struct fib_xid_buckets *nbranch = &xtbl->fxt_branch[nindex];
+	int new_divisor = abranch->divisor * 2;
+	int mv_count = 0;
+	int rc, i, c, should_rehash;
 
-	/* Grow table as needed. */
+	/* Allocate memory before aquiring write lock because it sleeps. */
+	BUG_ON(!is_power_of_2(new_divisor));
+	rc = alloc_buckets(nbranch, new_divisor);
+	if (rc) {
+		printk(KERN_ERR
+		"Rehashing XID table %x was not possible due to error %i.\n",
+			__be32_to_cpu(xtbl->fxt_ppal_type), rc);
+		return;
+	}
 
 	write_lock(&xtbl->fxt_writers_lock);
 
@@ -649,11 +575,51 @@ static void rehash_work(struct work_struct *work)
 	 */
 	should_rehash = atomic_read(&xtbl->fxt_count) /
 		xtbl->fxt_active_branch->divisor > 2;
+	if (!should_rehash) {
+		/* The calling order here is very important because
+		 * function free_buckets sleeps.
+		 */
+		write_unlock(&xtbl->fxt_writers_lock);
+		free_buckets(abranch);
+		return;
+	}
 
-	if (should_rehash)
-		rehash_xtbl(xtbl);
+	/* Add entries to @nbranch. */
+	for (i = 0; i < abranch->divisor; i++) {
+		struct fib_xid *fxid;
+		struct hlist_node *p;
+		struct hlist_head *head = &abranch->buckets[i];
+		hlist_for_each_entry(fxid, p, head, u.fx_branch_list[aindex]) {
+			struct hlist_head *new_head =
+				xidhead(nbranch, fxid->fx_xid);
+			hlist_add_head(&fxid->u.fx_branch_list[nindex],
+				new_head);
+			mv_count++;
+		}
+	}
+	rcu_assign_pointer(xtbl->fxt_active_branch, nbranch);
+
+	/* It doesn't return an error here because there's nothing
+         * the caller can do about this error/bug.
+	 */
+	c = atomic_read(&xtbl->fxt_count);
+	if (c != mv_count) {
+		printk(KERN_ERR "While rehashing XID table of principal %x, "
+			"%i entries were found, whereas %i are registered! "
+			"Fixing the counter for now, but it's a serious bug!\n",
+			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count, c);
+		/* "Fixing" bug. */
+		atomic_set(&xtbl->fxt_count, mv_count);
+	}
 
 	write_unlock(&xtbl->fxt_writers_lock);
+
+	/* Make sure that there's no reader in @abranch. */
+	synchronize_rcu();
+
+	/* From now on, all readers are using @nbranch. */
+
+	free_buckets(abranch);
 }
 
 int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
