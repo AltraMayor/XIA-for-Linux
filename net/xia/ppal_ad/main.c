@@ -110,10 +110,10 @@ static int __net_init ad_net_init(struct net *net)
 {
 	int rc;
 
-	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_AD, &ad_rt_eops, 1);
+	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_AD, &ad_rt_eops);
 	if (rc)
 		goto out;
-	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_AD, &ad_rt_eops, 1);
+	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_AD, &ad_rt_eops);
 	if (rc)
 		goto local_rtbl;
 	goto out;

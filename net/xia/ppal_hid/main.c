@@ -241,12 +241,12 @@ static int __net_init hid_net_init(struct net *net)
 	int rc;
 
 	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_HID,
-		&hid_rt_eops_local, 0);
+		&hid_rt_eops_local);
 	if (rc)
 		goto out;
 
 	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_HID,
-		&hid_rt_eops_main, 0);
+		&hid_rt_eops_main);
 	if (rc)
 		goto local_rtbl;
 
