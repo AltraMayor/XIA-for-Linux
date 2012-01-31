@@ -148,7 +148,7 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 		struct hlist_head *head = &abranch->buckets[i];
 		j = 0;
 		hlist_for_each_entry_rcu(fxid, p, head,
-			fx_branch_list[aindex]) {
+			u.fx_branch_list[aindex]) {
 			if (j < first_j)
 				goto next;
 			if (dumped)
