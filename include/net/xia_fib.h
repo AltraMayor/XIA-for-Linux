@@ -81,6 +81,7 @@ struct fib_xid_buckets {
 struct fib_xid_table {
 	atomic_t			refcnt;
 	int				dead;
+	struct work_struct 		fxt_death_work;
 
 	/* Principal type. */
 	xid_type_t			fxt_ppal_type;
@@ -215,8 +216,7 @@ struct fib_xia_rtable *create_xia_rtable(struct net *net, int tbl_id);
 /** destroy_xia_rtable - destroy @rtbl.
  * NOTE
  *	Caller must hold lock to avoid races with init_xid_table and
- *	end_xid_table, *AND* no XID table held in @rtbl, if present,
- *	can be being used or referenced outside of @rtbl.
+ *	end_xid_table.
  */
 void destroy_xia_rtable(struct fib_xia_rtable **prtbl);
 
@@ -243,12 +243,8 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 
 /** end_xid_table - terminate XID table for type @ty.
  * NOTE
- *	Caller must
- *		1. Hold lock to avoid races with init_xid_table and
- *		   destroy_xia_rtable.
- *		2. Make sure that that the XID table isn't being modified.
- *
- *	This function may sleep.
+ *	Caller must hold lock to avoid races with init_xid_table and
+ *	destroy_xia_rtable.
  */
 void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
 
@@ -291,8 +287,19 @@ void init_fxid(struct fib_xid *fxid, const u8 *xid);
 
 /* NOTE
  *	@fxid must not be in any XID table!
+ *
+ *	This function doesn't sleep.
  */
 void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
+/* NOTE
+ *	@fxid must not be in any XID table!
+ *
+ *	Only use this function if you can guarantee that there's no more
+ *	readers, for example calling synchronize_rcu(), otherwise use
+ *	free_fxid.
+ */
+void free_fxid_norcu(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
 /** xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
  * RETURN
