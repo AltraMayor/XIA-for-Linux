@@ -16,6 +16,7 @@
 #include <linux/xia.h>
 #include <net/xia.h>
 #include <net/xia_fib.h>
+#include <net/xia_route.h>
 #include <net/xia_dag.h>
 #include <net/sock.h>
 
@@ -409,9 +410,13 @@ static int __init xia_init(void)
 	if (rc)
 		goto nat;
 
-	rc = proto_register(&xia_raw_prot, 1);
+	rc = xia_route_init();
 	if (rc)
 		goto fib;
+
+	rc = proto_register(&xia_raw_prot, 1);
+	if (rc)
+		goto route;
 
 	/*
 	 *	Tell SOCKET that we are alive...
@@ -429,6 +434,8 @@ sock:
 */
 raw_prot:
 	proto_unregister(&xia_raw_prot);
+route:
+	xia_route_exit();
 fib:
 	xia_fib_exit();
 nat:
@@ -444,6 +451,7 @@ static void __exit xia_exit(void)
 {
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
+	xia_route_exit();
 	xia_fib_exit();
 	ppal_del_map(XIDTYPE_NAT);
 
