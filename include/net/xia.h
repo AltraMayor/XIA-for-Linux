@@ -41,21 +41,57 @@ struct xia_row {
 
 #define XIA_CHOSEN_EDGE		0x80
 #define XIA_EMPTY_EDGE		0x7f
+#define XIA_ENTRY_NODE_INDEX	0x7e
 
-/* Notice that this constant is little and big endian
+/* Notice that these constants are little and big endian
  * at same time up to 32bits.
  */
-#define XIA_EMPTY_EDGES	(XIA_EMPTY_EDGE << 24 | XIA_EMPTY_EDGE << 16 |\
+#define XIA_EMPTY_EDGES (XIA_EMPTY_EDGE << 24 | XIA_EMPTY_EDGE << 16 |\
 			 XIA_EMPTY_EDGE <<  8 | XIA_EMPTY_EDGE)
+#define XIA_CHOSEN_EDGES (XIA_CHOSEN_EDGE << 24 | XIA_CHOSEN_EDGE << 16 |\
+			 XIA_CHOSEN_EDGE <<  8 | XIA_CHOSEN_EDGE)
 
 static inline int is_edge_chosen(__u8 e)
 {
 	return e & XIA_CHOSEN_EDGE;
 }
 
+static inline int is_any_edge_chosen(struct xia_row *row)
+{
+	return row->s_edge.i & XIA_CHOSEN_EDGES;
+}
+
 static inline int is_empty_edge(__u8 e)
 {
 	return (e & XIA_EMPTY_EDGE) == XIA_EMPTY_EDGE;
+}
+
+static inline int is_it_a_sink(struct xia_row *row, __u8 node, __u8 num_dst)
+{
+	return	node == (num_dst - 1) ||
+		(row->s_edge.i & XIA_EMPTY_EDGES) == XIA_EMPTY_EDGES;
+}
+
+static inline int is_row_valid(__u8 row, __u8 num_dst)
+{
+	return row < num_dst || row == XIA_ENTRY_NODE_INDEX;
+}
+
+static inline int is_a_strictly_before_b(__u8 index_a, __u8 index_b,
+	__u8 num_dst)
+{
+	return	(index_a == XIA_ENTRY_NODE_INDEX && index_b < num_dst) ||
+		index_a < index_b;
+}
+
+static inline void xia_mark_edge(__u8 *edge)
+{
+	*edge |= XIA_CHOSEN_EDGE;
+}
+
+static inline void xia_unmark_edge(__u8 *edge)
+{
+	*edge &= ~XIA_CHOSEN_EDGE;
 }
 
 /* XIA address. */
