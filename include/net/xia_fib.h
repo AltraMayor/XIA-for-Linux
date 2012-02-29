@@ -47,7 +47,8 @@ struct xia_fib_config {
 
 /* This structure is principal independent.
  * A bucket list for a give principal should define a struct that has it
- * as fist element. */
+ * as fist element.
+ */
 struct fib_xid {
 	union {
 		/* Pointers to add this struct in bucket lists of
