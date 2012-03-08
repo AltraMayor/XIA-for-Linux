@@ -2,9 +2,18 @@
 #define _NET_XIA_ROUTE_H
 
 #include <net/xia.h>
+#include <net/dst.h>
+#include <net/xia_dst_table.h>
 
-struct xia_dst {
+struct xip_dst {
 	struct dst_entry	dst;
+
+	char			after_dst[0];
+
+	/* Since the lookup key is big, keeping its hash is handy
+	 * to minimize comparision time.
+	 */
+	u32			key_hash;
 
 	/* Lookup key. */
 	struct xia_xid		xids[XIA_OUTDEGREE_MAX];
@@ -59,13 +68,13 @@ struct xia_route_proc {
 	 * properly, and return zero; otherwise just return -ESRCH.
 	 */
 	int (*local_deliver)(struct xia_route_proc *rproc, struct net *net,
-		const u8 *xid, struct xia_dst *xdst);
+		const u8 *xid, struct xip_dst *xdst);
 
 	/* The return must be enum XRP_ACTION.
 	 * Only non-local XIDs go through this method, but potentially sinks.
 	 */
 	int (*main_deliver)(struct xia_route_proc *rproc, struct net *net,
-		const u8 *xid, struct xia_xid *next_xid, struct xia_dst *xdst);
+		const u8 *xid, struct xia_xid *next_xid, struct xip_dst *xdst);
 };
 
 /** rt_add_router - Add @rproc to XIA routing mechanism.
