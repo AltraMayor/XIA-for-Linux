@@ -15,6 +15,7 @@
 #include <linux/socket.h>
 #include <linux/xia.h>
 #include <net/xia.h>
+#include <net/xia_locktbl.h>
 #include <net/xia_fib.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
@@ -31,10 +32,12 @@ static void xia_sock_destruct(struct sock *sk)
 	if (sk->sk_type == SOCK_STREAM && sk->sk_state != TCP_CLOSE) {
 		pr_err("Attempt to release TCP socket in state %d %p\n",
 		       sk->sk_state, sk);
+		dump_stack();
 		return;
 	} */
 	if (!sock_flag(sk, SOCK_DEAD)) {
 		pr_err("Attempt to release alive xia socket %p\n", sk);
+		dump_stack();
 		return;
 	}
 
@@ -399,12 +402,16 @@ static const struct net_proto_family xia_family_ops = {
  */
 static int __init xia_init(void)
 {
-	int rc;
+	int rc, size, n;
+
+	rc = init_main_lock_table(&size, &n);
+	if (rc)
+		goto out;
 
 	/* Add Not A Type principal. */
 	rc = ppal_add_map("nat", XIDTYPE_NAT);
 	if (rc)
-		goto out;
+		goto locks;
 
 	rc = xia_fib_init();
 	if (rc)
@@ -425,6 +432,8 @@ static int __init xia_init(void)
 	if (rc)
 		goto raw_prot;
 
+	printk(KERN_INFO "XIA lock table entries: %i = 2^%i (%i bytes)\n",
+		n, ilog2(n), size);
 	printk(KERN_ALERT "XIA loaded\n");
 	goto out;
 
@@ -440,6 +449,8 @@ fib:
 	xia_fib_exit();
 nat:
 	ppal_del_map(XIDTYPE_NAT);
+locks:
+	destroy_main_lock_table();
 out:
 	return rc;
 }
@@ -461,6 +472,7 @@ static void __exit xia_exit(void)
 	rcu_barrier();
 	flush_scheduled_work();
 
+	destroy_main_lock_table();
 	printk(KERN_ALERT "XIA UNloaded\n");
 }
 

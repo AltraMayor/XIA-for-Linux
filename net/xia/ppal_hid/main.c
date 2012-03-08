@@ -26,10 +26,9 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	/*
 	 * The sequence of locks in this function must be careful to avoid
 	 * deadlock with nwp.c:insert_neigh.
-	 */
-
-	/* XXX This code assumes that @local_bucket and @main_bucket don't
-	 * fall on the same lock, and this is not guaranteed!
+	 *
+	 * This code requires that @local_bucket and @main_bucket don't
+	 * fall on the same lock table.
 	 */
 
 	/* Allocating @lhid before aquiring locks to be able to sleep if
@@ -237,17 +236,22 @@ static const struct xia_ppal_rt_eops hid_rt_eops_main = {
  *	Network namespace
  */
 
+/* See function local_newroute to understand
+ * why @localhid_locktbl is necessary.
+ */
+static struct xia_lock_table localhid_locktbl __read_mostly;
+
 static int __net_init hid_net_init(struct net *net)
 {
 	int rc;
 
 	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_HID,
-		&hid_rt_eops_local);
+		&localhid_locktbl, &hid_rt_eops_local);
 	if (rc)
 		goto out;
 
 	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_HID,
-		&hid_rt_eops_main);
+		&xia_main_lock_table, &hid_rt_eops_main);
 	if (rc)
 		goto local_rtbl;
 
@@ -287,9 +291,13 @@ static int __init xia_hid_init(void)
 {
 	int rc;
 
+	rc = xia_lock_table_init(&localhid_locktbl, XIA_LTBL_SPREAD_SMALL);
+	if (rc < 0)
+		goto out;
+
 	rc = xia_register_pernet_subsys(&hid_net_ops);
 	if (rc)
-		goto out;
+		goto locktbl;
 
 	rc = hid_nwp_init();
 	if (rc)
@@ -306,6 +314,8 @@ nwp:
 	hid_nwp_exit();
 net:
 	xia_unregister_pernet_subsys(&hid_net_ops);
+locktbl:
+	xia_lock_table_finish(&localhid_locktbl);
 out:
 	return rc;
 }
@@ -318,6 +328,7 @@ static void __exit xia_hid_exit(void)
 	ppal_del_map(XIDTYPE_HID);
 	hid_nwp_exit();
 	xia_unregister_pernet_subsys(&hid_net_ops);
+	xia_lock_table_finish(&localhid_locktbl);
 
 	rcu_barrier();
 	flush_scheduled_work();

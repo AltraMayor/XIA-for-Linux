@@ -19,6 +19,7 @@
 #include <net/netlink.h>
 #include <net/net_namespace.h>
 #include <net/xia.h>
+#include <net/xia_locktbl.h>
 
 struct xia_fib_config {
 	u8			xfc_dst_len;
@@ -93,6 +94,7 @@ struct fib_xid_table {
 	/* Buckets. */
 	struct fib_xid_buckets __rcu	*fxt_active_branch;
 	struct fib_xid_buckets		fxt_branch[2];
+	struct xia_lock_table		*fxt_locktbl;
 
 	/* Number of struct fib_xid's in this table. */
 	atomic_t			fxt_count;
@@ -188,9 +190,6 @@ static inline void xia_unregister_pernet_subsys(struct pernet_operations *ops)
  *	Exported by fib.c
  */
 
-int init_main_lock_table(int *size_byte, int *n);
-void destroy_main_lock_table(void);
-
 /** create_xia_rtable - Create and return a fib_xia_rtable.
  * RETURN
  * 	It returns the struct on success, otherwise NULL.
@@ -215,7 +214,7 @@ void destroy_xia_rtable(struct fib_xia_rtable **prtbl);
  *	destroy_xia_rtable.
  */
 int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
-	const struct xia_ppal_rt_eops *eops);
+	struct xia_lock_table *locktbl, const struct xia_ppal_rt_eops *eops);
 
 /** end_xid_table - terminate XID table for type @ty.
  * NOTE
@@ -292,6 +291,12 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
  * NOTE
  * 	@pbucket always receives the bucket to be unlocked later.
  *	Caller must always unlock with fib_unlock_bucket afterwards.
+ *
+ *	Caller should never call this function with a lock on @xtbl
+ *	already held because @xtbl uses a single table lock because
+ *	this MAY lead to a deadlock.
+ *	The same problem happens if it's called on different @xtbl's
+ *	that share the same lock table.
  */
 struct fib_xid *xia_find_xid_lock(u32 *pbucket, struct fib_xid_table *xtbl,
 	const u8 *xid);

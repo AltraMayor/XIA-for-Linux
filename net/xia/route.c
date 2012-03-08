@@ -424,11 +424,11 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 					XIA_MAX_STRXID_SIZE) < 0);
 				BUG_ON(xia_xidtop(right_xid, to,
 					XIA_MAX_STRXID_SIZE) < 0);
-				printk(KERN_ERR
-					"BUG: Principal %u is redirecting to "
+				pr_err("BUG: Principal %u is redirecting to "
 					"itself, %s -> %s, "
 					"ignoring this route\n",
 					__be32_to_cpu(ty), from, to);
+				dump_stack();
 				return XRP_ACT_NEXT_EDGE;
 			}
 			left_xid = right_xid;
@@ -442,9 +442,10 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 		done--;
 	} while (done > 0);
 	BUG_ON(xia_xidtop(xid, from, XIA_MAX_STRXID_SIZE) < 0);
-	printk(KERN_ERR "BUG: Principal %u is looping too deep, "
+	pr_err("BUG: Principal %u is looping too deep, "
 		"this search started with %s, ignoring this route\n",
 		__be32_to_cpu(ty), from);
+	dump_stack();
 	return XRP_ACT_NEXT_EDGE;
 }
 
