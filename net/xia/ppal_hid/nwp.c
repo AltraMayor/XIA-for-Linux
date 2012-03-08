@@ -442,10 +442,11 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	struct announcement_state state;
 
 	if (mtu < min_annoucement) {
-		printk(KERN_ERR "XIA HID NWP: Can't send an announcement "
+		pr_err("XIA HID NWP: Can't send an announcement "
 			"because dev %s has MTU (%u) smaller than "
 			"the smallest annoucement frame (%i)\n",
 			dev->name, mtu, min_annoucement);
+		dump_stack();
 		return;
 	}
 
@@ -581,10 +582,11 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	struct neighs_hdr *nwp;
 
 	if (mtu < min_list) {
-		printk(KERN_ERR "XIA HID NWP: Can't send a neighbor list "
+		pr_err("XIA HID NWP: Can't send a neighbor list "
 			"because dev %s has MTU (%u) smaller than "
 			"the smallest neighbor list frame (%i)\n",
 			dev->name, mtu, min_list);
+		dump_stack();
 		return NULL;
 	}
 
@@ -881,9 +883,11 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 #ifdef NET_REFCNT_DEBUG
 	printk(KERN_DEBUG "%s: %p=%s\n", __FUNCTION__, hdev, dev->name);
 #endif
-	if (!hdev->dead)
+	if (!hdev->dead) {
 		pr_err("%s: freeing alive hid_dev %p=%s\n",
 			__FUNCTION__, hdev, dev->name);
+		dump_stack();
+	}
 
 	dev_put(dev);
 	kfree(hdev);

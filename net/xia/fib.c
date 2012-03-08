@@ -1,91 +1,11 @@
-#include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/jhash.h>
-#include <linux/cpumask.h>
-#include <asm/atomic.h>
-#include <asm/cache.h>
+#include <net/xia_locktbl.h>
 #include <net/xia_fib.h>
 
 /*
  *	Lock tables
  */
-
-struct xia_lock_table {
-	spinlock_t	*locks;
-	int		mask;
-};
-
-/* RETURN
- *	Return the size in bytes of the vector of locks; otherwise a negative
- *	number with the error.
- * NOTE
- *	The number of locks in the table is a power of two, and
- *	depends on the number of CPUS.
- */
-static int xia_lock_table_init(struct xia_lock_table *lock_table)
-{
-	int cpus = num_possible_cpus();
-	int i, nlocks;
-	size_t size;
-	spinlock_t *locks;
-
-	BUG_ON(cpus <= 0);
-	nlocks = roundup_pow_of_two(cpus) * 0x100;
-	BUG_ON(!is_power_of_2(nlocks));
-
-	size = sizeof(spinlock_t) * nlocks;
-	locks = kmalloc(size, GFP_KERNEL);
-	if (!locks)
-		return -ENOMEM;
-	for (i = 0; i < nlocks; i++)
-		spin_lock_init(&locks[i]);
-
-	lock_table->locks = locks;
-	lock_table->mask = nlocks - 1;
-	return size;
-}
-
-/* NOTE
- *	It does NOT free @lock_table since this function can be used on
- *	static and stack-allocated structures.
- *
- *	Caller must make sure that the table is NOT being used anymore.
- */
-static void xia_lock_table_finish(struct xia_lock_table *lock_table)
-{
-	spinlock_t *locks = lock_table->locks;
-	int i, n, warn;
-
-	if (!locks)
-		return;
-
-	n = lock_table->mask + 1;
-	warn = 0;
-	for (i = 0; i < n; n++)
-		if (spin_is_locked(&locks[i])) {
-			warn = 1;
-			break;
-		}
-	if (warn)
-		pr_err("Freeing alive lock table %p\n", lock_table);
-
-	kfree(locks);
-	lock_table->locks = NULL;
-	lock_table->mask = 0;
-}
-
-static inline void xia_lock_table_lock(struct xia_lock_table *lock_table,
-	u32 hash)
-{
-	spin_lock(&lock_table->locks[hash & lock_table->mask]);
-}
-
-static inline void xia_lock_table_unlock(struct xia_lock_table *lock_table,
-	u32 hash)
-{
-	spin_unlock(&lock_table->locks[hash & lock_table->mask]);
-}
 
 static inline u32 xtbl_hash_mix(struct fib_xid_table *xtbl)
 {
@@ -104,33 +24,16 @@ static inline u32 hash_bucket(struct fib_xid_table *xtbl, u32 bucket)
 	return xtbl_hash_mix(xtbl) * bucket + xtbl->fxt_seed;
 }
 
-static struct xia_lock_table xia_lock_table __read_mostly;
-
 /* Don't make this function inline, it's bigger than it looks like! */
 static void bucket_lock(struct fib_xid_table *xtbl, u32 bucket)
 {
-	xia_lock_table_lock(&xia_lock_table, hash_bucket(xtbl, bucket));
+	xia_lock_table_lock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
 }
 
 /* Don't make this function inline, it's bigger than it looks like! */
 static void bucket_unlock(struct fib_xid_table *xtbl, u32 bucket)
 {
-	xia_lock_table_unlock(&xia_lock_table, hash_bucket(xtbl, bucket));
-}
-
-int init_main_lock_table(int *size_byte, int *n)
-{
-	int rc = xia_lock_table_init(&xia_lock_table);
-	if (rc < 0)
-		return rc;
-	*size_byte = rc;
-	*n = xia_lock_table.mask + 1;
-	return 0;
-}
-
-void destroy_main_lock_table(void)
-{
-	xia_lock_table_finish(&xia_lock_table);
+	xia_lock_table_unlock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
 }
 
 /*
@@ -226,7 +129,7 @@ static void xtbl_death_work(struct work_struct *work);
 static void rehash_work(struct work_struct *work);
 
 int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
-	const struct xia_ppal_rt_eops *eops)
+	struct xia_lock_table *locktbl, const struct xia_ppal_rt_eops *eops)
 {
 	struct hlist_head *head;
 	struct fib_xid_table *new_xtbl;
@@ -250,6 +153,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	new_xtbl->fxt_ppal_type = ty;
 	new_xtbl->fxt_net = rtbl->tbl_net;
 	hold_net(new_xtbl->fxt_net);
+	new_xtbl->fxt_locktbl = locktbl;
 	abranch->index = 0;
 	new_xtbl->fxt_branch[1].index = 1;
 	atomic_set(&new_xtbl->fxt_count, 0);
@@ -345,14 +249,17 @@ static void xtbl_death_work(struct work_struct *work)
          * the caller can do about this error/bug.
 	 */
 	c = atomic_read(&xtbl->fxt_count);
-	if (c != rm_count)
-		printk(KERN_ERR "While freeing XID table of principal %x "
+	if (c != rm_count) {
+		pr_err("While freeing XID table of principal %x "
 			"%i entries were found, whereas %i are counted! "
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
+		dump_stack();
+	}
 
 	release_net(xtbl->fxt_net);
 	free_buckets(abranch);
+	xtbl->fxt_locktbl = NULL; /* Being redundant. */
 	kfree(xtbl);
 }
 
@@ -374,9 +281,10 @@ void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
 	struct hlist_head *head;
 	struct fib_xid_table *xtbl = __xia_find_xtbl(rtbl, ty, &head);
 	if (!xtbl) {
-		printk(KERN_ERR "Not found XID table %x when running %s. "
+		pr_err("Not found XID table %x when running %s. "
 			"Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(ty), __FUNCTION__);
+		dump_stack();
 		return;
 	}
 	hlist_del_rcu(&xtbl->fxt_list);
@@ -559,9 +467,10 @@ static void rehash_work(struct work_struct *work)
 	BUG_ON(!is_power_of_2(new_divisor));
 	rc = alloc_buckets(nbranch, new_divisor);
 	if (rc) {
-		printk(KERN_ERR
+		pr_err(
 		"Rehashing XID table %x was not possible due to error %i.\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), rc);
+		dump_stack();
 		return;
 	}
 
@@ -604,10 +513,11 @@ static void rehash_work(struct work_struct *work)
 	 */
 	c = atomic_read(&xtbl->fxt_count);
 	if (c != mv_count) {
-		printk(KERN_ERR "While rehashing XID table of principal %x, "
+		pr_err("While rehashing XID table of principal %x, "
 			"%i entries were found, whereas %i are registered! "
 			"Fixing the counter for now, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count, c);
+		dump_stack();
 		/* "Fixing" bug. */
 		atomic_set(&xtbl->fxt_count, mv_count);
 	}
