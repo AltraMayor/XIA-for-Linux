@@ -1,8 +1,301 @@
+#include <linux/export.h>
 #include <net/xia_route.h>
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
-#include <linux/export.h>
 #include <net/ip_vs.h> /* Needed for skb_net. */
+
+/*
+ *	Route cache (DST)
+ */
+
+/* DO NOT use __read_mostly on this structure due to field pcpuc_entries. */
+static struct dst_ops xip_dst_ops_template = {
+	.family =		AF_XIA,
+	.protocol =		cpu_to_be16(ETH_P_XIP),
+	/* XXX This value should be reconsidered once struct xip_dst_table
+	 * is redesigned. Using the same value of
+	 * net/ipv6/route.c:ip6_dst_ops_template.gc_thresh.
+	 */
+	.gc_thresh =		1024,
+/* TODO
+	.gc =			rt_garbage_collect,
+	.check =		ipv4_dst_check,
+	.default_advmss =	ipv4_default_advmss,
+	.mtu =			ipv4_mtu,
+	.cow_metrics =		ipv4_cow_metrics,
+	.destroy =		ipv4_dst_destroy,
+	.ifdown =		ipv4_dst_ifdown,
+	.negative_advice =	ipv4_negative_advice,
+	.link_failure =		ipv4_link_failure,
+	.update_pmtu =		ip_rt_update_pmtu,
+	.local_out =		__ip_local_out,
+	.neigh_lookup =		ipv4_neigh_lookup,
+*/
+};
+
+static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
+{
+	/* The only reason we use @net->loopback_dev instead of NULL is that
+	 * function net/core/dst.c:___dst_free changes @dst->input and
+	 * @dst->output to dst_discard, what would lead to disrruptions for
+	 * a @xdst removed from the hash table, but still being used.
+	 */
+	struct xip_dst *xdst = dst_alloc(&net->xia.xip_dst_ops,
+		net->loopback_dev, 0, 0, flags);
+	if (xdst)
+		memset(xdst->after_dst, 0, sizeof(*xdst) - sizeof(xdst->dst));
+	return xdst;
+}
+
+static inline u32 start_edge_hash(int input)
+{
+	return !!input;
+}
+
+static inline void update_edge_hash(u32 *pkey_hash, struct xia_xid *xid)
+{
+	const u32 n = sizeof(*xid) / sizeof(u32);
+	BUILD_BUG_ON(sizeof(*xid) % sizeof(u32));
+	*pkey_hash = jhash2((const u32 *)xid, n, *pkey_hash);
+}
+
+static u32 hash_edges(struct xia_row *addr, struct xia_row *row, int input)
+{
+	int i;
+	u32 key_hash = start_edge_hash(input);
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		u8 e = row->s_edge.a[i];
+		if (!is_empty_edge(e))
+			update_edge_hash(&key_hash, &addr[e].s_xid);
+		else
+			break;
+	}
+	return key_hash;
+}
+
+static void set_xdst_key(struct xip_dst *xdst, struct xia_row *addr,
+	struct xia_row *row, int input, u32 key_hash)
+{
+	int i;
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		struct xia_xid *xid = &xdst->xids[i];
+		u8 e = row->s_edge.a[i];
+		if (!is_empty_edge(e)) {
+			memmove(xid, &addr[e].s_xid, sizeof(*xid));
+		} else {
+			BUILD_BUG_ON(XIDTYPE_NAT != 0);
+			memset(xid, 0, sizeof(*xid) * (XIA_OUTDEGREE_MAX - i));
+			break;
+		}
+	}
+	xdst->key_hash = key_hash;
+	xdst->input = !!input;
+}
+
+static inline u32 xdst_lock_bucket(struct net *net, struct xip_dst *xdst)
+{
+	/* TODO */
+	return xdst->key_hash;
+}
+
+static inline void xdst_unlock_bucket(struct net *net, u32 bucket)
+{
+	/* TODO */
+}
+
+static inline void xdst_hold(struct xip_dst *xdst)
+{
+	dst_hold(&xdst->dst);
+}
+
+static inline void xdst_put(struct xip_dst *xdst)
+{
+	dst_release(&xdst->dst);
+}
+
+static inline void xdst_free(struct xip_dst *xdst)
+{
+	dst_free(&xdst->dst);
+}
+
+static inline void xdst_rcu_free(struct xip_dst *xdst)
+{
+	call_rcu(&xdst->dst.rcu_head, dst_rcu_free);
+}
+
+static inline struct dst_entry **dsthead(struct net *net, u32 key_hash)
+{
+	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_DST_TABLE_SIZE);
+	return &net->xia.xip_dst_table.buckets
+		[key_hash & (XIP_DST_TABLE_SIZE - 1)];
+}
+
+/* Return true if @xdst has the same key of (@addr, @row, @input). */
+static int xdst_matches_addr(struct xip_dst *xdst, struct xia_row *addr,
+	struct xia_row *row, int input)
+{
+	int i;
+
+	/* Test @input. */
+	input = !!input; /* Normalize @input. */
+	/* @xdst->input is always normalized. */
+	if (xdst->input != input)
+		return 0;
+
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		struct xia_xid *xid = &xdst->xids[i];
+		u8 e = row->s_edge.a[i];
+		if (!is_empty_edge(e)) {
+			if (memcmp(xid, &addr[e].s_xid, sizeof(*xid)))
+				return 0;
+		} else {
+			return xia_is_nat(xid->xid_type);
+		}
+	}
+	return 1;
+}
+
+static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash, 
+	struct xia_row *addr, struct xia_row *row, int input)
+{
+	/* The trailing `h' stands for hash, since it's pointing to
+	 * entry in a bucket list.
+	 */
+	struct dst_entry *dsth;
+
+	for (dsth = rcu_dereference(*dsthead(net, key_hash)); dsth;
+		dsth = rcu_dereference(dsth->next)) {
+		struct xip_dst *xdsth = container_of(dsth, struct xip_dst, dst);
+		if (xdsth->key_hash == key_hash &&
+			xdst_matches_addr(xdsth, addr, row, input))
+			return xdsth;
+	}
+	return NULL;
+}
+
+static int xdst_matches_xdst(struct xip_dst *xdst1, struct xip_dst *xdst2)
+{
+	int i;
+
+	if (xdst1->key_hash != xdst2->key_hash || xdst1->input != xdst2->input)
+		return 0;
+
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		struct xia_xid *xid1 = &xdst1->xids[i];
+		struct xia_xid *xid2 = &xdst2->xids[i];
+		if (xia_is_nat(xid1->xid_type))
+			return xia_is_nat(xid2->xid_type);
+		if (memcmp(xid1, xid2, sizeof(*xid1)))
+			return 0;
+	}
+	return 1;
+}
+
+static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
+	struct xip_dst *xdst)
+{
+	struct dst_entry *dsth;
+	for (dsth = *phead; dsth; dsth = dsth->next) {
+		struct xip_dst *xdsth = container_of(dsth, struct xip_dst, dst);
+		if (xdst_matches_xdst(xdsth, xdst))
+			return xdsth;
+	}
+	return NULL;
+}
+
+/* XXX An ICMP-like error should be genererated here. */
+static inline int xip_dst_unreachable(char *direction, struct sk_buff *skb)
+{
+	if (net_ratelimit())
+		printk("XIP: unreachable destination on direction %s\n",
+			direction);
+	return dst_discard(skb);
+}
+
+static int xip_dst_unreachable_in(struct sk_buff *skb)
+{
+	return xip_dst_unreachable("in", skb);
+}
+
+static int xip_dst_unreachable_out(struct sk_buff *skb)
+{
+	return xip_dst_unreachable("out", skb);
+}
+
+/* add_xdst_and_hold - If @xdst is unique in XIP DST table,
+ *	hold a reference to it, and add it to the table.
+ *
+ *	If @xdst is not unique, that is, there already is an entry
+ *	in the table with the same key, xdst_free @xtbl,
+ *	hold a reference to the previous entry, and return it.
+ *
+ * NOTE
+ *	@xdst must not be already in a list!
+ */
+static struct xip_dst *add_xdst_and_hold(struct net *net, struct xip_dst *xdst,
+	u8 dig,	s8 select_edge)
+{
+	struct dst_entry **phead = dsthead(net, xdst->key_hash);
+	struct xip_dst *prv_xdst;
+	u32 bucket;
+
+	/* @xdst must not be already in a list. */
+	BUG_ON(xdst->dst.next);
+
+	dig = !!dig;
+
+	bucket = xdst_lock_bucket(net, xdst);
+	prv_xdst = find_xdst_locked(phead, xdst);
+	if (prv_xdst) {
+		/* @xdst is NOT unique, @prv_xdst is an equivalent entry. */
+
+		/* Use @prv_xdst. */
+		xdst_hold(prv_xdst); /* Reference to be returned. */
+		xdst_unlock_bucket(net, bucket);
+		BUG_ON(prv_xdst->dig != dig);
+		BUG_ON(prv_xdst->select_edge != select_edge);
+
+		xdst_free(xdst);
+
+		return prv_xdst;
+	}
+	
+	/* @xdst is unique. */
+
+	/* Add @xdst to the table. */
+	xdst->dig = dig;
+	xdst->select_edge = select_edge;
+	xdst->dst.next = *phead;
+	xdst_hold(xdst); /* Reference to be returned. */
+	rcu_assign_pointer(*phead, &xdst->dst);
+
+	/* Use @xdst. */
+	xdst_unlock_bucket(net, bucket);
+	return xdst;
+}
+
+/* TODO It needs handle locks because now
+ * it's also called at route_netdev_event.
+ */
+/* Although this function is careful to not affect RCU readers,
+ * it does NOT acquire locks, so caller must ensure that there's no writers.
+ */
+static void clear_xdst_table(struct xip_dst_table *xdst_tbl)
+{
+	int i;
+	for (i = 0; i < XIP_DST_TABLE_SIZE; i++) {
+		struct dst_entry *dsth = xdst_tbl->buckets[i];
+		RCU_INIT_POINTER(xdst_tbl->buckets[i], NULL);
+		while (dsth) {
+			struct dst_entry *next = dsth->next;
+			struct xip_dst *xdsth =
+				container_of(dsth, struct xip_dst, dst);
+			RCU_INIT_POINTER(dsth->next, NULL);
+			xdst_rcu_free(xdsth);
+			dsth = next;
+		}
+	}
+}
 
 /*
  *	Principal routing
@@ -69,7 +362,7 @@ void rt_del_router(struct xia_route_proc *rproc)
 EXPORT_SYMBOL_GPL(rt_del_router);
 
 static int local_deliver(struct net *net, const struct xia_xid *xid,
-	struct xia_dst *xdst)
+	struct xip_dst *xdst)
 {
 	xid_type_t ty = xid->xid_type;
 	struct hlist_head *head = ppalhead(ty);
@@ -91,7 +384,7 @@ out:
 }
 
 static int main_deliver(struct net *net, const struct xia_xid *xid,
-	struct xia_dst *xdst)
+	struct xip_dst *xdst)
 {
 	xid_type_t ty = xid->xid_type;
 	const struct xia_xid *left_xid;
@@ -155,19 +448,6 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 	return XRP_ACT_NEXT_EDGE;
 }
 
-static void copy_edge(struct xia_dst *xdst, struct xia_row *addr,
-	struct xia_row *last_row, int index)
-{
-	struct xia_xid *xid = &xdst->xids[index];
-	u8 e = last_row->s_edge.a[index];
-	if (is_empty_edge(e)) {
-		BUILD_BUG_ON(XIDTYPE_NAT != 0);
-		memset(xid, 0, sizeof(*xid));
-	} else {
-		memmove(xid, &addr[e].s_xid, sizeof(*xid));
-	}
-}
-
 static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
 	int index)
 {
@@ -218,11 +498,13 @@ static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
 	return 1;
 }
 
-static struct xia_dst *chose_an_edge(struct net *net, struct xia_row *addr,
+/* The returned reference to a struct xip_dst already has been held. */
+static struct xip_dst *chose_an_edge(struct net *net, struct xia_row *addr,
 	u8 num_dst, u8 *plast_node, struct xia_row *last_row, int input)
 {
-	struct xia_dst *xdst;
+	struct xip_dst *xdst;
 	int last_node, i;
+	u32 key_hash;
 
 	/* Changing parameter of the tail call: @last_row. */
 
@@ -230,7 +512,9 @@ tail_call:
 	if (unlikely(!are_edges_valid(last_row, *plast_node, num_dst)))
 		return NULL;
 
-	xdst = /* TODO DST cache lookup goes here. */ NULL;
+	key_hash = hash_edges(addr, last_row, input);
+	rcu_read_lock();
+	xdst = find_xdst_rcu(net, key_hash, addr, last_row, input);
 	if (xdst) {
 		/* Cache hit, interpret @xdst. */
 
@@ -238,6 +522,7 @@ tail_call:
 		BUG_ON(i >= XIA_OUTDEGREE_MAX);
 
 		if (xdst->dig) {
+			rcu_read_unlock();
 			BUG_ON(i < 0);
 
 			/* Record that we're going for a recursion. */
@@ -251,15 +536,19 @@ tail_call:
 		}
 		if (i >= 0)
 			select_edge(plast_node, last_row, i);
+		xdst_hold(xdst);
+		rcu_read_unlock();
 		return xdst;
 	}
+	rcu_read_unlock();
 
 	/* Handle DST cache miss. */
 
-	/* TODO Create an xdst. */
-	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
-		copy_edge(xdst, addr, last_row, i);
-	xdst->input = input;
+	/* Create @xdst. */
+	xdst = xip_dst_alloc(net, 0);
+	if (!xdst)
+		return NULL;
+	set_xdst_key(xdst, addr, last_row, input, key_hash);
 
 	last_node = *plast_node;
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
@@ -285,12 +574,7 @@ tail_call:
 				/* Identify delivery in the address. */
 				select_edge(plast_node, last_row, i);
 
-				/* Store the new @xdst for future uses. */
-				xdst->dig = 0;
-				xdst->select_edge = i;
-				/* TODO Add xdst to table. */
-
-				return xdst;
+				return add_xdst_and_hold(net, xdst, 0, i);
 			}
 
 			/* This sink isn't local, perhaps it's forwardable. */
@@ -302,10 +586,7 @@ tail_call:
 			/* Record that we're going for a recursion. */
 			select_edge(plast_node, last_row, i);
 
-			/* Store the new @xdst for future uses. */
-			xdst->dig = 1;
-			xdst->select_edge = i;
-			/* TODO Add xdst to table. */
+			xdst_put(add_xdst_and_hold(net, xdst, 1, i));
 
 			last_row = next_row;
 			goto tail_call;
@@ -317,25 +598,15 @@ tail_call:
 			break;
 		case XRP_ACT_FORWARD:
 			/* We found an edge that we can use to forward. */
-
-			/* Store the new @xdst for future uses. */
-			xdst->dig = 0;
-			xdst->select_edge = -1;
-			/* TODO Add xdst to table. */
-	
-			return xdst;
+			return add_xdst_and_hold(net, xdst, 0, -1);
 		default:
 			BUG();
 		}
 	}
 
-	/* TODO An ICMP-like error should be
-	 * genererated here.
-	 */
-	xdst->dig = 0;
-	xdst->select_edge = -1;
-	/* TODO Add DST cache entry. */
-	return xdst;
+	xdst->dst.input = xip_dst_unreachable_in;
+	xdst->dst.output = xip_dst_unreachable_out;
+	return add_xdst_and_hold(net, xdst, 0, -1);
 }
 
 static int xip_route(struct sk_buff *skb, struct xia_row *addr,
@@ -343,7 +614,7 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
 {
 	int last_node = *plast_node;
 	struct xia_row *last_row;
-	struct xia_dst *xdst;
+	struct xip_dst *xdst;
 
 	last_row = last_node == XIA_ENTRY_NODE_INDEX ?
 		&addr[num_dst - 1] : &addr[last_node];
@@ -360,9 +631,8 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
 	xdst = chose_an_edge(skb_net(skb), addr, num_dst, plast_node,
 		last_row, input);
 	if (likely(xdst)) {
-		/* TODO set xdst in skb. */
-		return -EINVAL;
-		/* return 0; */
+		skb_dst_set(skb, &xdst->dst);
+		return 0;
 	}
 	return -EINVAL;
 }
@@ -455,13 +725,88 @@ static struct packet_type xip_packet_type __read_mostly = {
 	/* XXX Implement GSO & GRO methods to improve performance. */
 };
 
+/*
+ *	Initialization
+ */
+
+static int __net_init xip_route_net_init(struct net *net)
+{
+	struct dst_ops *ops = &net->xia.xip_dst_ops;
+	int rc;
+
+	/* Initialize @xip_dst_ops. */
+	memmove(ops, &xip_dst_ops_template, sizeof(*ops));
+	rc = dst_entries_init(ops);
+	if (rc)
+		goto out;
+
+	memset(&net->xia.xip_dst_table, 0, sizeof(net->xia.xip_dst_table));
+
+out:
+	return rc;
+}
+
+static void __net_exit xip_route_net_exit(struct net *net)
+{
+	clear_xdst_table(&net->xia.xip_dst_table);
+	dst_entries_destroy(&net->xia.xip_dst_ops);
+}
+
+static struct pernet_operations xip_route_net_ops __read_mostly = {
+	.init = xip_route_net_init,
+	.exit = xip_route_net_exit,
+};
+
+static int route_netdev_event(struct notifier_block *nb,
+	unsigned long event, void *ptr)
+{
+	struct net_device *dev = ptr;
+	struct net *net = dev_net(dev);
+	/* @dst->dev is always equal to @net->loopback_dev in XIP.
+	 * See function xip_dst_alloc for details.
+	 */
+	if (event == NETDEV_UNREGISTER && dev == net->loopback_dev)
+		clear_xdst_table(&net->xia.xip_dst_table);
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block route_netdev_notifier __read_mostly = {
+	.notifier_call = route_netdev_event,
+};
+
 int xia_route_init(void)
 {
+	int rc;
+
+	rc = -ENOMEM;
+	xip_dst_ops_template.kmem_cachep =
+		KMEM_CACHE(xip_dst, SLAB_HWCACHE_ALIGN);
+	if (!xip_dst_ops_template.kmem_cachep)
+		goto out;
+
+	rc = register_pernet_subsys(&xip_route_net_ops);
+	if (rc)
+		goto out_kmem_cache;
+
+	rc = register_netdevice_notifier(&route_netdev_notifier);
+	if (rc)
+		goto pernet;
+
 	dev_add_pack(&xip_packet_type);
 	return 0;
+
+pernet:
+	unregister_pernet_subsys(&xip_route_net_ops);
+out_kmem_cache:
+	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
+out:
+	return rc;
 }
 
 void xia_route_exit(void)
 {
 	dev_remove_pack(&xip_packet_type);
+	unregister_netdevice_notifier(&route_netdev_notifier);
+	unregister_pernet_subsys(&xip_route_net_ops);
+	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
 }
