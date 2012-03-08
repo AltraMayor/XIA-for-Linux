@@ -55,7 +55,7 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 			cfg->xfc_odev = __dev_get_by_index(net,
 				nla_get_u32(attr));
 			if (!cfg->xfc_odev)
-				return -EINVAL;
+				return -ENODEV;
 			break;
 		}
 		case RTA_GATEWAY:
