@@ -28,6 +28,10 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	 * deadlock with nwp.c:insert_neigh.
 	 */
 
+	/* XXX This code assumes that @local_bucket and @main_bucket don't
+	 * fall on the same lock, and this is not guaranteed!
+	 */
+
 	/* Allocating @lhid before aquiring locks to be able to sleep if
 	 * necessary.
 	 */
@@ -38,9 +42,6 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	init_fxid(&lhid->xhl_common, xid);
 
 	rc = -ESRCH;
-	/* Notice that having xia_find_xid_lock on @local_xtbl requires
-	 * @local_xtbl to support multiple writers.
-	 */
 	if (xia_find_xid_lock(&local_bucket, xtbl, xid))
 		goto out;
 
