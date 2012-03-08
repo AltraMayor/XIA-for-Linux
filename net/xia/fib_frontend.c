@@ -275,22 +275,16 @@ EXPORT_SYMBOL_GPL(xia_register_pernet_subsys);
 
 int xia_fib_init(void)
 {
-	int rc, size, n;
-
-	rc = init_main_lock_table(&size, &n);
-	if (rc)
-		goto out;
+	int rc;
 
 	rc = register_pernet_subsys(&fib_net_ops);
 	if (rc)
-		goto locks;
+		goto out;
 
 	rtnl_register(PF_XIA, RTM_NEWROUTE, xia_rtm_newroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
 	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
 
-	printk(KERN_INFO "XIA lock table entries: %i = 2^%i (%i bytes)\n",
-		n, ilog2(n), size);
 	goto out;
 
 /*
@@ -299,8 +293,6 @@ rtnl:
 net:
 	unregister_pernet_subsys(&fib_net_ops);
 */
-locks:
-	destroy_main_lock_table();
 out:
 	return rc;
 }
@@ -309,5 +301,4 @@ void xia_fib_exit(void)
 {
 	rtnl_unregister_all(PF_XIA);
 	unregister_pernet_subsys(&fib_net_ops);
-	destroy_main_lock_table();
 }
