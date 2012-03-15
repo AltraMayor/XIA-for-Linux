@@ -230,7 +230,7 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 	net = xtbl_net(xtbl);
 	local_xtbl = xia_find_xtbl_hold(net->xia.local_rtbl, XIDTYPE_HID);
 	BUG_ON(xtbl == local_xtbl);
-	BUG_ON(net != xtbl_net(local_xtbl));
+	BUG_ON(!net_eq(net, xtbl_net(local_xtbl)));
 	/* Notice that having xia_find_xid_lock on @local_xtbl requires
 	 * @local_xtbl to support multiple writers.
 	 */
@@ -559,7 +559,7 @@ void hid_free_hid_state(struct net *net)
 {
 	struct xia_hid_state *state = net->xia.hid_state;
 	struct net *netx = (struct net *)state->announce_timer.data;
-	BUG_ON(net != netx);
+	BUG_ON(!net_eq(net, netx));
 	del_timer_sync(&state->announce_timer);
 	net->xia.hid_state = NULL;
 	release_net(net);
