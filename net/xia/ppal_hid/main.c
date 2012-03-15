@@ -47,7 +47,7 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	rc = -EINVAL;
 	net = xtbl_net(xtbl);
 	main_xtbl = xia_find_xtbl_hold(net->xia.main_rtbl, XIDTYPE_HID);
-	BUG_ON(net != xtbl_net(main_xtbl));
+	BUG_ON(!net_eq(net, xtbl_net(main_xtbl)));
 	if (xia_find_xid_lock(&main_bucket, main_xtbl, xid))
 		goto unlock_main;
 
