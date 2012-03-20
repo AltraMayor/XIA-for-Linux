@@ -92,15 +92,32 @@ static void set_xdst_key(struct xip_dst *xdst, struct xia_row *addr,
 	xdst->input = !!input;
 }
 
-static inline u32 xdst_lock_bucket(struct net *net, struct xip_dst *xdst)
+static inline u32 _get_bucket(u32 key_hash)
 {
-	/* TODO */
-	return xdst->key_hash;
+	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_DST_TABLE_SIZE);
+	return key_hash & (XIP_DST_TABLE_SIZE - 1);
 }
 
-static inline void xdst_unlock_bucket(struct net *net, u32 bucket)
+static inline u32 get_bucket(struct xip_dst *xdst)
 {
-	/* TODO */
+	return _get_bucket(xdst->key_hash);
+}
+
+static inline u32 hash_bucket(struct net *net, u32 bucket)
+{
+	return net_hash_mix(net) + bucket;
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+static void xdst_lock_bucket(struct net *net, u32 bucket)
+{
+	xia_lock_table_lock(&xia_main_lock_table, hash_bucket(net, bucket));
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+static void xdst_unlock_bucket(struct net *net, u32 bucket)
+{
+	xia_lock_table_unlock(&xia_main_lock_table, hash_bucket(net, bucket));
 }
 
 static inline void xdst_hold(struct xip_dst *xdst)
@@ -125,9 +142,7 @@ static inline void xdst_rcu_free(struct xip_dst *xdst)
 
 static inline struct dst_entry **dsthead(struct net *net, u32 key_hash)
 {
-	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_DST_TABLE_SIZE);
-	return &net->xia.xip_dst_table.buckets
-		[key_hash & (XIP_DST_TABLE_SIZE - 1)];
+	return &net->xia.xip_dst_table.buckets[_get_bucket(key_hash)];
 }
 
 /* Return true if @xdst has the same key of (@addr, @row, @input). */
@@ -244,7 +259,8 @@ static struct xip_dst *add_xdst_and_hold(struct net *net, struct xip_dst *xdst,
 
 	dig = !!dig;
 
-	bucket = xdst_lock_bucket(net, xdst);
+	bucket = get_bucket(xdst);
+	xdst_lock_bucket(net, bucket);
 	prv_xdst = find_xdst_locked(phead, xdst);
 	if (prv_xdst) {
 		/* @xdst is NOT unique, @prv_xdst is an equivalent entry. */
@@ -274,24 +290,27 @@ static struct xip_dst *add_xdst_and_hold(struct net *net, struct xip_dst *xdst,
 	return xdst;
 }
 
-/* TODO It needs handle locks because now
- * it's also called at route_netdev_event.
- */
-/* Although this function is careful to not affect RCU readers,
- * it does NOT acquire locks, so caller must ensure that there's no writers.
- */
-static void clear_xdst_table(struct xip_dst_table *xdst_tbl)
+static void clear_xdst_table(struct net *net)
 {
+	struct xip_dst_table *xdst_tbl = &net->xia.xip_dst_table;
 	int i;
+
 	for (i = 0; i < XIP_DST_TABLE_SIZE; i++) {
-		struct dst_entry *dsth = xdst_tbl->buckets[i];
+		struct dst_entry *dsth;
+
+		/* Given when/where clear_xdst_table is currently called,
+		 * the lock below may be unnecessary, but there's no
+		 * clear way to have a coded guarantee.
+		 */
+		xdst_lock_bucket(net, i);
+		dsth = xdst_tbl->buckets[i];
 		RCU_INIT_POINTER(xdst_tbl->buckets[i], NULL);
+		xdst_unlock_bucket(net, i);
+
 		while (dsth) {
 			struct dst_entry *next = dsth->next;
-			struct xip_dst *xdsth =
-				container_of(dsth, struct xip_dst, dst);
 			RCU_INIT_POINTER(dsth->next, NULL);
-			xdst_rcu_free(xdsth);
+			xdst_rcu_free(container_of(dsth, struct xip_dst, dst));
 			dsth = next;
 		}
 	}
@@ -749,7 +768,7 @@ out:
 
 static void __net_exit xip_route_net_exit(struct net *net)
 {
-	clear_xdst_table(&net->xia.xip_dst_table);
+	clear_xdst_table(net);
 	dst_entries_destroy(&net->xia.xip_dst_ops);
 }
 
@@ -767,7 +786,7 @@ static int route_netdev_event(struct notifier_block *nb,
 	 * See function xip_dst_alloc for details.
 	 */
 	if (event == NETDEV_UNREGISTER && dev == net->loopback_dev)
-		clear_xdst_table(&net->xia.xip_dst_table);
+		clear_xdst_table(net);
 	return NOTIFY_DONE;
 }
 
