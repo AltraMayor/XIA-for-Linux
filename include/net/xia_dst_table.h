@@ -16,6 +16,7 @@
 
 struct xip_dst_table {
 	struct dst_entry	*buckets[XIP_DST_TABLE_SIZE];
+	u32			last_bucket; /* Used for garbage collection. */
 };
 
 #endif	/* _NET_XIA_DST_TABLE_H */
