@@ -8,29 +8,93 @@
  *	Route cache (DST)
  */
 
-/* DO NOT use __read_mostly on this structure due to field pcpuc_entries. */
-static struct dst_ops xip_dst_ops_template = {
+static int xip_dst_gc(struct dst_ops *ops);
+
+static struct dst_entry *xip_dst_check(struct dst_entry *dst, u32 cookie)
+{
+	return NULL;
+}
+
+static unsigned int xip_default_advmss(const struct dst_entry *dst)
+{
+	unsigned int mss = dst_mtu(dst) - MAX_XIP_HEADER;
+
+	BUILD_BUG_ON(XIA_MIN_MSS > XIA_MAX_MSS);
+	if (mss < XIA_MIN_MSS)
+		return XIA_MIN_MSS;
+	if (mss > XIA_MAX_MSS)
+		return XIA_MAX_MSS;
+
+	return mss;
+}
+
+static unsigned int xip_mtu(const struct dst_entry *dst)
+{
+	unsigned int mtu = dst_metric_raw(dst, RTAX_MTU);
+	if (mtu)
+		return mtu;
+	return XIP_MIN_MTU;
+}
+
+static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
+{
+	dst_release(dst);
+	return NULL;
+}
+
+/* XXX An ICMP-like error should be genererated here. */
+static void xip_link_failure(struct sk_buff *skb)
+{
+	if (net_ratelimit())
+		printk("%s: unreachable destination\n", __FUNCTION__);
+}
+
+static void xip_update_pmtu(struct dst_entry *dst, u32 mtu)
+{
+	if (mtu < dst_mtu(dst)) {
+		mtu = mtu < XIP_MIN_MTU ? XIP_MIN_MTU : mtu;
+		dst_metric_set(dst, RTAX_MTU, mtu);
+	}
+}
+
+static int __xip_local_out(struct sk_buff *skb)
+{
+	struct xiphdr *xiph = xip_hdr(skb);
+	int len = skb->len - xip_hdr_len(xiph);
+	BUG_ON(len < 0);
+	BUG_ON(len > XIP_MAXPLEN);
+	xiph->payload_len = cpu_to_be16(len);
+	return 1;
+}
+
+static struct neighbour *xip_neigh_lookup(const struct dst_entry *dst,
+	const void *daddr)
+{
+	return ERR_PTR(-EINVAL);
+}
+
+static struct dst_ops xip_dst_ops_template __read_mostly = {
 	.family =		AF_XIA,
 	.protocol =		cpu_to_be16(ETH_P_XIP),
 	/* XXX This value should be reconsidered once struct xip_dst_table
 	 * is redesigned. Using the same value of
-	 * net/ipv6/route.c:ip6_dst_ops_template.gc_thresh.
+	 * net/ipv6/route.c:ip6_dst_ops_template.gc_thresh for now.
 	 */
 	.gc_thresh =		1024,
-/* TODO
-	.gc =			rt_garbage_collect,
-	.check =		ipv4_dst_check,
-	.default_advmss =	ipv4_default_advmss,
-	.mtu =			ipv4_mtu,
-	.cow_metrics =		ipv4_cow_metrics,
-	.destroy =		ipv4_dst_destroy,
-	.ifdown =		ipv4_dst_ifdown,
-	.negative_advice =	ipv4_negative_advice,
-	.link_failure =		ipv4_link_failure,
-	.update_pmtu =		ip_rt_update_pmtu,
-	.local_out =		__ip_local_out,
-	.neigh_lookup =		ipv4_neigh_lookup,
-*/
+	.gc =			xip_dst_gc,
+	.check =		xip_dst_check,
+	.default_advmss =	xip_default_advmss,
+	.mtu =			xip_mtu,
+	.cow_metrics =		dst_cow_metrics_generic,
+	/* We don't need these methods for now.
+	 * .destroy =		xip_dst_destroy,
+	 * .ifdown =		xip_dst_ifdown,
+	 */
+	.negative_advice =	xip_negative_advice,
+	.link_failure =		xip_link_failure,
+	.update_pmtu =		xip_update_pmtu,
+	.local_out =		__xip_local_out,
+	.neigh_lookup =		xip_neigh_lookup,
 };
 
 static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
@@ -180,7 +244,7 @@ static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash,
 
 	for (dsth = rcu_dereference(*dsthead(net, key_hash)); dsth;
 		dsth = rcu_dereference(dsth->next)) {
-		struct xip_dst *xdsth = container_of(dsth, struct xip_dst, dst);
+		struct xip_dst *xdsth = dst_xdst(dsth);
 		if (xdsth->key_hash == key_hash &&
 			xdst_matches_addr(xdsth, addr, row, input))
 			return xdsth;
@@ -211,7 +275,7 @@ static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
 {
 	struct dst_entry *dsth;
 	for (dsth = *phead; dsth; dsth = dsth->next) {
-		struct xip_dst *xdsth = container_of(dsth, struct xip_dst, dst);
+		struct xip_dst *xdsth = dst_xdst(dsth);
 		if (xdst_matches_xdst(xdsth, xdst))
 			return xdsth;
 	}
@@ -310,10 +374,52 @@ static void clear_xdst_table(struct net *net)
 		while (dsth) {
 			struct dst_entry *next = dsth->next;
 			RCU_INIT_POINTER(dsth->next, NULL);
-			xdst_rcu_free(container_of(dsth, struct xip_dst, dst));
+			xdst_rcu_free(dst_xdst(dsth));
 			dsth = next;
 		}
 	}
+}
+
+/* XXX This is a barebone implementation, more must be done.
+ * See net/ipv4/route.c:rt_garbage_collect and net/ipv6/route.c:ip6_dst_gc
+ * for ideas.
+ *
+ * We're also missing a periodic GC similar to
+ * net/ipv4/route.c:rt_check_expire.
+ */
+static int xip_dst_gc(struct dst_ops *ops)
+{
+	struct net *net;
+	int entries;
+	u32 bucket;
+	struct dst_entry **pdsth;
+
+	entries = dst_entries_get_fast(ops);
+	if (entries < ops->gc_thresh)
+		return 0;
+
+	BUG_ON(ops == &xip_dst_ops_template);
+	net = container_of(ops, struct net, xia.xip_dst_ops);
+
+	bucket = net->xia.xip_dst_table.last_bucket;
+	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_DST_TABLE_SIZE);
+	net->xia.xip_dst_table.last_bucket = (bucket + 1) &
+		(XIP_DST_TABLE_SIZE - 1);
+
+	xdst_lock_bucket(net, bucket);
+	pdsth = &net->xia.xip_dst_table.buckets[bucket];
+	while (*pdsth) {
+		struct dst_entry **pnext = &(*pdsth)->next;
+		struct xip_dst *xdsth = dst_xdst(*pdsth);
+		if (!atomic_read(&(*pdsth)->__refcnt)) {
+			rcu_assign_pointer(*pdsth, *pnext);
+			xdst_rcu_free(xdsth);
+		}
+		pdsth = pnext;
+	}
+	xdst_unlock_bucket(net, bucket);
+
+	return dst_entries_get_slow(ops) > 2 * ops->gc_thresh;
 }
 
 /*
@@ -661,22 +767,6 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
  *	Handling XIP incoming packets
  */
 
-struct xiphdr {
-	u8		version;
-	u8		next_hdr;
-	__be16		payload_len;
-	u8		hop_limit;
-	u8		num_dst;
-	u8		num_src;
-	u8		last_node;
-	struct xia_row	dst_addr[0];
-};
-
-static inline struct xiphdr *xip_hdr(const struct sk_buff *skb)
-{
-	return (struct xiphdr *)skb_network_header(skb);
-}
-
 /* Main XIP receive routine. */
 static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct packet_type *pt, struct net_device *orig_dev)
@@ -694,8 +784,7 @@ static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 	if (!skb)
 		goto out; /* Out of memory. */
 
-	hdr_len = sizeof(struct xiphdr);
-	if (!pskb_may_pull(skb, hdr_len))
+	if (!pskb_may_pull(skb, sizeof(struct xiphdr)))
 		goto drop;
 
 	xiph = xip_hdr(skb);
@@ -709,11 +798,11 @@ static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto drop;
 
 	/* Do we have addresses? */
-	hdr_len += (xiph->num_dst + xiph->num_src) * sizeof(struct xia_row);
+	hdr_len = xip_hdr_len(xiph);
 	if (!pskb_may_pull(skb, hdr_len))
 		goto drop;
 
-	tot_len = hdr_len + ntohs(xiph->payload_len);
+	tot_len = hdr_len + be16_to_cpu(xiph->payload_len);
 	if (skb->len < tot_len)
 		goto drop;
 

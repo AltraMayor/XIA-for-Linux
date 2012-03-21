@@ -5,6 +5,45 @@
 #include <net/dst.h>
 #include <net/xia_dst_table.h>
 
+#define XIP_MIN_MTU	1500
+
+struct xiphdr {
+	__u8	version;	/* XIP version. */
+	__u8	next_hdr;	/* Next header. */
+	__be16	payload_len;	/* Length of the payload in bytes. */
+	__u8	hop_limit;	/* Number of remaining hops allowed. */
+	__u8	num_dst;	/* Number of rows of the destination address. */
+	__u8	num_src;	/* Number of rows of the source address. */
+	__u8	last_node;	/* Last Node visited. */
+
+	struct xia_row	dst_addr[0];
+	/*
+	 * Destination address starts here, and is followed by
+	 * the source address.
+	 */
+};
+
+static inline struct xiphdr *xip_hdr(const struct sk_buff *skb)
+{
+	return (struct xiphdr *)skb_network_header(skb);
+}
+
+static inline int xip_hdr_len(const struct xiphdr *xiph)
+{
+	return sizeof(struct xiphdr) +
+		(xiph->num_dst + xiph->num_src) * sizeof(struct xia_row);
+}
+
+/* Max Payload Length. */
+#define XIP_MAXPLEN	0xffff
+
+#define MAX_XIP_HEADER	(sizeof(struct xiphdr) + sizeof(struct xia_addr) * 2)
+
+/* Min Maximum Segment Size (MSS). */
+#define XIA_MIN_MSS	512
+
+#define XIA_MAX_MSS	(XIP_MAXPLEN - MAX_XIP_HEADER)
+
 struct xip_dst {
 	struct dst_entry	dst;
 
@@ -34,6 +73,11 @@ struct xip_dst {
 	 */
 	s8			select_edge;
 };
+
+static inline struct xip_dst *dst_xdst(struct dst_entry *dst)
+{
+	return container_of(dst, struct xip_dst, dst);
+}
 
 /* Possible returns for method @main_deliver in struct xia_route_proc. */
 enum XRP_ACTION {

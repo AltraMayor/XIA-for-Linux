@@ -13,7 +13,6 @@
 #include <linux/kernel.h>
 #include <linux/net.h>
 #include <linux/socket.h>
-#include <linux/xia.h>
 #include <net/xia.h>
 #include <net/xia_locktbl.h>
 #include <net/xia_fib.h>
@@ -327,6 +326,14 @@ static const struct proto_ops xia_sockraw_ops = {
 	.recvmsg	   = xia_recvmsg,
 	.mmap		   = sock_no_mmap,
 	.sendpage	   = xia_sendpage,
+};
+
+/* XXX These constants must go away in order to support loadable principals. */
+/* XIP protocols. */
+enum {
+  XIPPROTO_XIP = 0,		/* eXpressive Internet Protocol		*/
+  XIPPROTO_RAW = 255,		/* Raw XIP packets			*/
+  XIPPROTO_MAX
 };
 
 static int xia_create(struct net *net, struct socket *sock,
