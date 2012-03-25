@@ -182,6 +182,9 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 			rcu_read_unlock();
 			break;
 		}
+		/* TODO Review this code once the new list_first_entry_rcu
+		 * gets into the kernel.
+		 */
 		ha = list_first_entry_rcu(&hdev->neighs, struct hrdw_addr,
 			hdev_list);
 		memmove(xid, ha->mhid->xhm_common.fx_xid, XIA_XID_MAX);
