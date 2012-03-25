@@ -424,7 +424,7 @@ static int __init xia_init(void)
 	if (rc)
 		goto nat;
 
-	rc = xia_route_init();
+	rc = xip_route_init();
 	if (rc)
 		goto fib;
 
@@ -451,7 +451,7 @@ sock:
 raw_prot:
 	proto_unregister(&xia_raw_prot);
 route:
-	xia_route_exit();
+	xip_route_exit();
 fib:
 	xia_fib_exit();
 nat:
@@ -469,7 +469,7 @@ static void __exit xia_exit(void)
 {
 	sock_unregister(PF_XIA);
 	proto_unregister(&xia_raw_prot);
-	xia_route_exit();
+	xip_route_exit();
 	xia_fib_exit();
 	ppal_del_map(XIDTYPE_NAT);
 
