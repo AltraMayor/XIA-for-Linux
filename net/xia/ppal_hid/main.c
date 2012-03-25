@@ -437,6 +437,12 @@ static int main_output_input(struct sk_buff *skb)
 
 #define main_output_output main_input_output
 
+#define my_list_first_entry_rcu(ptr, type, member) \
+	({struct list_head *__ptr = ptr; \
+	  struct list_head __rcu *__next = list_next_rcu(__ptr); \
+	  likely(__ptr != __next) ? container_of(__next, type, member) : NULL; \
+	})
+
 static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, struct xip_dst *xdst)
 {
@@ -453,10 +459,11 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	rc = XRP_ACT_NEXT_EDGE;
 	if (!mhid)
 		goto out;
-	/* TODO Carefully read @list_first_entry_rcu to understand what happens
-	 * when the list is empty!
+	/* TODO Review this code once the new list_first_entry_rcu
+	 * gets into the kernel.
 	 */
-	ha = list_first_entry_rcu(&mhid->xhm_haddrs, struct hrdw_addr, ha_list);
+	ha = my_list_first_entry_rcu(&mhid->xhm_haddrs, struct hrdw_addr,
+		ha_list);
 	if (unlikely(!ha)) {
 		/* @ha may be NULL because we don't have a lock over @mhid,
 		 * we're just browsing under RCU protection.
