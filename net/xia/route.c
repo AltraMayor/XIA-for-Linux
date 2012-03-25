@@ -435,10 +435,10 @@ static inline struct hlist_head *ppalhead(xid_type_t ty)
 	return &principals[ty & (NUM_PRINCIPAL_HINT - 1)];
 }
 
-static struct xia_route_proc *find_rproc_locked(xid_type_t ty,
+static struct xip_route_proc *find_rproc_locked(xid_type_t ty,
 	struct hlist_head *head)
 {
-	struct xia_route_proc *rproc;
+	struct xip_route_proc *rproc;
 	struct hlist_node *p;
 	hlist_for_each_entry(rproc, p, head, xrp_list)
 		if (rproc->xrp_ppal_type == ty)
@@ -446,10 +446,10 @@ static struct xia_route_proc *find_rproc_locked(xid_type_t ty,
 	return NULL;
 }
 
-static struct xia_route_proc *find_rproc_rcu(xid_type_t ty,
+static struct xip_route_proc *find_rproc_rcu(xid_type_t ty,
 	struct hlist_head *head)
 {
-	struct xia_route_proc *rproc;
+	struct xip_route_proc *rproc;
 	struct hlist_node *p;
 	hlist_for_each_entry_rcu(rproc, p, head, xrp_list)
 		if (rproc->xrp_ppal_type == ty)
@@ -457,7 +457,7 @@ static struct xia_route_proc *find_rproc_rcu(xid_type_t ty,
 	return NULL;
 }
 
-int rt_add_router(struct xia_route_proc *rproc)
+int xip_add_router(struct xip_route_proc *rproc)
 {
 	xid_type_t ty = rproc->xrp_ppal_type;
 	struct hlist_head *head = ppalhead(ty);
@@ -475,23 +475,28 @@ out:
 	spin_unlock(&ppal_lock);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(rt_add_router);
+EXPORT_SYMBOL_GPL(xip_add_router);
 
-void rt_del_router(struct xia_route_proc *rproc)
+void xip_del_router(struct xip_route_proc *rproc)
 {
 	spin_lock(&ppal_lock);
 	hlist_del_rcu(&rproc->xrp_list);
 	spin_unlock(&ppal_lock);
 	synchronize_rcu();
 }
-EXPORT_SYMBOL_GPL(rt_del_router);
+EXPORT_SYMBOL_GPL(xip_del_router);
+
+/* TODO Shouldn't local_deliver and main_deliver receive
+ * the struct xip_route_proc they work on since they're called in order
+ * in chose_an_edge?
+ */
 
 static int local_deliver(struct net *net, const struct xia_xid *xid,
 	struct xip_dst *xdst)
 {
 	xid_type_t ty = xid->xid_type;
 	struct hlist_head *head = ppalhead(ty);
-	struct xia_route_proc *rproc;
+	struct xip_route_proc *rproc;
 	int rc = -ESRCH;
 
 	rcu_read_lock();
@@ -521,7 +526,7 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 	right_xid = &tmp_xids[0];
 	do {
 		struct hlist_head *head;
-		struct xia_route_proc *rproc;
+		struct xip_route_proc *rproc;
 		int rc;
 
 		/* Consult principal. */
@@ -883,7 +888,7 @@ static struct notifier_block route_netdev_notifier __read_mostly = {
 	.notifier_call = route_netdev_event,
 };
 
-int xia_route_init(void)
+int xip_route_init(void)
 {
 	int rc;
 
@@ -912,7 +917,7 @@ out:
 	return rc;
 }
 
-void xia_route_exit(void)
+void xip_route_exit(void)
 {
 	dev_remove_pack(&xip_packet_type);
 	unregister_netdevice_notifier(&route_netdev_notifier);
