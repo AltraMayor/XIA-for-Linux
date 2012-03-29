@@ -44,6 +44,21 @@ static inline int xip_hdr_len(const struct xiphdr *xiph)
 
 #define XIA_MAX_MSS	(XIP_MAXPLEN - MAX_XIP_HEADER)
 
+struct xip_dst_anchor {
+	struct hlist_head	heads[XIA_OUTDEGREE_MAX];
+};
+
+/* xdst_free_anchor - release all strunct xip_dst entries that are attached
+ *			to @anchor.
+ * NOTE
+ *	IMPORTANT! Caller must RCU synch before calling this function.
+ *
+ *	This is function is meant to be called by the host of
+ *	struct xip_dst_anchor, NOT by the code that manipulates
+ *	struct xip_dst.
+ */
+void xdst_free_anchor(struct xip_dst_anchor *anchor);
+
 struct xip_dst {
 	struct dst_entry	dst;
 
@@ -73,9 +88,19 @@ struct xip_dst {
 	 */
 	s8			select_edge;
 
+	/* FREE 1 byte. */
+
 	/* Extra information for dst.input and dst.output methods. */
 	void			*info;
+
+	struct {
+		struct xip_dst_anchor		*anchor;
+		struct hlist_node		list_node;
+	} anchors[XIA_OUTDEGREE_MAX];
 };
+
+void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
+	struct xip_dst_anchor *anchor);
 
 static inline struct xip_dst *dst_xdst(struct dst_entry *dst)
 {
@@ -109,29 +134,37 @@ struct xip_route_proc {
 	/* Principal type. */
 	xid_type_t		xrp_ppal_type;
 
-	/* If @xdst is NULL, @xid is not the sink of the packet, and
-	 * this method just return zero if @xid is local for this principal,
-	 * or -ENOENT to express that @xid isn't local.
-	 * This is equivalent to chose, or not, an edge that is local, but
-	 * not a sink.
+	/* @is_sink is true when @xid is a sink of an address; false otherwise.
 	 *
-	 * If @xdst is not NULL, @xid is a sink of the packet.
-	 * If @xid is local for this principal, this method must fill @xdst
-	 * properly, and return zero; otherwise just return -ENOENT.
-	 */
-	/* TODO Must change @local_deliver to always have @xdst because
-	 * @xdst may still depend on @xid. This will require adding parameters
-	 * @is_sink and @edge (to tell how to add dependency).
+	 * If @xid is not a sink, and
+	 *	1. @xid is local for this principal,
+	 *		this method adds @xdst to @xid's anchor, and
+	 *		returns zero.
+	 *	2. @xid is not local for this principal,
+	 *		this method returns -ENOENT. This implies a negative
+	 *		dependency.
+	 *
+	 * If @xid is a sink, and
+	 *	1. @xid is local for this principal,
+	 *		this method fills @xdst properly, and returns zero.
+	 *	2. @xid is not local for this principal,
+	 *		this method returns -ENOENT.
+	 *
+	 * In any case, this method may return -EINVAL to express that
+	 * the address is invalid. For example, a principal may not be valid
+	 * as a sink. This error is important to avoid taking it as
+	 * negative dependency.
 	 */
 	int (*local_deliver)(struct xip_route_proc *rproc, struct net *net,
-		const u8 *xid, struct xip_dst *xdst);
+		const u8 *xid, int is_sink, int anchor_index,
+		struct xip_dst *xdst);
 
 	/* The return must be enum XRP_ACTION.
 	 * Only non-local XIDs go through this method, but potentially sinks.
 	 */
-	/* TODO Add @edge like in @local_deliver. */
 	int (*main_deliver)(struct xip_route_proc *rproc, struct net *net,
-		const u8 *xid, struct xia_xid *next_xid, struct xip_dst *xdst);
+		const u8 *xid, struct xia_xid *next_xid, int anchor_index,
+		struct xip_dst *xdst);
 };
 
 /** xip_add_router - Add @rproc to XIA routing mechanism.

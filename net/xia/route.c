@@ -36,6 +36,11 @@ static unsigned int xip_mtu(const struct dst_entry *dst)
 	return XIP_MIN_MTU;
 }
 
+static void xip_dst_destroy(struct dst_entry *dst)
+{
+	dst_destroy_metrics_generic(dst);
+}
+
 static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
 {
 	dst_release(dst);
@@ -86,10 +91,7 @@ static struct dst_ops xip_dst_ops_template __read_mostly = {
 	.default_advmss =	xip_default_advmss,
 	.mtu =			xip_mtu,
 	.cow_metrics =		dst_cow_metrics_generic,
-	/* We don't need these methods for now.
-	 * .destroy =		xip_dst_destroy,
-	 * .ifdown =		xip_dst_ifdown,
-	 */
+	.destroy =		xip_dst_destroy,
 	.negative_advice =	xip_negative_advice,
 	.link_failure =		xip_link_failure,
 	.update_pmtu =		xip_update_pmtu,
@@ -99,13 +101,14 @@ static struct dst_ops xip_dst_ops_template __read_mostly = {
 
 static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
 {
+	/* TODO Reassess this comment. */
 	/* The only reason we use @net->loopback_dev instead of NULL is that
 	 * function net/core/dst.c:___dst_free changes @dst->input and
 	 * @dst->output to dst_discard, what would lead to disrruptions for
 	 * a @xdst removed from the hash table, but still being used.
 	 */
 	struct xip_dst *xdst = dst_alloc(&net->xia.xip_dst_ops,
-		net->loopback_dev, 0, 0, flags);
+		net->loopback_dev, 1, 0, flags | DST_NOCACHE);
 	if (xdst)
 		memset(xdst->after_dst, 0, sizeof(*xdst) - sizeof(xdst->dst));
 	return xdst;
@@ -194,14 +197,53 @@ static inline void xdst_put(struct xip_dst *xdst)
 	dst_release(&xdst->dst);
 }
 
-static inline void xdst_free(struct xip_dst *xdst)
+static void detach_anchor(struct xip_dst *xdst);
+
+/* DO NOT call this function! Call xdst_free or xdst_rcu_free instead. */
+static void xdst_free_common(struct xip_dst *xdst)
 {
-	dst_free(&xdst->dst);
+	struct net_device *dev;
+
+	detach_anchor(xdst);
+
+	/* Clear the fields of @xdst below because one is about to lose
+	 * an reference to it to manage unregistering of a device, and
+	 * unloading of a principal.
+	 *
+	 * The write memory barriers are here to minimize the chance of
+	 * race conditions due to the fact that struct dst_entry doesn't
+	 * offer an attomic way to update those fields.
+	 * See net/core/dst.c:dst_ifdown for more information.
+	 */
+	xdst->dst.input = dst_discard;
+	xdst->dst.output = dst_discard;
+	smp_wmb();
+	dev = xdst->dst.dev;
+	xdst->dst.dev = NULL;
+	smp_wmb();
+	dev_put(dev);
 }
 
+/* DO NOT wait for RCU synchonization.
+ * BE CAREFUL with this funtion!
+ */
+static inline void xdst_free(struct xip_dst *xdst)
+{
+	xdst_free_common(xdst);
+	xdst_put(xdst);
+}
+
+static inline void _xdst_rcu_free(struct rcu_head *head)
+{
+	struct xip_dst *xdst = container_of(head, struct xip_dst, dst.rcu_head);
+	xdst_put(xdst);
+}
+
+/* Wait for RCU synchonization. */
 static inline void xdst_rcu_free(struct xip_dst *xdst)
 {
-	call_rcu(&xdst->dst.rcu_head, dst_rcu_free);
+	xdst_free_common(xdst);
+	call_rcu(&xdst->dst.rcu_head, _xdst_rcu_free);
 }
 
 static inline struct dst_entry **dsthead(struct net *net, u32 key_hash)
@@ -301,7 +343,7 @@ static int xip_dst_unreachable_out(struct sk_buff *skb)
 	return xip_dst_unreachable("out", skb);
 }
 
-/* add_xdst_and_hold - If @xdst is unique in XIP DST table,
+/* add_xdst_and_hold_rcu - If @xdst is unique in XIP DST table,
  *	hold a reference to it, and add it to the table.
  *
  *	If @xdst is not unique, that is, there already is an entry
@@ -310,15 +352,23 @@ static int xip_dst_unreachable_out(struct sk_buff *skb)
  *
  * NOTE
  *	@xdst must not be already in a list!
+ *
+ *	Caller must hold a refcount on xdst.
+ *
+ *	One must hold a RCU read lock to call this function in order to
+ *	avoid anchors being released before @xdst is a DST table.
+ *	See function xdst_free_anchor for more information.
  */
-static struct xip_dst *add_xdst_and_hold(struct net *net, struct xip_dst *xdst,
-	u8 dig,	s8 select_edge)
+static struct xip_dst *add_xdst_and_hold_rcu(struct net *net,
+	struct xip_dst *xdst, u8 dig, s8 select_edge)
 {
 	struct dst_entry **phead = dsthead(net, xdst->key_hash);
 	struct xip_dst *prv_xdst;
 	u32 bucket;
 
-	/* @xdst must not be already in a list. */
+	/* @xdst must not be already in a list, or
+	 * potentially holding RCU readers.
+	 */
 	BUG_ON(xdst->dst.next);
 
 	dig = !!dig;
@@ -423,6 +473,164 @@ static int xip_dst_gc(struct dst_ops *ops)
 }
 
 /*
+ *	DST Anchors
+ */
+
+static struct xia_lock_table anchor_locktbl __read_mostly;
+
+static inline u32 hash_anchor(struct xip_dst_anchor *anchor)
+{
+	return (u32)(((unsigned long)anchor) >> L1_CACHE_SHIFT);
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+static void lock_anchor(struct xip_dst_anchor *anchor)
+{
+	xia_lock_table_lock(&anchor_locktbl, hash_anchor(anchor));
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+static void unlock_anchor(struct xip_dst_anchor *anchor)
+{
+	xia_lock_table_unlock(&anchor_locktbl, hash_anchor(anchor));
+}
+
+void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
+	struct xip_dst_anchor *anchor)
+{
+	lock_anchor(anchor);
+	if (cmpxchg(&xdst->anchors[index].anchor, NULL, anchor) != NULL)
+		BUG();
+	hlist_add_head(&xdst->anchors[index].list_node, &anchor->heads[index]);
+	unlock_anchor(anchor);
+}
+EXPORT_SYMBOL_GPL(xdst_attach_to_anchor);
+
+/* NOTE
+ *	IMPORTANT! Don't call this function holding a lock on a bucket!
+ *	This may lead to a deadlock with function xdst_free_anchor.
+ *
+ *	IMPORTANT! Don't call this function holding a lock on an anchor!
+ *	This may lead to a deadlock.
+ *
+ *	It's okay to call this function on an @xdst that has no anchors.
+ */
+static void detach_anchor(struct xip_dst *xdst)
+{
+	int i;
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		struct xip_dst_anchor *anchor, *reread;
+		anchor = xdst->anchors[i].anchor;
+		if (!anchor)
+			continue;
+
+		lock_anchor(anchor);
+		reread = xdst->anchors[i].anchor;
+		if (reread) {
+			/* @xdst is still attached. */
+			BUG_ON(anchor != reread);
+			hlist_del(&xdst->anchors[i].list_node);
+			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
+				anchor)
+				BUG();
+		}
+		unlock_anchor(anchor);
+	}
+}
+
+/* Remove @xdst from the DST table of the @net of its @dev, and hold a refcount
+ *	to it.
+ *
+ * RETURN
+ *	Zero if @xdst was NOT in the DST table.
+ *	IMPORTANT! In this case, there's no refcount to @xdst.
+ *	This can happen either because @xdst wasn't in the DST table derived
+ *	from its @dev (bug), or it wasn't in any DST table at all.
+ *	Notice that just checking @next isn't enough because it may have
+ *	a non-NULL value just to avoid disrupting RCU readers.
+ *
+ *	One otherwise. A refcount is held in this case.
+ *
+ * NOTE
+ *	IMPORTANT! Caller must wait an RCU synch before adding
+ *	@xdst again to a DST table, or releasing its memory.
+ */
+static int del_xdst_and_hold(struct xip_dst *xdst)
+{
+	struct net *net = dev_net(xdst->dst.dev);
+	struct dst_entry **phead = dsthead(net, xdst->key_hash);
+	u32 bucket;
+	struct dst_entry **pdsth;
+	int rc = 0;
+
+	bucket = get_bucket(xdst);
+	xdst_lock_bucket(net, bucket);
+
+	for (pdsth = phead; *pdsth; pdsth = &(*pdsth)->next)
+		if (*pdsth == &xdst->dst) {
+			rcu_assign_pointer(*pdsth, (*pdsth)->next);
+			rc = 1;
+			/* One doesn't need a hold here because @xdst was just
+			 * removed from a DST table.
+			 */
+			goto out;
+		}
+
+out:
+	xdst_unlock_bucket(net, bucket);
+	return rc;
+}
+
+void xdst_free_anchor(struct xip_dst_anchor *anchor)
+{
+	/* Assumptions:
+	 *	1. All @xdst to be found here are in a DST table, or
+	 *		is being removed by somebody else, that is,
+	 *		they have already being in a DST table once.
+	 *	2. Caller waited for a RCU synchronization. This is required
+	 *		to implement assumption 1; see function choose_an_edge.
+	 *	3. @anchor is not reachable from somewhere else but from
+	 *		the @xdst's that point to it.
+	 */
+
+	int i;
+	struct xip_dst *xdst;
+	struct hlist_node *pos, *n;
+
+	lock_anchor(anchor);
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		hlist_for_each_entry_safe(xdst, pos, n, &anchor->heads[i],
+			anchors[i].list_node) {
+			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
+				anchor)
+				BUG();
+
+			if (!del_xdst_and_hold(xdst)) {
+				/* We don't have a refcount to @xdst, and
+				 * assumption 1 guarantees that somebody
+				 * else is going to release @xdst.
+				 */
+				hlist_del(&xdst->anchors[i].list_node);
+			}
+		}
+	}
+	unlock_anchor(anchor);
+
+	/* Assumption 3 guarantees that, at this point, nobody will add
+	 * an @xdst to @anchor now that the lock was released.
+	 */
+
+	/* Free @xdst's that one holds refcount. */
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
+		hlist_for_each_entry_safe(xdst, pos, n, &anchor->heads[i],
+			anchors[i].list_node) {
+			hlist_del(&xdst->anchors[i].list_node);
+			xdst_rcu_free(xdst);
+		}
+}
+EXPORT_SYMBOL_GPL(xdst_free_anchor);
+
+/*
  *	Principal routing
  */
 
@@ -486,18 +694,13 @@ void xip_del_router(struct xip_route_proc *rproc)
 }
 EXPORT_SYMBOL_GPL(xip_del_router);
 
-/* TODO Shouldn't local_deliver and main_deliver receive
- * the struct xip_route_proc they work on since they're called in order
- * in chose_an_edge?
- */
-
 static int local_deliver(struct net *net, const struct xia_xid *xid,
-	struct xip_dst *xdst)
+	int is_sink, int anchor_index, struct xip_dst *xdst)
 {
 	xid_type_t ty = xid->xid_type;
 	struct hlist_head *head = ppalhead(ty);
 	struct xip_route_proc *rproc;
-	int rc = -ESRCH;
+	int rc = -ENOENT;
 
 	rcu_read_lock();
 	rproc = find_rproc_rcu(ty, head);
@@ -506,7 +709,8 @@ static int local_deliver(struct net *net, const struct xia_xid *xid,
 		goto out;
 	}
 	
-	rc = rproc->local_deliver(rproc, net, xid->xid_id, xdst);
+	rc = rproc->local_deliver(rproc, net, xid->xid_id, is_sink,
+		anchor_index, xdst);
 
 out:
 	rcu_read_unlock();
@@ -514,7 +718,7 @@ out:
 }
 
 static int main_deliver(struct net *net, const struct xia_xid *xid,
-	struct xip_dst *xdst)
+	int anchor_index, struct xip_dst *xdst)
 {
 	xid_type_t ty = xid->xid_type;
 	const struct xia_xid *left_xid;
@@ -534,12 +738,12 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 		rcu_read_lock();
 		rproc = find_rproc_rcu(ty, head);
 		if (!rproc) {
-			/* We don't know how to root this principal. */
+			/* We don't know how to route this principal. */
 			rcu_read_unlock();
 			return XRP_ACT_NEXT_EDGE;
 		}
 		rc = rproc->main_deliver(rproc, net, left_xid->xid_id,
-			right_xid, xdst);
+			right_xid, anchor_index, xdst);
 		rcu_read_unlock();
 
 		switch (rc) {
@@ -558,7 +762,6 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 					"itself, %s -> %s, "
 					"ignoring this route\n",
 					__be32_to_cpu(ty), from, to);
-				dump_stack();
 				return XRP_ACT_NEXT_EDGE;
 			}
 			left_xid = right_xid;
@@ -575,7 +778,6 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 	pr_err("BUG: Principal %u is looping too deep, "
 		"this search started with %s, ignoring this route\n",
 		__be32_to_cpu(ty), from);
-	dump_stack();
 	return XRP_ACT_NEXT_EDGE;
 }
 
@@ -587,8 +789,8 @@ static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
 	*plast_node = *pe;
 }
 
-/* This function is intended to be only used in function chose_an_edge.
- * It is here to improve chose_an_edge's readability, and was based on
+/* This function is intended to be only used in function choose_an_edge.
+ * It is here to improve choose_an_edge's readability, and was based on
  * function net/xia/dag.c:xia_test_addr.
  */
 static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
@@ -611,7 +813,7 @@ static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
 		u8 e = *edge;
 		if (e == XIA_EMPTY_EDGE) {
 			if (unlikely(i == 0)) {
-				/* chose_an_edge can't be called on sinks! */
+				/* choose_an_edge can't be called on sinks! */
 				BUG();
 			}
 			return (all_edges & bits) == (XIA_EMPTY_EDGES & bits);
@@ -630,7 +832,7 @@ static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
 }
 
 /* The returned reference to a struct xip_dst already has been held. */
-static struct xip_dst *chose_an_edge(struct net *net, struct xia_row *addr,
+static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
 	u8 num_dst, u8 *plast_node, struct xia_row *last_row, int input)
 {
 	struct xip_dst *xdst;
@@ -681,6 +883,12 @@ tail_call:
 		return NULL;
 	set_xdst_key(xdst, addr, last_row, input, key_hash);
 
+	/* Avoid anchors to release new @xdst before it's in a table!
+	 * In order to understand the need for this rcu_read_lock(),
+	 * see function xdst_free_anchor.
+	 */
+	rcu_read_lock();
+
 	last_node = *plast_node;
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		u8 *pe = &last_row->s_edge.a[i];
@@ -698,18 +906,20 @@ tail_call:
 		next_xid = &next_row->s_xid;
 
 		/* Is it local? */
+		/* TODO BUG!!!! is_it_a_sink isn't part of the DST index!!! */
 		if (is_it_a_sink(next_row, e, num_dst)) {
-			if (!local_deliver(net, next_xid, xdst)) {
+			if (!local_deliver(net, next_xid, 1, i, xdst)) {
 				/* @next_row is a local sink. */
 
 				/* Identify delivery in the address. */
 				select_edge(plast_node, last_row, i);
 
-				return add_xdst_and_hold(net, xdst, 0, i);
+				xdst = add_xdst_and_hold_rcu(net, xdst, 0, i);
+				goto out;
 			}
 
 			/* This sink isn't local, perhaps it's forwardable. */
-		} else if (local_deliver(net, next_xid, NULL)) {
+		} else if (!local_deliver(net, next_xid, 0, i, xdst)) {
 			/* @next_row is NOT a sink, but it's local,
 			 * so walk through it.
 			 */
@@ -717,19 +927,21 @@ tail_call:
 			/* Record that we're going for a recursion. */
 			select_edge(plast_node, last_row, i);
 
-			xdst_put(add_xdst_and_hold(net, xdst, 1, i));
+			xdst_put(add_xdst_and_hold_rcu(net, xdst, 1, i));
+			rcu_read_unlock();
 
 			last_row = next_row;
 			goto tail_call;
 		}
 
 		/* Is it forwardable? */
-		switch (main_deliver(net, next_xid, xdst)) {
+		switch (main_deliver(net, next_xid, i, xdst)) {
 		case XRP_ACT_NEXT_EDGE:
 			break;
 		case XRP_ACT_FORWARD:
 			/* We found an edge that we can use to forward. */
-			return add_xdst_and_hold(net, xdst, 0, -1);
+			xdst = add_xdst_and_hold_rcu(net, xdst, 0, -1);
+			goto out;
 		default:
 			BUG();
 		}
@@ -737,7 +949,11 @@ tail_call:
 
 	xdst->dst.input = xip_dst_unreachable_in;
 	xdst->dst.output = xip_dst_unreachable_out;
-	return add_xdst_and_hold(net, xdst, 0, -1);
+	xdst = add_xdst_and_hold_rcu(net, xdst, 0, -1);
+
+out:
+	rcu_read_unlock();
+	return xdst;
 }
 
 static int xip_route(struct sk_buff *skb, struct xia_row *addr,
@@ -759,7 +975,7 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
 	}
 
 	/* Inductive step. */
-	xdst = chose_an_edge(skb_net(skb), addr, num_dst, plast_node,
+	xdst = choose_an_edge(skb_net(skb), addr, num_dst, plast_node,
 		last_row, input);
 	if (likely(xdst)) {
 		skb_dst_set(skb, &xdst->dst);
@@ -892,11 +1108,15 @@ int xip_route_init(void)
 {
 	int rc;
 
+	rc = xia_lock_table_init(&anchor_locktbl, XIA_LTBL_SPREAD_LARGE);
+	if (rc < 0)
+		goto out;
+
 	rc = -ENOMEM;
 	xip_dst_ops_template.kmem_cachep =
 		KMEM_CACHE(xip_dst, SLAB_HWCACHE_ALIGN);
 	if (!xip_dst_ops_template.kmem_cachep)
-		goto out;
+		goto anchor;
 
 	rc = register_pernet_subsys(&xip_route_net_ops);
 	if (rc)
@@ -913,6 +1133,8 @@ pernet:
 	unregister_pernet_subsys(&xip_route_net_ops);
 out_kmem_cache:
 	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
+anchor:
+	xia_lock_table_finish(&anchor_locktbl);
 out:
 	return rc;
 }
@@ -923,4 +1145,5 @@ void xip_route_exit(void)
 	unregister_netdevice_notifier(&route_netdev_notifier);
 	unregister_pernet_subsys(&xip_route_net_ops);
 	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
+	xia_lock_table_finish(&anchor_locktbl);
 }
