@@ -15,7 +15,7 @@ struct fib_xid_hid_local {
 	 * support dev == NULL as a wildcard.
 	 */
 
-	/* Empty. */
+	struct xip_dst_anchor	xhl_anchor;
 };
 
 static int local_newroute(struct fib_xid_table *xtbl,
@@ -126,10 +126,17 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+/* Don't call this function! Use free_fxid instead. */
+static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	xdst_free_anchor(&((struct fib_xid_hid_local *)fxid)->xhl_anchor);
+}
+
 static const struct xia_ppal_rt_eops hid_rt_eops_local = {
 	.newroute = local_newroute,
 	.delroute = local_delroute,
 	.dump_fxid = local_dump_hid,
+	.free_fxid = local_free_hid,
 };
 
 /*
@@ -297,17 +304,18 @@ static struct pernet_operations hid_net_ops __read_mostly = {
  */
 
 static int hid_local_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xip_dst *xdst)
+	const u8 *xid, int is_sink, int anchor_index, struct xip_dst *xdst)
 {
 	struct fib_xid_table *local_xtbl;
 	struct fib_xid *fxid;
 	int rc;
 
-	if (xdst) {
+	if (is_sink) {
 		/* An HID cannot be a sink. */
-		return -ENOENT;
+		return -EINVAL;
 	}
 
+	/* TODO One needs positive dependency here! */
 	rcu_read_lock();
 	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_HID);
 	BUG_ON(!local_xtbl);
@@ -444,7 +452,8 @@ static int main_output_input(struct sk_buff *skb)
 	})
 
 static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, struct xip_dst *xdst)
+	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
+	struct xip_dst *xdst)
 {
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_hid_main *mhid;
