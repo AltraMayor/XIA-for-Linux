@@ -59,6 +59,31 @@ struct xip_dst_anchor {
  */
 void xdst_free_anchor(struct xip_dst_anchor *anchor);
 
+enum XDST_ACTION {
+	/* The XDST entry only selects an edge, that is, a new query with
+	 * the new row is necessary.
+	 */
+	XDA_DIG = 0,
+
+	/* An error will be reported to the source informing that
+	 * the address is ill-constructed.
+	 */
+	XDA_ERROR,
+
+	/* Packet will be silently dropped. */
+	XDA_DROP,
+
+	/* The packet will receive the DST entry associated to the XDST entry,
+	 * that is, it's going to use the input and output methods.
+	 */
+	XDA_METHOD,
+
+	/* Same as XDA_METHOD, but before handing  the DST entry, select edge
+	 * in the address.
+	 */
+	XDA_METHOD_AND_SELECT_EDGE,
+};
+
 struct xip_dst {
 	struct dst_entry	dst;
 
@@ -74,21 +99,19 @@ struct xip_dst {
 	/* If true, the traffic comes from a device. */
 	u8			input;
 
-	/* If true, this cache entry only selects an edge, that is,
-	 * a new query with the new row is necessary.
-	 * Otherwise, this cache entry is enough to route.
+	/* Action that is taken when the chosen edge is
+	 * not a sink (passthrough), and when it is a sink.
+	 * See enum XDST_ACTION for possible values.
 	 */
-	u8			dig;
+	u8			passthrough_action;
+	u8			sink_action;
 
-	/* Does this cache entry selects an edge?
-	 * -1				None
+	/* -1				None
 	 *  0				First
 	 *		...		...
 	 * (XIA_OUTDEGREE_MAX - 1)	Last edge
 	 */
-	s8			select_edge;
-
-	/* FREE 1 byte. */
+	s8			chosen_edge;
 
 	/* Extra information for dst.input and dst.output methods. */
 	void			*info;
@@ -134,33 +157,17 @@ struct xip_route_proc {
 	/* Principal type. */
 	xid_type_t		xrp_ppal_type;
 
-	/* @is_sink is true when @xid is a sink of an address; false otherwise.
+	/* If @xid is local for this principal, this method adds @xdst to
+	 * @xid's anchor, fills @xdst's fields, and return zero.
 	 *
-	 * If @xid is not a sink, and
-	 *	1. @xid is local for this principal,
-	 *		this method adds @xdst to @xid's anchor, and
-	 *		returns zero.
-	 *	2. @xid is not local for this principal,
-	 *		this method returns -ENOENT. This implies a negative
-	 *		dependency.
-	 *
-	 * If @xid is a sink, and
-	 *	1. @xid is local for this principal,
-	 *		this method fills @xdst properly, and returns zero.
-	 *	2. @xid is not local for this principal,
-	 *		this method returns -ENOENT.
-	 *
-	 * In any case, this method may return -EINVAL to express that
-	 * the address is invalid. For example, a principal may not be valid
-	 * as a sink. This error is important to avoid taking it as
-	 * negative dependency.
+	 * Otherwise, this method returns -ENOENT. This implies a negative
+	 * dependency.
 	 */
 	int (*local_deliver)(struct xip_route_proc *rproc, struct net *net,
-		const u8 *xid, int is_sink, int anchor_index,
-		struct xip_dst *xdst);
+		const u8 *xid, int anchor_index, struct xip_dst *xdst);
 
 	/* The return must be enum XRP_ACTION.
-	 * Only non-local XIDs go through this method, but potentially sinks.
+	 * Only non-local XIDs go through this method.
 	 */
 	int (*main_deliver)(struct xip_route_proc *rproc, struct net *net,
 		const u8 *xid, struct xia_xid *next_xid, int anchor_index,

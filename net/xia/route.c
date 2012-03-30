@@ -343,24 +343,24 @@ static int xip_dst_unreachable_out(struct sk_buff *skb)
 	return xip_dst_unreachable("out", skb);
 }
 
-/* add_xdst_and_hold_rcu - If @xdst is unique in XIP DST table,
- *	hold a reference to it, and add it to the table.
- *
- *	If @xdst is not unique, that is, there already is an entry
- *	in the table with the same key, xdst_free @xtbl,
- *	hold a reference to the previous entry, and return it.
+/* add_xdst_rcu - Add @xdst to a DST table If it is unique in the table,
+ *	otherwise call xdst_free (NOT xdst_rcu_free!) on @xtbl, and
+ *	return the entry that is already in the table.
  *
  * NOTE
  *	@xdst must not be already in a list!
  *
- *	Caller must hold a refcount on xdst.
+ *	Caller must hold a refcount on xdst, which will be the same used
+ *	to leave @xdst in its DST table. Thus, caller must call xdst_hold
+ *	before leaving an RCU read lock session if @xdst is to be used outside
+ *	that session.
  *
  *	One must hold a RCU read lock to call this function in order to
  *	avoid anchors being released before @xdst is a DST table.
  *	See function xdst_free_anchor for more information.
  */
-static struct xip_dst *add_xdst_and_hold_rcu(struct net *net,
-	struct xip_dst *xdst, u8 dig, s8 select_edge)
+static struct xip_dst *add_xdst_rcu(struct net *net,
+	struct xip_dst *xdst, s8 chosen_edge)
 {
 	struct dst_entry **phead = dsthead(net, xdst->key_hash);
 	struct xip_dst *prv_xdst;
@@ -371,8 +371,6 @@ static struct xip_dst *add_xdst_and_hold_rcu(struct net *net,
 	 */
 	BUG_ON(xdst->dst.next);
 
-	dig = !!dig;
-
 	bucket = get_bucket(xdst);
 	xdst_lock_bucket(net, bucket);
 	prv_xdst = find_xdst_locked(phead, xdst);
@@ -380,10 +378,18 @@ static struct xip_dst *add_xdst_and_hold_rcu(struct net *net,
 		/* @xdst is NOT unique, @prv_xdst is an equivalent entry. */
 
 		/* Use @prv_xdst. */
-		xdst_hold(prv_xdst); /* Reference to be returned. */
 		xdst_unlock_bucket(net, bucket);
-		BUG_ON(prv_xdst->dig != dig);
-		BUG_ON(prv_xdst->select_edge != select_edge);
+
+		/* It may be tempting to include the following verification,
+		 * but it may fail even when there is no bugs because
+		 * one doesn't not know the version of the records used to
+		 * build @prv_xdst and @xdst since we only use RCU read locks.
+		 *
+		 * BUG_ON(prv_xdst->chosen_edge != chosen_edge);
+		 *
+		 * Nevertheless, if @prv_xdst is outdated, soon an anchor
+		 * will release it.
+		 */
 
 		xdst_free(xdst);
 
@@ -393,10 +399,8 @@ static struct xip_dst *add_xdst_and_hold_rcu(struct net *net,
 	/* @xdst is unique. */
 
 	/* Add @xdst to the table. */
-	xdst->dig = dig;
-	xdst->select_edge = select_edge;
+	xdst->chosen_edge = chosen_edge;
 	xdst->dst.next = *phead;
-	xdst_hold(xdst); /* Reference to be returned. */
 	rcu_assign_pointer(*phead, &xdst->dst);
 
 	/* Use @xdst. */
@@ -461,6 +465,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 	while (*pdsth) {
 		struct dst_entry **pnext = &(*pdsth)->next;
 		struct xip_dst *xdsth = dst_xdst(*pdsth);
+		/* TODO Fix bug, now there should be at least one ref! */
 		if (!atomic_read(&(*pdsth)->__refcnt)) {
 			rcu_assign_pointer(*pdsth, *pnext);
 			xdst_rcu_free(xdsth);
@@ -694,57 +699,47 @@ void xip_del_router(struct xip_route_proc *rproc)
 }
 EXPORT_SYMBOL_GPL(xip_del_router);
 
-static int local_deliver(struct net *net, const struct xia_xid *xid,
-	int is_sink, int anchor_index, struct xip_dst *xdst)
+static int local_deliver_rcu(struct net *net, const struct xia_xid *xid,
+	int anchor_index, struct xip_dst *xdst)
 {
 	xid_type_t ty = xid->xid_type;
 	struct hlist_head *head = ppalhead(ty);
 	struct xip_route_proc *rproc;
-	int rc = -ENOENT;
 
-	rcu_read_lock();
 	rproc = find_rproc_rcu(ty, head);
-	if (!rproc) {
-		/* We don't know how to route this principal. */
-		goto out;
-	}
-	
-	rc = rproc->local_deliver(rproc, net, xid->xid_id, is_sink,
-		anchor_index, xdst);
+	if (rproc)
+		return rproc->local_deliver(rproc, net, xid->xid_id,
+			anchor_index, xdst);
 
-out:
-	rcu_read_unlock();
-	return rc;
+	/* We don't know how to route this principal. */
+	return -ENOENT;
 }
 
-static int main_deliver(struct net *net, const struct xia_xid *xid,
+static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
 	int anchor_index, struct xip_dst *xdst)
 {
-	xid_type_t ty = xid->xid_type;
 	const struct xia_xid *left_xid;
 	struct xia_xid tmp_xids[2], *right_xid;
-	int done = 4; /* Bound the number of redirects. */
+	int done = 2; /* Bound the number of redirects. */
 	char from[XIA_MAX_STRXID_SIZE];
 
 	left_xid = xid;
 	right_xid = &tmp_xids[0];
 	do {
+		xid_type_t ty = left_xid->xid_type;
 		struct hlist_head *head;
 		struct xip_route_proc *rproc;
 		int rc;
 
 		/* Consult principal. */
-		head = ppalhead(left_xid->xid_type);
-		rcu_read_lock();
+		head = ppalhead(ty);
 		rproc = find_rproc_rcu(ty, head);
 		if (!rproc) {
 			/* We don't know how to route this principal. */
-			rcu_read_unlock();
 			return XRP_ACT_NEXT_EDGE;
 		}
 		rc = rproc->main_deliver(rproc, net, left_xid->xid_id,
 			right_xid, anchor_index, xdst);
-		rcu_read_unlock();
 
 		switch (rc) {
 		case XRP_ACT_NEXT_EDGE:
@@ -767,6 +762,13 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 			left_xid = right_xid;
 			right_xid = left_xid == &tmp_xids[0] ? &tmp_xids[1] :
 				&tmp_xids[0];
+
+			/* Redirecting to a local XID is wrong because
+			 * it breaks intrinsic security.
+			 * That's why one keeps looking @left_xid up with
+			 * only function mail_deliver.
+			 */
+
 			break;
 
 		default:
@@ -777,7 +779,7 @@ static int main_deliver(struct net *net, const struct xia_xid *xid,
 	BUG_ON(xia_xidtop(xid, from, XIA_MAX_STRXID_SIZE) < 0);
 	pr_err("BUG: Principal %u is looping too deep, "
 		"this search started with %s, ignoring this route\n",
-		__be32_to_cpu(ty), from);
+		__be32_to_cpu(xid->xid_type), from);
 	return XRP_ACT_NEXT_EDGE;
 }
 
@@ -831,69 +833,155 @@ static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
 	return 1;
 }
 
+/* XXX An ICMP-like error should be genererated here. */
+static inline int xip_dst_not_supported(char *direction, struct sk_buff *skb)
+{
+	if (net_ratelimit())
+		printk("XIP: not supported address for principal on "
+			"direction %s\n", direction);
+	return dst_discard(skb);
+}
+
+static int xip_dst_not_supported_in(struct sk_buff *skb)
+{
+	return xip_dst_not_supported("in", skb);
+}
+
+static int xip_dst_not_supported_out(struct sk_buff *skb)
+{
+	return xip_dst_not_supported("out", skb);
+}
+
+static struct xip_dst xdst_error = {
+	.dst = {
+		.__refcnt       = ATOMIC_INIT(1),
+		.input		= xip_dst_not_supported_in,
+		.output		= xip_dst_not_supported_out,
+	},
+	.passthrough_action	= XDA_METHOD,
+	.sink_action		= XDA_METHOD,
+};
+
+/* DO NOT call this function!
+ * It is only meant to reduce function choose_an_edge's size.
+ */
+static inline struct xip_dst *use_dst_table_rcu(
+	struct xip_dst *xdst_hint, u32 *pkey_hash, int *pdrop,
+	struct net *net, struct xia_row *addr, u8 num_dst, u8 *plast_node,
+	struct xia_row **plast_row, int input)
+{
+	struct xip_dst *xdst;
+	struct xia_row *next_row;
+	s8 chosen_edge;
+	u8 e;
+	int action, sink;
+
+	*pdrop = 0;
+
+tail_call:
+	if (!xdst_hint) {
+		if (unlikely(!are_edges_valid(*plast_row, *plast_node,
+			num_dst))) {
+			*pdrop = 1;
+			return NULL;
+		}
+
+		*pkey_hash = hash_edges(addr, *plast_row, input);
+
+		xdst = find_xdst_rcu(net, *pkey_hash, addr, *plast_row, input);
+		if (!xdst)
+			/* The DST table doesn't know how to handle this row. */
+			return NULL;
+	} else {
+		xdst = xdst_hint;
+	}
+
+	/* Cache hit, interpret @xdst. */
+
+	chosen_edge = xdst->chosen_edge;
+	if (chosen_edge < 0) {
+		/* Can't pick an edge. */
+		BUG_ON(xdst->passthrough_action != XDA_METHOD);
+		BUG_ON(xdst->sink_action != XDA_METHOD);
+		return xdst;
+	}
+	BUG_ON(chosen_edge >= XIA_OUTDEGREE_MAX);
+
+	e = (*plast_row)->s_edge.a[chosen_edge];
+	next_row = &addr[e];
+	sink = is_it_a_sink(next_row, e, num_dst);
+	action = sink ? xdst->sink_action : xdst->passthrough_action;
+
+	switch (action) {
+	case XDA_DIG:
+		BUG_ON(sink);
+
+		/* Record that we're going for a recursion. */
+		select_edge(plast_node, *plast_row, chosen_edge);
+		
+		*plast_row = next_row;
+		xdst_hint = NULL;
+		goto tail_call;
+
+	case XDA_ERROR:
+		/* Help debugging. */
+		select_edge(plast_node, *plast_row, chosen_edge);
+		return &xdst_error;
+
+	case XDA_DROP:
+		*pdrop = 1;
+		return NULL;
+
+	case XDA_METHOD_AND_SELECT_EDGE:
+		select_edge(plast_node, *plast_row, chosen_edge);
+		/* Fall through. */
+		
+	case XDA_METHOD:
+		return xdst;
+
+	default:
+		BUG();
+	}
+}
+
 /* The returned reference to a struct xip_dst already has been held. */
 static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
 	u8 num_dst, u8 *plast_node, struct xia_row *last_row, int input)
 {
 	struct xip_dst *xdst;
-	int last_node, i;
+	int drop, i;
 	u32 key_hash;
 
-	/* Changing parameter of the tail call: @last_row. */
+	xdst = NULL;
+
+	/* Not only is this RCU read lock required by some functions, but
+	 * it also avoids anchors to release a new @xdst before
+	 * it's in a table! In order to understand this need,
+	 * see function xdst_free_anchor.
+	 * Not to mention that it avoid refcount on @xdst entries.
+	 */
+	rcu_read_lock();
 
 tail_call:
-	if (unlikely(!are_edges_valid(last_row, *plast_node, num_dst)))
-		return NULL;
-
-	key_hash = hash_edges(addr, last_row, input);
-	rcu_read_lock();
-	xdst = find_xdst_rcu(net, key_hash, addr, last_row, input);
-	if (xdst) {
-		/* Cache hit, interpret @xdst. */
-
-		i = xdst->select_edge;
-		BUG_ON(i >= XIA_OUTDEGREE_MAX);
-
-		if (xdst->dig) {
-			rcu_read_unlock();
-			BUG_ON(i < 0);
-
-			/* Record that we're going for a recursion. */
-			select_edge(plast_node, last_row, i);
-			
-			/* Notice that *plast_node was updated by
-			 * select_edge above.
-			 */
-			last_row = &addr[*plast_node];
-			goto tail_call;
-		}
-		if (i >= 0)
-			select_edge(plast_node, last_row, i);
-		xdst_hold(xdst);
-		rcu_read_unlock();
-		return xdst;
+	xdst = use_dst_table_rcu(xdst, &key_hash, &drop,
+		net, addr, num_dst, plast_node, &last_row, input);
+	if (drop) {
+		BUG_ON(xdst);
+		goto out;
 	}
-	rcu_read_unlock();
+	if (likely(xdst))
+		goto ret_xdst;
 
 	/* Handle DST cache miss. */
 
 	/* Create @xdst. */
 	xdst = xip_dst_alloc(net, 0);
 	if (!xdst)
-		return NULL;
+		goto out;
 	set_xdst_key(xdst, addr, last_row, input, key_hash);
 
-	/* Avoid anchors to release new @xdst before it's in a table!
-	 * In order to understand the need for this rcu_read_lock(),
-	 * see function xdst_free_anchor.
-	 */
-	rcu_read_lock();
-
-	last_node = *plast_node;
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
-		u8 *pe = &last_row->s_edge.a[i];
-		u8 e = *pe;
-		struct xia_row *next_row;
+		u8 e = last_row->s_edge.a[i];
 		const struct xia_xid *next_xid;
 
 		if (is_empty_edge(e)) {
@@ -902,55 +990,37 @@ tail_call:
 			 */
 			break;
 		}
-		next_row = &addr[e];
-		next_xid = &next_row->s_xid;
+		next_xid = &addr[e].s_xid;
 
 		/* Is it local? */
-		/* TODO BUG!!!! is_it_a_sink isn't part of the DST index!!! */
-		if (is_it_a_sink(next_row, e, num_dst)) {
-			if (!local_deliver(net, next_xid, 1, i, xdst)) {
-				/* @next_row is a local sink. */
-
-				/* Identify delivery in the address. */
-				select_edge(plast_node, last_row, i);
-
-				xdst = add_xdst_and_hold_rcu(net, xdst, 0, i);
-				goto out;
-			}
-
-			/* This sink isn't local, perhaps it's forwardable. */
-		} else if (!local_deliver(net, next_xid, 0, i, xdst)) {
-			/* @next_row is NOT a sink, but it's local,
-			 * so walk through it.
-			 */
-
-			/* Record that we're going for a recursion. */
-			select_edge(plast_node, last_row, i);
-
-			xdst_put(add_xdst_and_hold_rcu(net, xdst, 1, i));
-			rcu_read_unlock();
-
-			last_row = next_row;
+		if (!local_deliver_rcu(net, next_xid, i, xdst)) {
+			xdst = add_xdst_rcu(net, xdst, i);
 			goto tail_call;
 		}
 
 		/* Is it forwardable? */
-		switch (main_deliver(net, next_xid, i, xdst)) {
+		switch (main_deliver_rcu(net, next_xid, i, xdst)) {
 		case XRP_ACT_NEXT_EDGE:
 			break;
 		case XRP_ACT_FORWARD:
 			/* We found an edge that we can use to forward. */
-			xdst = add_xdst_and_hold_rcu(net, xdst, 0, -1);
-			goto out;
+			xdst = add_xdst_rcu(net, xdst, i);
+			goto tail_call;
 		default:
 			BUG();
 		}
 	}
 
+	/* Destination is unreachable. */
 	xdst->dst.input = xip_dst_unreachable_in;
 	xdst->dst.output = xip_dst_unreachable_out;
-	xdst = add_xdst_and_hold_rcu(net, xdst, 0, -1);
+	xdst->passthrough_action = XDA_METHOD;
+	xdst->sink_action = XDA_METHOD;
+	xdst = add_xdst_rcu(net, xdst, -1);
+	goto tail_call;
 
+ret_xdst:
+	xdst_hold(xdst);
 out:
 	rcu_read_unlock();
 	return xdst;
