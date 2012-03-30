@@ -33,8 +33,10 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
  */
 static inline void free_ha(struct hrdw_addr *ha)
 {
+	/* XXX Once NWP supports removing entries, this must be made atomic! */
+	synchronize_rcu();
+	xdst_free_anchor(&ha->anchor);
 	dev_put(ha->dev);
-	ha->dev = NULL;
 	kfree(ha);
 }
 
@@ -110,10 +112,6 @@ static void del_ha(struct hrdw_addr *ha)
 	atomic_dec(&hdev->neigh_cnt);
 
 	hid_dev_put(hdev);
-
-	/* XXX Once NWP supports removing entries, this must be made atomic! */
-	synchronize_rcu();
-	ha->mhid = NULL;
 }
 
 static int del_ha_from_mhid(struct fib_xid_hid_main *mhid, const u8 *str_ha,

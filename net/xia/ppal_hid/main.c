@@ -1,6 +1,5 @@
 #include <linux/module.h>
 #include <net/xia_dag.h>
-#include <net/xia_route.h>
 #include <net/xia_hid.h>
 
 /*
@@ -307,23 +306,23 @@ static int hid_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, int anchor_index, struct xip_dst *xdst)
 {
 	struct fib_xid_table *local_xtbl;
-	struct fib_xid *fxid;
-	int rc;
+	struct fib_xid_hid_local *lhid;
 
-	/* TODO Reimplement this method! It's now broken! */
-	if (0) { /*is_sink) {*/
-		/* An HID cannot be a sink. */
-		return -EINVAL;
-	}
-
-	/* TODO One needs positive dependency here! */
 	rcu_read_lock();
 	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_HID);
 	BUG_ON(!local_xtbl);
-	fxid = xia_find_xid_rcu(local_xtbl, xid);
-	rc = fxid ? 0 : -ENOENT;
+	lhid = (struct fib_xid_hid_local *)xia_find_xid_rcu(local_xtbl, xid);
+	if (!lhid) {
+		rcu_read_unlock();
+		return -ENOENT;
+	}
+
+	xdst->passthrough_action = XDA_DIG;
+	xdst->sink_action = XDA_ERROR; /* An HID cannot be a sink. */
+	xdst_attach_to_anchor(xdst, anchor_index, &lhid->xhl_anchor);
+
 	rcu_read_unlock();
-	return rc;
+	return 0;
 }
 
 /* Forward packets. */
@@ -382,7 +381,7 @@ static inline struct hrdw_addr *skb_ha(struct sk_buff *skb)
 
 static inline int xip_skb_dst_mtu(struct sk_buff *skb)
 {
-	/* TODO Allow a transport protocol to probe the Path MTU, and
+	/* XXX Allow a transport protocol to probe the Path MTU, and
 	 * use skb_ha(skb)->dev-mtu in that case.
 	 * See net/ipv4/ip_output.c:ip_skb_dst_mtu for an example.
 	 */
@@ -419,7 +418,7 @@ static int main_input_output(struct sk_buff *skb)
 		skb = skb2;
 	}
 
-	/* TODO Implement link-layer header cache here.
+	/* XXX Implement link-layer header cache here.
 	 * See net/ipv4/ip_output.c:ip_finish_output2,
 	 * include/net/neighbour.h:neigh_output, and
 	 * include/net/neighbour.h:neigh_hh_output.
@@ -481,6 +480,9 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 		goto out;
 	}
 
+	xdst->passthrough_action = XDA_METHOD;
+	xdst->sink_action = XDA_METHOD;
+	xdst->info = ha;
 	if (xdst->input) {
 		xdst->dst.input = main_input_input;
 		xdst->dst.output = main_input_output;
@@ -488,10 +490,7 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 		xdst->dst.input = main_output_input;
 		xdst->dst.output = main_output_output;
 	}
-
-	/* TODO One needs positive dependency for this assignment! */
-	xdst->info = ha;
-
+	xdst_attach_to_anchor(xdst, anchor_index, &ha->anchor);
 	rc = XRP_ACT_FORWARD;
 
 out:
@@ -561,8 +560,6 @@ static void __exit xia_hid_exit(void)
 
 	rcu_barrier();
 	flush_scheduled_work();
-
-	/* TODO Make sure that no DST entry refers an HID. */
 
 	printk(KERN_ALERT "XIA Principal HID UNloaded\n");
 }
