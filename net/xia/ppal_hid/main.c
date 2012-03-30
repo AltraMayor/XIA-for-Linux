@@ -304,13 +304,14 @@ static struct pernet_operations hid_net_ops __read_mostly = {
  */
 
 static int hid_local_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, int is_sink, int anchor_index, struct xip_dst *xdst)
+	const u8 *xid, int anchor_index, struct xip_dst *xdst)
 {
 	struct fib_xid_table *local_xtbl;
 	struct fib_xid *fxid;
 	int rc;
 
-	if (is_sink) {
+	/* TODO Reimplement this method! It's now broken! */
+	if (0) { /*is_sink) {*/
 		/* An HID cannot be a sink. */
 		return -EINVAL;
 	}
