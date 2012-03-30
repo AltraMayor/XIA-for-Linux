@@ -32,6 +32,7 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 #include <linux/timer.h>
 #include <linux/rtnetlink.h>
 #include <net/xia_fib.h>
+#include <net/xia_route.h>
 
 /*
  *	Neighborhood Watch Protocol (NWP)
@@ -49,6 +50,8 @@ struct hrdw_addr {
 	struct list_head	ha_list;
 	struct list_head	hdev_list;
 	struct net_device	*dev;
+	struct xip_dst_anchor	anchor;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
