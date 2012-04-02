@@ -101,16 +101,12 @@ static struct dst_ops xip_dst_ops_template __read_mostly = {
 
 static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
 {
-	/* TODO Reassess this comment. */
-	/* The only reason we use @net->loopback_dev instead of NULL is that
-	 * function net/core/dst.c:___dst_free changes @dst->input and
-	 * @dst->output to dst_discard, what would lead to disrruptions for
-	 * a @xdst removed from the hash table, but still being used.
-	 */
 	struct xip_dst *xdst = dst_alloc(&net->xia.xip_dst_ops,
-		net->loopback_dev, 1, 0, flags | DST_NOCACHE);
+		NULL, 1, 0, flags | DST_NOCACHE);
 	if (xdst)
 		memset(xdst->after_dst, 0, sizeof(*xdst) - sizeof(xdst->dst));
+	xdst->net = net;
+	hold_net(net);
 	return xdst;
 }
 
@@ -202,26 +198,20 @@ static void detach_anchor(struct xip_dst *xdst);
 /* DO NOT call this function! Call xdst_free or xdst_rcu_free instead. */
 static void xdst_free_common(struct xip_dst *xdst)
 {
-	struct net_device *dev;
+	struct net *net;
 
 	detach_anchor(xdst);
 
-	/* Clear the fields of @xdst below because one is about to lose
-	 * an reference to it to manage unregistering of a device, and
-	 * unloading of a principal.
-	 *
-	 * The write memory barriers are here to minimize the chance of
-	 * race conditions due to the fact that struct dst_entry doesn't
-	 * offer an attomic way to update those fields.
-	 * See net/core/dst.c:dst_ifdown for more information.
-	 */
+	/* Clear references to a principal that may be unloading. */
 	xdst->dst.input = dst_discard;
 	xdst->dst.output = dst_discard;
+
+	/* Make sure that the previous fields are set before releasing @net. */
 	smp_wmb();
-	dev = xdst->dst.dev;
-	xdst->dst.dev = NULL;
-	smp_wmb();
-	dev_put(dev);
+
+	net = xdst->net;
+	xdst->net = NULL;
+	release_net(net);
 }
 
 /* DO NOT wait for RCU synchonization.
@@ -416,10 +406,6 @@ static void clear_xdst_table(struct net *net)
 	for (i = 0; i < XIP_DST_TABLE_SIZE; i++) {
 		struct dst_entry *dsth;
 
-		/* Given when/where clear_xdst_table is currently called,
-		 * the lock below may be unnecessary, but there's no
-		 * clear way to have a coded guarantee.
-		 */
 		xdst_lock_bucket(net, i);
 		dsth = xdst_tbl->buckets[i];
 		RCU_INIT_POINTER(xdst_tbl->buckets[i], NULL);
@@ -465,8 +451,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 	while (*pdsth) {
 		struct dst_entry **pnext = &(*pdsth)->next;
 		struct xip_dst *xdsth = dst_xdst(*pdsth);
-		/* TODO Fix bug, now there should be at least one ref! */
-		if (!atomic_read(&(*pdsth)->__refcnt)) {
+		if (atomic_read(&(*pdsth)->__refcnt) == 1) {
 			rcu_assign_pointer(*pdsth, *pnext);
 			xdst_rcu_free(xdsth);
 		}
@@ -543,14 +528,14 @@ static void detach_anchor(struct xip_dst *xdst)
 	}
 }
 
-/* Remove @xdst from the DST table of the @net of its @dev, and hold a refcount
+/* Remove @xdst from the DST table of @xdst->net, and hold a refcount
  *	to it.
  *
  * RETURN
  *	Zero if @xdst was NOT in the DST table.
  *	IMPORTANT! In this case, there's no refcount to @xdst.
  *	This can happen either because @xdst wasn't in the DST table derived
- *	from its @dev (bug), or it wasn't in any DST table at all.
+ *	from its @xdst->net (bug), or it wasn't in any DST table at all.
  *	Notice that just checking @next isn't enough because it may have
  *	a non-NULL value just to avoid disrupting RCU readers.
  *
@@ -562,14 +547,13 @@ static void detach_anchor(struct xip_dst *xdst)
  */
 static int del_xdst_and_hold(struct xip_dst *xdst)
 {
-	struct net *net = dev_net(xdst->dst.dev);
-	struct dst_entry **phead = dsthead(net, xdst->key_hash);
+	struct dst_entry **phead = dsthead(xdst->net, xdst->key_hash);
 	u32 bucket;
 	struct dst_entry **pdsth;
 	int rc = 0;
 
 	bucket = get_bucket(xdst);
-	xdst_lock_bucket(net, bucket);
+	xdst_lock_bucket(xdst->net, bucket);
 
 	for (pdsth = phead; *pdsth; pdsth = &(*pdsth)->next)
 		if (*pdsth == &xdst->dst) {
@@ -582,7 +566,7 @@ static int del_xdst_and_hold(struct xip_dst *xdst)
 		}
 
 out:
-	xdst_unlock_bucket(net, bucket);
+	xdst_unlock_bucket(xdst->net, bucket);
 	return rc;
 }
 
@@ -1157,23 +1141,6 @@ static struct pernet_operations xip_route_net_ops __read_mostly = {
 	.exit = xip_route_net_exit,
 };
 
-static int route_netdev_event(struct notifier_block *nb,
-	unsigned long event, void *ptr)
-{
-	struct net_device *dev = ptr;
-	struct net *net = dev_net(dev);
-	/* @dst->dev is always equal to @net->loopback_dev in XIP.
-	 * See function xip_dst_alloc for details.
-	 */
-	if (event == NETDEV_UNREGISTER && dev == net->loopback_dev)
-		clear_xdst_table(net);
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block route_netdev_notifier __read_mostly = {
-	.notifier_call = route_netdev_event,
-};
-
 int xip_route_init(void)
 {
 	int rc;
@@ -1192,15 +1159,9 @@ int xip_route_init(void)
 	if (rc)
 		goto out_kmem_cache;
 
-	rc = register_netdevice_notifier(&route_netdev_notifier);
-	if (rc)
-		goto pernet;
-
 	dev_add_pack(&xip_packet_type);
 	return 0;
 
-pernet:
-	unregister_pernet_subsys(&xip_route_net_ops);
 out_kmem_cache:
 	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
 anchor:
@@ -1212,7 +1173,6 @@ out:
 void xip_route_exit(void)
 {
 	dev_remove_pack(&xip_packet_type);
-	unregister_netdevice_notifier(&route_netdev_notifier);
 	unregister_pernet_subsys(&xip_route_net_ops);
 	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
 	xia_lock_table_finish(&anchor_locktbl);

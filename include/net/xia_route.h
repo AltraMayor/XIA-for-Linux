@@ -89,6 +89,9 @@ struct xip_dst {
 
 	char			after_dst[0];
 
+	/* The context in which this XIP DST entry makes sense. */
+	struct net		*net;
+
 	/* Since the lookup key is big, keeping its hash is handy
 	 * to minimize comparision time.
 	 */
