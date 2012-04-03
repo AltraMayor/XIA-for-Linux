@@ -106,7 +106,8 @@ static int local_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-	NLA_PUT_TYPE(skb, struct xia_xid, RTA_DST, dst);
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
 
@@ -194,7 +195,8 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-	NLA_PUT_TYPE(skb, struct xia_xid, RTA_DST, dst);
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+		goto nla_put_failure;
 
 	/* Hardware addresses. */
 	ha_attr = nla_nest_start(skb, RTA_MULTIPATH);
