@@ -74,7 +74,8 @@ static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-	NLA_PUT_TYPE(skb, struct xia_xid, RTA_DST, dst);
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
 
@@ -165,9 +166,11 @@ static int main_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-	NLA_PUT_TYPE(skb, struct xia_xid, RTA_DST, dst);
 
-	NLA_PUT_TYPE(skb, struct xia_xid, RTA_GATEWAY, mad->gw);
+	if (unlikely(	nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
+			nla_put(skb, RTA_GATEWAY, sizeof(mad->gw), &mad->gw)
+		))
+		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
 
