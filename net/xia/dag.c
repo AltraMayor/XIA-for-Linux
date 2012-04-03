@@ -68,7 +68,7 @@ int ppal_name_to_type(const char *name, xid_type_t *pty)
 {
 	const struct ppal_node *map;
 	const struct hlist_node *p;
-	int rc = -ESRCH;
+	int rc = -ENOENT;
 
 	rcu_read_lock();
 	hlist_for_each_entry_rcu(map, p, head_per_name(name), lst_per_name)
@@ -88,7 +88,7 @@ int ppal_type_to_name(xid_type_t type, char *name)
 {
 	const struct ppal_node *map;
 	const struct hlist_node *p;
-	int rc = -ESRCH;
+	int rc = -ENOENT;
 
 	rcu_read_lock();
 	hlist_for_each_entry_rcu(map, p, head_per_type(type), lst_per_type)
@@ -155,7 +155,7 @@ int ppal_add_map(const char *name, xid_type_t type)
 	spin_lock(&map_lock);
 
 	/* Avoid duplicates. */
-	rc = -ESRCH;
+	rc = -EEXIST;
 	hlist_for_each_entry(map, p, h_per_name, lst_per_name)
 		if (!strcasecmp(map->name, name))
 			goto out;
@@ -204,7 +204,7 @@ int ppal_del_map(xid_type_t type)
 		}
 
 	spin_unlock(&map_lock);
-	return -ESRCH;
+	return -ENOENT;
 }
 EXPORT_SYMBOL(ppal_del_map);
 
