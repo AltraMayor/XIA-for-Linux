@@ -136,7 +136,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	struct fib_xid_buckets *abranch;
 	int rc;
 	
-	rc = -ESRCH;
+	rc = -EEXIST;
 	if (__xia_find_xtbl(rtbl, ty, &head))
 		goto out; /* Duplicate. */
 
@@ -540,7 +540,7 @@ int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 	int should_rehash;
 
 	if (find_xid_locked(abranch, bucket, fxid->fx_xid, &head))
-		return -ESRCH;
+		return -EEXIST;
 
 	hlist_add_head_rcu(&fxid->u.fx_branch_list[abranch->index], head);
 	should_rehash =
@@ -606,3 +606,13 @@ void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	fib_unlock_bucket(xtbl, bucket);
 }
 EXPORT_SYMBOL_GPL(fib_rm_fxid);
+
+int fib_default_delroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	struct fib_xid *fxid = fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
+	if (!fxid)
+		return -ENOENT;
+	free_fxid(xtbl, fxid);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(fib_default_delroute);

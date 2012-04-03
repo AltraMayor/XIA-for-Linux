@@ -52,7 +52,7 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;
 		if (unlikely(!c1 && c2))
-			return -ESRCH;	/* It's a duplicate. */
+			return -EEXIST;	/* It's a duplicate. */
 
 		/* Keep listed sorted, but look at all ha's that have
 		 * the same ha->ha.
@@ -137,7 +137,7 @@ static int del_ha_from_mhid(struct fib_xid_hid_main *mhid, const u8 *str_ha,
 		if (c1 > 0)
 			break;
 	}
-	return -ESRCH;
+	return -ENOENT;
 }
 
 static void del_has_by_dev(struct list_head *head, struct net_device *dev)
@@ -293,7 +293,7 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(&bucket, xtbl, xid);
 	if (!mhid) {
 		fib_unlock_bucket(xtbl, bucket);
-		return -ESRCH;
+		return -ENOENT;
 	}
 
 	rc = del_ha_from_mhid(mhid, lladdr, dev);

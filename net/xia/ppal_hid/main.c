@@ -44,7 +44,7 @@ static int local_newroute(struct fib_xid_table *xtbl,
 	xid = cfg->xfc_dst->xid_id;
 	init_fxid(&lhid->xhl_common, xid);
 
-	rc = -ESRCH;
+	rc = -EEXIST;
 	if (xia_find_xid_lock(&local_bucket, xtbl, xid))
 		goto out;
 
@@ -71,16 +71,6 @@ unlock_main:
 out:
 	fib_unlock_bucket(xtbl, local_bucket);
 	return rc;
-}
-
-static int local_delroute(struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
-{
-	struct fib_xid *fxid = fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
-	if (!fxid)
-		return -ESRCH;
-	free_fxid(xtbl, fxid);
-	return 0;
 }
 
 static int local_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
@@ -133,7 +123,7 @@ static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 
 static const struct xia_ppal_rt_eops hid_rt_eops_local = {
 	.newroute = local_newroute,
-	.delroute = local_delroute,
+	.delroute = fib_default_delroute,
 	.dump_fxid = local_dump_hid,
 	.free_fxid = local_free_hid,
 };
