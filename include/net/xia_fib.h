@@ -138,6 +138,13 @@ struct xia_ppal_rt_eops {
 	free_fxid_t free_fxid;
 };
 
+/* This function is meant to be a used in field delroute of
+ * struct xia_ppal_rt_eops when all that is needed is to remove the entry from
+ * @xtbl, and free it.
+ */
+int fib_default_delroute(struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg);
+
 /* XIA Routing Table
  *
  * One could use principal type as part of the hash function and have only

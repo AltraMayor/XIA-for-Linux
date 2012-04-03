@@ -662,7 +662,7 @@ int xip_add_router(struct xip_route_proc *rproc)
 
 	spin_lock(&ppal_lock);
 
-	rc = -ESRCH;
+	rc = -EEXIST;
 	if (find_rproc_locked(ty, head))
 		goto out;
 	hlist_add_head_rcu(&rproc->xrp_list, head);
