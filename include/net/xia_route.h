@@ -59,6 +59,20 @@ struct xip_dst_anchor {
  */
 void xdst_free_anchor(struct xip_dst_anchor *anchor);
 
+/* xdst_invalidate_redirect - invalidate DST entries that rely on the redirect
+ *	from <@from_type, @from_xid> to @to.
+ *
+ * NOTE
+ *	IMPORTANT! Caller must RCU synch before calling this function.
+ *
+ *	When a principal routes using XRP_ACT_REDIRECT, it must use
+ *	xdst_invalidate_redirect because the last XID in the redirecting chain
+ *	is the one holding the anchor for the XIP DST entries that depend on
+ *	<@from_type, @from_xid>.
+ */
+void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
+	const u8 *from_xid, const struct xia_xid *to);
+
 enum XDST_ACTION {
 	/* The XDST entry only selects an edge, that is, a new query with
 	 * the new row is necessary.
@@ -130,7 +144,7 @@ void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
 
 static inline struct xip_dst *dst_xdst(struct dst_entry *dst)
 {
-	return container_of(dst, struct xip_dst, dst);
+	return dst ? container_of(dst, struct xip_dst, dst) : NULL;
 }
 
 static inline struct xip_dst *skb_xdst(struct sk_buff *skb)
