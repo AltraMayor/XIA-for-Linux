@@ -179,11 +179,19 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+/* Don't call this function! Use free_fxid instead. */
+static void main_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_ad_main *mad = (struct fib_xid_ad_main *)fxid;
+	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_AD,
+		mad->common.fx_xid, &mad->gw);
+}
+
 static const struct xia_ppal_rt_eops ad_rt_eops_main = {
 	.newroute = main_newroute,
-	/* TODO Add positive dependency. */
 	.delroute = fib_default_delroute,
 	.dump_fxid = main_dump_ad,
+	.free_fxid = main_free_ad,
 };
 
 /*
