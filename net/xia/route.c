@@ -115,7 +115,7 @@ static inline u32 start_edge_hash(int input)
 	return !!input;
 }
 
-static inline void update_edge_hash(u32 *pkey_hash, struct xia_xid *xid)
+static inline void update_edge_hash(u32 *pkey_hash, const struct xia_xid *xid)
 {
 	const u32 n = sizeof(*xid) / sizeof(u32);
 	BUILD_BUG_ON(sizeof(*xid) % sizeof(u32));
@@ -347,7 +347,7 @@ static int xip_dst_unreachable_out(struct sk_buff *skb)
  *
  *	One must hold a RCU read lock to call this function in order to
  *	avoid anchors being released before @xdst is a DST table.
- *	See function xdst_free_anchor for more information.
+ *	See function xdst_free_anchor_F for more information.
  */
 static struct xip_dst *add_xdst_rcu(struct net *net,
 	struct xip_dst *xdst, s8 chosen_edge)
@@ -498,7 +498,7 @@ EXPORT_SYMBOL_GPL(xdst_attach_to_anchor);
 
 /* NOTE
  *	IMPORTANT! Don't call this function holding a lock on a bucket!
- *	This may lead to a deadlock with function xdst_free_anchor.
+ *	This may lead to a deadlock with function xdst_free_anchor_f.
  *
  *	IMPORTANT! Don't call this function holding a lock on an anchor!
  *	This may lead to a deadlock.
@@ -570,7 +570,9 @@ out:
 	return rc;
 }
 
-void xdst_free_anchor(struct xip_dst_anchor *anchor)
+static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
+	int (*filter)(struct xip_dst *xdst, int anchor_index, void *arg),
+	void *arg)
 {
 	/* Assumptions:
 	 *	1. All @xdst to be found here are in a DST table, or
@@ -585,22 +587,34 @@ void xdst_free_anchor(struct xip_dst_anchor *anchor)
 	int i;
 	struct xip_dst *xdst;
 	struct hlist_node *pos, *n;
+	struct hlist_head roots[XIA_OUTDEGREE_MAX];
+
+	memset(roots, 0, sizeof(roots));
 
 	lock_anchor(anchor);
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		hlist_for_each_entry_safe(xdst, pos, n, &anchor->heads[i],
 			anchors[i].list_node) {
+			if (!filter(xdst, i, arg))
+				continue;
+
+			/* Releasing @anchor. */
 			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
 				anchor)
 				BUG();
+			hlist_del(&xdst->anchors[i].list_node);
 
-			if (!del_xdst_and_hold(xdst)) {
-				/* We don't have a refcount to @xdst, and
-				 * assumption 1 guarantees that somebody
-				 * else is going to release @xdst.
-				 */
-				hlist_del(&xdst->anchors[i].list_node);
+			if (del_xdst_and_hold(xdst)) {
+				/* We are responsable for freeing @xdst. */
+				hlist_add_head(&xdst->anchors[i].list_node,
+					&roots[i]);
+				continue;
 			}
+
+			/* We don't have a refcount to @xdst, and
+			 * assumption 1 guarantees that somebody
+			 * else is going to release @xdst.
+			 */
 		}
 	}
 	unlock_anchor(anchor);
@@ -609,15 +623,111 @@ void xdst_free_anchor(struct xip_dst_anchor *anchor)
 	 * an @xdst to @anchor now that the lock was released.
 	 */
 
-	/* Free @xdst's that one holds refcount. */
+	/* Free @xdst's that we hold refcount. */
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
-		hlist_for_each_entry_safe(xdst, pos, n, &anchor->heads[i],
+		hlist_for_each_entry_safe(xdst, pos, n, &roots[i],
 			anchors[i].list_node) {
 			hlist_del(&xdst->anchors[i].list_node);
 			xdst_rcu_free(xdst);
 		}
 }
+
+static int filter_none(struct xip_dst *xdst, int anchor_index, void *arg)
+{
+	return 1;
+}
+
+void xdst_free_anchor(struct xip_dst_anchor *anchor)
+{
+	xdst_free_anchor_f(anchor, filter_none, NULL);
+}
 EXPORT_SYMBOL_GPL(xdst_free_anchor);
+
+static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
+	int anchor_index, struct xip_dst *xdst);
+
+/* An RCU read lock is need to call this function in order to avoid
+ * anchors to release @xdst before it's freed, and
+ * to avoid releasing @anchor's host struct before returning it.
+ */
+static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
+	const struct xia_xid *to)
+{
+	struct xip_dst *xdst;
+	struct xip_dst_anchor *anchor;
+	
+	xdst = xip_dst_alloc(net, DST_NOCOUNT);
+	if (!xdst)
+		return ERR_PTR(-ENOMEM);
+
+	/* Obtain hash for a single edge. */
+	xdst->key_hash = start_edge_hash(0); /* @input doesn't matter here. */
+	update_edge_hash(&xdst->key_hash, to);
+
+	memmove(&xdst->xids[0], to, sizeof(xdst->xids[0]));
+	/* One doesn't need to zero the other @xdst->xids[]'s because
+	 * @xdst was just allocated.
+	 */
+
+	switch (main_deliver_rcu(net, &xdst->xids[0], 0, xdst)) {
+	case XRP_ACT_NEXT_EDGE:
+		/* The anchor never existed, or it's already gone. */
+		return NULL;
+	case XRP_ACT_FORWARD:
+		break;
+	default:
+		BUG();
+	}
+
+	anchor = xdst->anchors[0].anchor;
+	BUG_ON(!anchor);
+	xdst_free(xdst);
+	return anchor;
+}
+
+struct filter_from_arg {
+	xid_type_t	type;
+	const u8	*id;
+};
+
+static int filter_from(struct xip_dst *xdst, int anchor_index, void *arg)
+{
+	struct xia_xid *xid = &xdst->xids[anchor_index];
+	struct filter_from_arg *from = (struct filter_from_arg *)arg;
+	return xid->xid_type == from->type &&
+		!memcmp(xid->xid_id, from->id, sizeof(xid->xid_id));
+}
+
+void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
+	const u8 *from_xid, const struct xia_xid *to)
+{
+	struct xip_dst_anchor *anchor;
+	struct filter_from_arg arg;
+
+	rcu_read_lock();
+	anchor = find_anchor_of_rcu(net, to);
+	if (IS_ERR_OR_NULL(anchor)) {
+		rcu_read_unlock();
+
+		if (!anchor)
+			return;
+
+		BUG_ON(anchor != ERR_PTR(-ENOMEM));
+		pr_err("%s: XIP positive dependency could not invalidate "
+			"XIP DST entries because system memory is too low."
+			"Clearing XIP DST cache as a last resource...\n",
+			__FUNCTION__);
+		clear_xdst_table(net);
+		return;
+	}
+
+	arg.type = from_type;
+	arg.id = from_xid;
+	xdst_free_anchor_f(anchor, filter_from, &arg);
+
+	rcu_read_unlock();
+}
+EXPORT_SYMBOL_GPL(xdst_invalidate_redirect);
 
 /*
  *	Principal routing
@@ -941,7 +1051,7 @@ static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
 	/* Not only is this RCU read lock required by some functions, but
 	 * it also avoids anchors to release a new @xdst before
 	 * it's in a table! In order to understand this need,
-	 * see function xdst_free_anchor.
+	 * see function xdst_free_anchor_f.
 	 * Not to mention that it avoid refcount on @xdst entries.
 	 */
 	rcu_read_lock();
