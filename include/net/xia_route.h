@@ -53,7 +53,7 @@ struct xip_dst_anchor {
  * NOTE
  *	IMPORTANT! Caller must RCU synch before calling this function.
  *
- *	This is function is meant to be called by the host of
+ *	This function is meant to be called by the host of
  *	struct xip_dst_anchor, NOT by the code that manipulates
  *	struct xip_dst.
  */
@@ -92,7 +92,7 @@ enum XDST_ACTION {
 	 */
 	XDA_METHOD,
 
-	/* Same as XDA_METHOD, but before handing  the DST entry, select edge
+	/* Same as XDA_METHOD, but before handing the DST entry, select edge
 	 * in the address.
 	 */
 	XDA_METHOD_AND_SELECT_EDGE,
@@ -102,9 +102,6 @@ struct xip_dst {
 	struct dst_entry	dst;
 
 	char			after_dst[0];
-
-	/* The context in which this XIP DST entry makes sense. */
-	struct net		*net;
 
 	/* Since the lookup key is big, keeping its hash is handy
 	 * to minimize comparision time.
@@ -175,7 +172,8 @@ struct xip_route_proc {
 	xid_type_t		xrp_ppal_type;
 
 	/* If @xid is local for this principal, this method adds @xdst to
-	 * @xid's anchor, fills @xdst's fields, and return zero.
+	 * @xid's anchor (positive dependency), fills @xdst's fields, and
+	 * return zero.
 	 *
 	 * Otherwise, this method returns -ENOENT. This implies a negative
 	 * dependency.
