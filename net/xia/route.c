@@ -41,11 +41,7 @@ static void xip_dst_destroy(struct dst_entry *dst)
 	dst_destroy_metrics_generic(dst);
 }
 
-static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
-{
-	dst_release(dst);
-	return NULL;
-}
+static struct dst_entry *xip_negative_advice(struct dst_entry *dst);
 
 /* XXX An ICMP-like error should be genererated here. */
 static void xip_link_failure(struct sk_buff *skb)
@@ -105,8 +101,6 @@ static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
 		NULL, 1, 0, flags | DST_NOCACHE);
 	if (xdst)
 		memset(xdst->after_dst, 0, sizeof(*xdst) - sizeof(xdst->dst));
-	xdst->net = net;
-	hold_net(net);
 	return xdst;
 }
 
@@ -193,25 +187,16 @@ static inline void xdst_put(struct xip_dst *xdst)
 	dst_release(&xdst->dst);
 }
 
-static void detach_anchor(struct xip_dst *xdst);
+static void detach_anchors(struct xip_dst *xdst);
 
 /* DO NOT call this function! Call xdst_free or xdst_rcu_free instead. */
 static void xdst_free_common(struct xip_dst *xdst)
 {
-	struct net *net;
-
-	detach_anchor(xdst);
+	detach_anchors(xdst);
 
 	/* Clear references to a principal that may be unloading. */
 	xdst->dst.input = dst_discard;
 	xdst->dst.output = dst_discard;
-
-	/* Make sure that the previous fields are set before releasing @net. */
-	smp_wmb();
-
-	net = xdst->net;
-	xdst->net = NULL;
-	release_net(net);
 }
 
 /* DO NOT wait for RCU synchonization.
@@ -223,7 +208,7 @@ static inline void xdst_free(struct xip_dst *xdst)
 	xdst_put(xdst);
 }
 
-static inline void _xdst_rcu_free(struct rcu_head *head)
+static void _xdst_rcu_free(struct rcu_head *head)
 {
 	struct xip_dst *xdst = container_of(head, struct xip_dst, dst.rcu_head);
 	xdst_put(xdst);
@@ -269,8 +254,8 @@ static int xdst_matches_addr(struct xip_dst *xdst, struct xia_row *addr,
 static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash, 
 	struct xia_row *addr, struct xia_row *row, int input)
 {
-	/* The trailing `h' stands for hash, since it's pointing to
-	 * entry in a bucket list.
+	/* The trailing `h' stands for hash because it's pointing to
+	 * an entry in a bucket list.
 	 */
 	struct dst_entry *dsth;
 
@@ -346,8 +331,8 @@ static int xip_dst_unreachable_out(struct sk_buff *skb)
  *	that session.
  *
  *	One must hold a RCU read lock to call this function in order to
- *	avoid anchors being released before @xdst is a DST table.
- *	See function xdst_free_anchor_F for more information.
+ *	avoid anchors being released before @xdst is in a DST table.
+ *	See function xdst_free_anchor_f for more information.
  */
 static struct xip_dst *add_xdst_rcu(struct net *net,
 	struct xip_dst *xdst, s8 chosen_edge)
@@ -356,8 +341,10 @@ static struct xip_dst *add_xdst_rcu(struct net *net,
 	struct xip_dst *prv_xdst;
 	u32 bucket;
 
-	/* @xdst must not be already in a list, or
+	/* @xdst must not be already in a list, nor
 	 * potentially holding RCU readers.
+	 * Notice that this test isn't complete because @xdst could be at
+	 * the end of a list.
 	 */
 	BUG_ON(xdst->dst.next);
 
@@ -420,6 +407,17 @@ static void clear_xdst_table(struct net *net)
 	}
 }
 
+static inline struct net *dstops_net(struct dst_ops *ops)
+{
+	BUG_ON(ops == &xip_dst_ops_template);
+	return container_of(ops, struct net, xia.xip_dst_ops);
+}
+
+static inline struct net *xdst_net(struct xip_dst *xdst)
+{
+	return dstops_net(xdst->dst.ops);
+}
+
 /* XXX This is a barebone implementation, more must be done.
  * See net/ipv4/route.c:rt_garbage_collect and net/ipv6/route.c:ip6_dst_gc
  * for ideas.
@@ -438,9 +436,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 	if (entries < ops->gc_thresh)
 		return 0;
 
-	BUG_ON(ops == &xip_dst_ops_template);
-	net = container_of(ops, struct net, xia.xip_dst_ops);
-
+	net = dstops_net(ops);
 	bucket = net->xia.xip_dst_table.last_bucket;
 	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_DST_TABLE_SIZE);
 	net->xia.xip_dst_table.last_bucket = (bucket + 1) &
@@ -450,10 +446,9 @@ static int xip_dst_gc(struct dst_ops *ops)
 	pdsth = &net->xia.xip_dst_table.buckets[bucket];
 	while (*pdsth) {
 		struct dst_entry **pnext = &(*pdsth)->next;
-		struct xip_dst *xdsth = dst_xdst(*pdsth);
 		if (atomic_read(&(*pdsth)->__refcnt) == 1) {
 			rcu_assign_pointer(*pdsth, *pnext);
-			xdst_rcu_free(xdsth);
+			xdst_rcu_free(dst_xdst(*pdsth));
 		}
 		pdsth = pnext;
 	}
@@ -505,7 +500,7 @@ EXPORT_SYMBOL_GPL(xdst_attach_to_anchor);
  *
  *	It's okay to call this function on an @xdst that has no anchors.
  */
-static void detach_anchor(struct xip_dst *xdst)
+static void detach_anchors(struct xip_dst *xdst)
 {
 	int i;
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
@@ -547,13 +542,14 @@ static void detach_anchor(struct xip_dst *xdst)
  */
 static int del_xdst_and_hold(struct xip_dst *xdst)
 {
-	struct dst_entry **phead = dsthead(xdst->net, xdst->key_hash);
+	struct net *net = xdst_net(xdst);
+	struct dst_entry **phead = dsthead(net, xdst->key_hash);
 	u32 bucket;
 	struct dst_entry **pdsth;
 	int rc = 0;
 
 	bucket = get_bucket(xdst);
-	xdst_lock_bucket(xdst->net, bucket);
+	xdst_lock_bucket(net, bucket);
 
 	for (pdsth = phead; *pdsth; pdsth = &(*pdsth)->next)
 		if (*pdsth == &xdst->dst) {
@@ -566,8 +562,17 @@ static int del_xdst_and_hold(struct xip_dst *xdst)
 		}
 
 out:
-	xdst_unlock_bucket(xdst->net, bucket);
+	xdst_unlock_bucket(net, bucket);
 	return rc;
+}
+
+static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
+{
+	struct xip_dst *xdst = dst_xdst(dst);
+	if (del_xdst_and_hold(xdst))
+		xdst_rcu_free(xdst);
+	xdst_put(xdst);
+	return NULL;
 }
 
 static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
@@ -575,7 +580,7 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 	void *arg)
 {
 	/* Assumptions:
-	 *	1. All @xdst to be found here are in a DST table, or
+	 *	1. All @xdst's to be found here are in a DST table, or
 	 *		is being removed by somebody else, that is,
 	 *		they have already being in a DST table once.
 	 *	2. Caller waited for a RCU synchronization. This is required
@@ -598,23 +603,22 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 			if (!filter(xdst, i, arg))
 				continue;
 
-			/* Releasing @anchor. */
-			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
-				anchor)
-				BUG();
 			hlist_del(&xdst->anchors[i].list_node);
-
 			if (del_xdst_and_hold(xdst)) {
 				/* We are responsable for freeing @xdst. */
 				hlist_add_head(&xdst->anchors[i].list_node,
 					&roots[i]);
-				continue;
+			} else {
+				/* We don't have a refcount to @xdst, and
+				 * assumption 1 guarantees that somebody
+				 * else is going to release @xdst.
+				 */
 			}
 
-			/* We don't have a refcount to @xdst, and
-			 * assumption 1 guarantees that somebody
-			 * else is going to release @xdst.
-			 */
+			/* Releasing @anchor. */
+			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
+				anchor)
+				BUG();
 		}
 	}
 	unlock_anchor(anchor);
@@ -669,7 +673,7 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 	 * @xdst was just allocated.
 	 */
 
-	switch (main_deliver_rcu(net, &xdst->xids[0], 0, xdst)) {
+	switch (main_deliver_rcu(net, to, 0, xdst)) {
 	case XRP_ACT_NEXT_EDGE:
 		/* The anchor never existed, or it's already gone. */
 		return NULL;
@@ -885,8 +889,8 @@ static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
 	*plast_node = *pe;
 }
 
-/* This function is intended to be only used in function choose_an_edge.
- * It is here to improve choose_an_edge's readability, and was based on
+/* This function is intended to be only used in function use_dst_table_rcu.
+ * It is here to improve use_dst_table_rcu's readability, and was based on
  * function net/xia/dag.c:xia_test_addr.
  */
 static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
@@ -909,7 +913,9 @@ static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
 		u8 e = *edge;
 		if (e == XIA_EMPTY_EDGE) {
 			if (unlikely(i == 0)) {
-				/* choose_an_edge can't be called on sinks! */
+				/* This function isn't supposed to be called
+				 * on sinks!
+				 */
 				BUG();
 			}
 			return (all_edges & bits) == (XIA_EMPTY_EDGES & bits);
@@ -957,7 +963,7 @@ static struct xip_dst xdst_error = {
 };
 
 /* DO NOT call this function!
- * It is only meant to reduce function choose_an_edge's size.
+ * It is only meant to improve function choose_an_edge's readability.
  */
 static inline struct xip_dst *use_dst_table_rcu(
 	struct xip_dst *xdst_hint, u32 *pkey_hash, int *pdrop,
@@ -1020,6 +1026,7 @@ tail_call:
 	case XDA_ERROR:
 		/* Help debugging. */
 		select_edge(plast_node, *plast_row, chosen_edge);
+
 		return &xdst_error;
 
 	case XDA_DROP:
@@ -1048,11 +1055,11 @@ static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
 
 	xdst = NULL;
 
-	/* Not only is this RCU read lock required by some functions, but
-	 * it also avoids anchors to release a new @xdst before
-	 * it's in a table! In order to understand this need,
+	/* Not only is this RCU read lock required by some functions used
+	 * in its body, but it also avoids anchors to release a new @xdst
+	 * before it's in a table! In order to understand this need,
 	 * see function xdst_free_anchor_f.
-	 * Not to mention that it avoid refcount on @xdst entries.
+	 * Not to mention that it avoids reference counting on @xdst entries.
 	 */
 	rcu_read_lock();
 
@@ -1131,7 +1138,7 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
 		&addr[num_dst - 1] : &addr[last_node];
 
 	/* Basis. */
-	if (is_it_a_sink(last_row, last_node, num_dst)) {
+	if (unlikely(is_it_a_sink(last_row, last_node, num_dst))) {
 		/* This case is undefined in XIA,
 		 * so we assume that @addr is broken.
 		 */
@@ -1141,11 +1148,11 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
 	/* Inductive step. */
 	xdst = choose_an_edge(skb_net(skb), addr, num_dst, plast_node,
 		last_row, input);
-	if (likely(xdst)) {
-		skb_dst_set(skb, &xdst->dst);
-		return 0;
-	}
-	return -EINVAL;
+	if (unlikely(!xdst))
+		return -EINVAL;
+
+	skb_dst_set(skb, &xdst->dst);
+	return 0;
 }
 
 /*
