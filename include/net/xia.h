@@ -31,6 +31,29 @@ struct xia_xid {
 	__u8		xid_id[XIA_XID_MAX];	/* eXpressive IDentifier*/
 };
 
+static inline int are_xids_equal(const u8 *xid1, const u8 *xid2)
+{
+	const u32 *n1 = (const u32 *)xid1;
+	const u32 *n2 = (const u32 *)xid2;
+	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const u32) * 5);
+	return	n1[0] == n2[0] &&
+		n1[1] == n2[1] &&
+		n1[2] == n2[2] &&
+		n1[3] == n2[3] &&
+		n1[4] == n2[4];
+}
+
+static inline int are_sxids_equal(const struct xia_xid *xid1,
+	const struct xia_xid *xid2)
+{
+	const u64 *n1 = (const u64 *)xid1;
+	const u64 *n2 = (const u64 *)xid2;
+	BUILD_BUG_ON(sizeof(struct xia_xid) != sizeof(const u64) * 3);
+	return	n1[0] == n2[0] &&
+		n1[1] == n2[1] &&
+		n1[2] == n2[2];
+}
+
 struct xia_row {
 	struct xia_xid	s_xid;
 	union {
@@ -56,7 +79,7 @@ static inline int is_edge_chosen(__u8 e)
 	return e & XIA_CHOSEN_EDGE;
 }
 
-static inline int is_any_edge_chosen(struct xia_row *row)
+static inline int is_any_edge_chosen(const struct xia_row *row)
 {
 	return row->s_edge.i & XIA_CHOSEN_EDGES;
 }
@@ -75,13 +98,6 @@ static inline int is_it_a_sink(struct xia_row *row, __u8 node, __u8 num_dst)
 static inline int is_row_valid(__u8 row, __u8 num_dst)
 {
 	return row < num_dst || row == XIA_ENTRY_NODE_INDEX;
-}
-
-static inline int is_a_strictly_before_b(__u8 index_a, __u8 index_b,
-	__u8 num_dst)
-{
-	return	(index_a == XIA_ENTRY_NODE_INDEX && index_b < num_dst) ||
-		index_a < index_b;
 }
 
 static inline void xia_mark_edge(__u8 *edge)

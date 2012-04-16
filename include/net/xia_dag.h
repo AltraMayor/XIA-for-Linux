@@ -85,6 +85,15 @@ enum xia_addr_error {
 	XIAEADDR_NO_ENTRY,
 };
 
+/** xia_are_edges_valid - Test that edges of @row are valid.
+ *
+ * RETURN
+ *	Negative enum xia_addr_error - there is an error.
+ *	Zero - Edges are valid.
+ */
+extern int xia_are_edges_valid(const struct xia_row *row,
+	__u8 node, __u8 num_node, __u32 *pvisited);
+
 /** xia_test_addr - test addr.
  *
  * RETURN
