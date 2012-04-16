@@ -47,7 +47,7 @@ static struct dst_entry *xip_negative_advice(struct dst_entry *dst);
 static void xip_link_failure(struct sk_buff *skb)
 {
 	if (net_ratelimit())
-		printk("%s: unreachable destination\n", __FUNCTION__);
+		pr_warn("%s: unreachable destination\n", __func__);
 }
 
 static void xip_update_pmtu(struct dst_entry *dst, u32 mtu)
@@ -251,7 +251,7 @@ static int xdst_matches_addr(struct xip_dst *xdst, struct xia_row *addr,
 	return 1;
 }
 
-static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash, 
+static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash,
 	struct xia_row *addr, struct xia_row *row, int input)
 {
 	/* The trailing `h' stands for hash because it's pointing to
@@ -303,7 +303,7 @@ static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
 static inline int xip_dst_unreachable(char *direction, struct sk_buff *skb)
 {
 	if (net_ratelimit())
-		printk("XIP: unreachable destination on direction %s\n",
+		pr_warn("XIP: unreachable destination on direction %s\n",
 			direction);
 	return dst_discard(skb);
 }
@@ -372,7 +372,7 @@ static struct xip_dst *add_xdst_rcu(struct net *net,
 
 		return prv_xdst;
 	}
-	
+
 	/* @xdst is unique. */
 
 	/* Add @xdst to the table. */
@@ -659,7 +659,7 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 {
 	struct xip_dst *xdst;
 	struct xip_dst_anchor *anchor;
-	
+
 	xdst = xip_dst_alloc(net, DST_NOCOUNT);
 	if (!xdst)
 		return ERR_PTR(-ENOMEM);
@@ -717,10 +717,8 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 			return;
 
 		BUG_ON(anchor != ERR_PTR(-ENOMEM));
-		pr_err("%s: XIP positive dependency could not invalidate "
-			"XIP DST entries because system memory is too low."
-			"Clearing XIP DST cache as a last resource...\n",
-			__FUNCTION__);
+		pr_err("%s: XIP positive dependency could not invalidate XIP DST entries because system memory is too low. Clearing XIP DST cache as a last resource...\n",
+			__func__);
 		clear_xdst_table(net);
 		return;
 	}
@@ -851,9 +849,7 @@ static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
 					XIA_MAX_STRXID_SIZE) < 0);
 				BUG_ON(xia_xidtop(right_xid, to,
 					XIA_MAX_STRXID_SIZE) < 0);
-				pr_err("BUG: Principal %u is redirecting to "
-					"itself, %s -> %s, "
-					"ignoring this route\n",
+				pr_err("BUG: Principal %u is redirecting to itself, %s -> %s, ignoring this route\n",
 					__be32_to_cpu(ty), from, to);
 				return XRP_ACT_NEXT_EDGE;
 			}
@@ -875,8 +871,7 @@ static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
 		done--;
 	} while (done > 0);
 	BUG_ON(xia_xidtop(xid, from, XIA_MAX_STRXID_SIZE) < 0);
-	pr_err("BUG: Principal %u is looping too deep, "
-		"this search started with %s, ignoring this route\n",
+	pr_err("BUG: Principal %u is looping too deep, this search started with %s, ignoring this route\n",
 		__be32_to_cpu(xid->xid_type), from);
 	return XRP_ACT_NEXT_EDGE;
 }
@@ -937,8 +932,8 @@ static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
 static inline int xip_dst_not_supported(char *direction, struct sk_buff *skb)
 {
 	if (net_ratelimit())
-		printk("XIP: not supported address for principal on "
-			"direction %s\n", direction);
+		pr_warn("XIP: not supported address for principal on direction %s\n",
+		direction);
 	return dst_discard(skb);
 }
 
@@ -1018,7 +1013,7 @@ tail_call:
 
 		/* Record that we're going for a recursion. */
 		select_edge(plast_node, *plast_row, chosen_edge);
-		
+
 		*plast_row = next_row;
 		xdst_hint = NULL;
 		goto tail_call;
@@ -1036,7 +1031,7 @@ tail_call:
 	case XDA_METHOD_AND_SELECT_EDGE:
 		select_edge(plast_node, *plast_row, chosen_edge);
 		/* Fall through. */
-		
+
 	case XDA_METHOD:
 		return xdst;
 
@@ -1211,7 +1206,7 @@ static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 	if (!skb_dst(skb) && xip_route(skb, xiph->dst_addr, xiph->num_dst,
 		&xiph->last_node, 1))
 		goto drop;
-		
+
 	return dst_input(skb);
 
 drop:
