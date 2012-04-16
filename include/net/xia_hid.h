@@ -23,8 +23,8 @@ static inline int RTHA_OK(struct rtnl_xia_hid_hdw_addrs *rtha, int len)
 static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 	struct rtnl_xia_hid_hdw_addrs *rtha)
 {
-	return	(struct rtnl_xia_hid_hdw_addrs*)
-		(((char*)rtha) + NLMSG_ALIGN(rtha->hha_len));
+	return	(struct rtnl_xia_hid_hdw_addrs *)
+		(((char *)rtha) + NLMSG_ALIGN(rtha->hha_len));
 }
 
 #ifdef __KERNEL__
@@ -37,7 +37,7 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 /*
  *	Neighborhood Watch Protocol (NWP)
  *
- * 	Exported by nwp.c
+ *	Exported by nwp.c
  */
 
 /*
