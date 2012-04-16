@@ -83,7 +83,7 @@ struct fib_xid_buckets {
 struct fib_xid_table {
 	atomic_t			refcnt;
 	int				dead;
-	struct work_struct 		fxt_death_work;
+	struct work_struct		fxt_death_work;
 
 	/* Principal type. */
 	xid_type_t			fxt_ppal_type;
@@ -102,7 +102,7 @@ struct fib_xid_table {
 	/* Used to minimize collisions on the lock table. */
 	u32				fxt_seed;
 
-	struct work_struct 		fxt_rehash_work;
+	struct work_struct		fxt_rehash_work;
 	/* Avoid writers while rehashing table. */
 	rwlock_t			fxt_writers_lock;
 
@@ -199,7 +199,7 @@ static inline void xia_unregister_pernet_subsys(struct pernet_operations *ops)
 
 /** create_xia_rtable - Create and return a fib_xia_rtable.
  * RETURN
- * 	It returns the struct on success, otherwise NULL.
+ *	It returns the struct on success, otherwise NULL.
  * NOTE
  *	Caller should use RCU_INIT_POINTER to assign it to the final pointer.
  */
@@ -232,10 +232,10 @@ void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
 
 /** xia_find_xtbl_rcu - Find XID table of type @ty.
  * RETURN
- * 	It returns the struct on success, otherwise NULL.
+ *	It returns the struct on success, otherwise NULL.
  * NOTE
- * 	Caller must hold an RCU read lock to be safe against paralel calls to
- * 	init_xid_table, end_xid_table, and destroy_xia_rtable.
+ *	Caller must hold an RCU read lock to be safe against paralel calls to
+ *	init_xid_table, end_xid_table, and destroy_xia_rtable.
  *
  *	If the caller must keep the reference after an RCU read lock,
  *	it must call xtbl_hold before releasing the RCU lock.
@@ -285,18 +285,18 @@ void free_fxid_norcu(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
 /** xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
  * RETURN
- * 	It returns the struct on success, otherwise NULL.
+ *	It returns the struct on success, otherwise NULL.
  * NOTE
- * 	Caller must hold an RCU read lock to be safe against paralel calls to
- * 	fib_add_fxid, fib_rm_fxid, fib_rm_xid, and end_xid_table.
+ *	Caller must hold an RCU read lock to be safe against paralel calls to
+ *	fib_add_fxid, fib_rm_fxid, fib_rm_xid, and end_xid_table.
  */
 struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
 
 /** xia_find_xid_lock - Find struct fib_xid in @xtbl that has key @xid.
  * RETURN
- * 	It returns the struct on success, otherwise NULL.
+ *	It returns the struct on success, otherwise NULL.
  * NOTE
- * 	@pbucket always receives the bucket to be unlocked later.
+ *	@pbucket always receives the bucket to be unlocked later.
  *	Caller must always unlock with fib_unlock_bucket afterwards.
  *
  *	Caller should never call this function with a lock on @xtbl
@@ -354,7 +354,7 @@ void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 
 /** fib_rm_xid - Remove @xid from @xtbl.
  * RETURN
- * 	It returns the fxid with same @xid on success, otherwise NULL.
+ *	It returns the fxid with same @xid on success, otherwise NULL.
  */
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
 

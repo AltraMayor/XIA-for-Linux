@@ -103,7 +103,7 @@ static int local_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
-	
+
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
@@ -192,7 +192,7 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
-	
+
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
@@ -207,7 +207,7 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			nla_reserve_nohdr(skb, sizeof(*rtha));
 		if (!rtha)
 			goto nla_put_failure;
-		
+
 		rtha->hha_addr_len = pos_ha->dev->addr_len;
 		memmove(rtha->hha_ha, pos_ha->ha, rtha->hha_addr_len);
 		rtha->hha_ifindex = pos_ha->dev->ifindex;
@@ -336,7 +336,7 @@ static int main_input_input(struct sk_buff *skb)
 	if (!xiph->hop_limit) {
 		/* XXX An ICMP-like error should be genererated here. */
 		if (net_ratelimit())
-			printk("%s: hop limit reached\n", __FUNCTION__);
+			pr_warn("%s: hop limit reached\n", __func__);
 		goto drop;
 	}
 
@@ -345,8 +345,8 @@ static int main_input_input(struct sk_buff *skb)
 	if (unlikely(skb->len > dst_mtu(&xdst->dst))) {
 		/* XXX An ICMP-like error should be genererated here. */
 		if (net_ratelimit())
-			printk("%s: packet is larger than MTU (%i > %i)\n",
-				__FUNCTION__, skb->len, dst_mtu(&xdst->dst));
+			pr_warn("%s: packet is larger than MTU (%i > %i)\n",
+				__func__, skb->len, dst_mtu(&xdst->dst));
 		goto drop;
 	}
 
@@ -524,7 +524,7 @@ static int __init xia_hid_init(void)
 	if (rc)
 		goto route;
 
-	printk(KERN_ALERT "XIA Principal HID loaded\n");
+	pr_alert("XIA Principal HID loaded\n");
 	goto out;
 
 route:
@@ -553,7 +553,7 @@ static void __exit xia_hid_exit(void)
 	rcu_barrier();
 	flush_scheduled_work();
 
-	printk(KERN_ALERT "XIA Principal HID UNloaded\n");
+	pr_alert("XIA Principal HID UNloaded\n");
 }
 
 module_init(xia_hid_init);

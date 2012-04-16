@@ -1,5 +1,5 @@
 /*
- * XIA 		An implementation of the XIA protocol suite for the LINUX
+ * XIA		An implementation of the XIA protocol suite for the LINUX
  *		operating system.  XIA is implemented using the BSD Socket
  *		interface as the means of communication with the user level.
  *
@@ -331,9 +331,9 @@ static const struct proto_ops xia_sockraw_ops = {
 /* XXX These constants must go away in order to support loadable principals. */
 /* XIP protocols. */
 enum {
-  XIPPROTO_XIP = 0,		/* eXpressive Internet Protocol		*/
-  XIPPROTO_RAW = 255,		/* Raw XIP packets			*/
-  XIPPROTO_MAX
+	XIPPROTO_XIP = 0,	/* eXpressive Internet Protocol		*/
+	XIPPROTO_RAW = 255,	/* Raw XIP packets			*/
+	XIPPROTO_MAX
 };
 
 static int xia_create(struct net *net, struct socket *sock,
@@ -439,9 +439,9 @@ static int __init xia_init(void)
 	if (rc)
 		goto raw_prot;
 
-	printk(KERN_INFO "XIA lock table entries: %i = 2^%i (%i bytes)\n",
+	pr_info("XIA lock table entries: %i = 2^%i (%i bytes)\n",
 		n, ilog2(n), size);
-	printk(KERN_ALERT "XIA loaded\n");
+	pr_alert("XIA loaded\n");
 	goto out;
 
 /*
@@ -480,7 +480,7 @@ static void __exit xia_exit(void)
 	flush_scheduled_work();
 
 	destroy_main_lock_table();
-	printk(KERN_ALERT "XIA UNloaded\n");
+	pr_alert("XIA UNloaded\n");
 }
 
 module_init(xia_init);

@@ -99,7 +99,7 @@ extern int xia_test_addr(const struct xia_addr *addr);
  * the format 0xN.
  *
  * RETURN
- * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
  *	Total number of written bytes, NOT including the trailing '\0'.
  */
@@ -109,7 +109,7 @@ extern int xia_tytop(xid_type_t ty, char *dst, size_t dstlen);
  * @dstlen is the size of buffer @dst, it must be at least XIA_MAX_STRID_SIZE.
  *
  * RETURN
- * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
  *	Total number of written bytes, NOT including the trailing '\0'.
  */
@@ -120,7 +120,7 @@ extern int xia_idtop(const struct xia_xid *src, char *dst, size_t dstlen);
  * @dstlen is the size of buffer @dst, it must be at least XIA_MAX_STRXID_SIZE.
  *
  * RETURN
- * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
  *	Total number of written bytes, NOT including the trailing '\0'.
  */
@@ -145,7 +145,7 @@ extern int xia_xidtop(const struct xia_xid *src, char *dst, size_t dstlen);
  * the address because it's easier to add a '\n' than remove it.
  *
  * RETURN
- * 	-ENOSPC - The converted address string is truncated. It may, or not,
+ *	-ENOSPC - The converted address string is truncated. It may, or not,
  *		include the trailing '\0'.
  *	Total number of written bytes, NOT including the trailing '\0'.
  */
@@ -156,11 +156,11 @@ extern int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
  *	binary (network) form.
  * It doesn't not require the string @src to be terminated by '\0'.
  * If @ignore_ce is true, the chosen edges are not marked in @dst.
- * 	It's useful to obtain an address that will be used in a header.
+ *	It's useful to obtain an address that will be used in a header.
  * @invalid_flag is set true if '!' begins the string;
- * 	otherwise it is set false.
+ *	otherwise it is set false.
  * RETURN
- * 	-1 if the string can't be converted.
+ *	-1 if the string can't be converted.
  *	Number of parsed chars, not couting trailing '\0' if it exists.
  * NOTES
  *	Even if the function is successful, the address may
