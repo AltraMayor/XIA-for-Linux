@@ -141,7 +141,7 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 	rcu_read_lock();
 	abranch = rcu_dereference(xtbl->fxt_active_branch);
 	divisor = abranch->divisor;
-	aindex = abranch->index;
+	aindex = xtbl_branch_index(xtbl, abranch);
 	for (i = cb->args[3]; i < divisor; i++, first_j = 0) {
 		struct fib_xid *fxid;
 		struct hlist_node *p;
