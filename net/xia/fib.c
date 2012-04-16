@@ -330,18 +330,6 @@ static inline struct hlist_head *xidhead(struct fib_xid_buckets *branch,
 	return __xidhead(branch->buckets, get_bucket(xid, branch->divisor));
 }
 
-static inline int are_xids_equal(const u8 *xid1, const u8 *xid2)
-{
-	const u32 *n1 = (const u32 *)xid1;
-	const u32 *n2 = (const u32 *)xid2;
-	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const u32) * 5);
-	return	n1[0] == n2[0] &&
-		n1[1] == n2[1] &&
-		n1[2] == n2[2] &&
-		n1[3] == n2[3] &&
-		n1[4] == n2[4];
-}
-
 static struct fib_xid *find_xid_locked(struct fib_xid_table *xtbl,
 	u32 bucket, const u8 *xid, struct hlist_head **phead)
 {
