@@ -242,7 +242,7 @@ static int xdst_matches_addr(struct xip_dst *xdst, struct xia_row *addr,
 		struct xia_xid *xid = &xdst->xids[i];
 		u8 e = row->s_edge.a[i];
 		if (!is_empty_edge(e)) {
-			if (memcmp(xid, &addr[e].s_xid, sizeof(*xid)))
+			if (!are_sxids_equal(xid, &addr[e].s_xid))
 				return 0;
 		} else {
 			return xia_is_nat(xid->xid_type);
@@ -281,7 +281,7 @@ static int xdst_matches_xdst(struct xip_dst *xdst1, struct xip_dst *xdst2)
 		struct xia_xid *xid2 = &xdst2->xids[i];
 		if (xia_is_nat(xid1->xid_type))
 			return xia_is_nat(xid2->xid_type);
-		if (memcmp(xid1, xid2, sizeof(*xid1)))
+		if (!are_sxids_equal(xid1, xid2))
 			return 0;
 	}
 	return 1;
@@ -699,7 +699,7 @@ static int filter_from(struct xip_dst *xdst, int anchor_index, void *arg)
 	struct xia_xid *xid = &xdst->xids[anchor_index];
 	struct filter_from_arg *from = (struct filter_from_arg *)arg;
 	return xid->xid_type == from->type &&
-		!memcmp(xid->xid_id, from->id, sizeof(xid->xid_id));
+		are_xids_equal(xid->xid_id, from->id);
 }
 
 void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
@@ -884,50 +884,6 @@ static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
 	*plast_node = *pe;
 }
 
-/* This function is intended to be only used in function use_dst_table_rcu.
- * It is here to improve use_dst_table_rcu's readability, and was based on
- * function net/xia/dag.c:xia_test_addr.
- */
-static int are_edges_valid(struct xia_row *last_row, u8 last_node, u8 num_dst)
-{
-	int i;
-	const u8 *edge = last_row->s_edge.a;
-	u32 all_edges = __be32_to_cpu(last_row->s_edge.i);
-	u32 bits = 0xffffffff;
-
-	BUILD_BUG_ON(XIA_OUTDEGREE_MAX != 4);
-
-	if (unlikely(is_any_edge_chosen(last_row))) {
-		/* Since at least an edge of last_node has already
-		 * been chosen, the address is corrupted.
-		 */
-		return 0;
-	}
-
-	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
-		u8 e = *edge;
-		if (e == XIA_EMPTY_EDGE) {
-			if (unlikely(i == 0)) {
-				/* This function isn't supposed to be called
-				 * on sinks!
-				 */
-				BUG();
-			}
-			return (all_edges & bits) == (XIA_EMPTY_EDGES & bits);
-		}
-		if (unlikely(e >= num_dst || /* Broken address. */
-			/* This address isn't topologically ordered. */
-			!is_a_strictly_before_b(last_node, e, num_dst))) {
-			return 0;
-		}
-
-		edge++;
-		bits >>= 8;
-	}
-
-	return 1;
-}
-
 /* XXX An ICMP-like error should be genererated here. */
 static inline int xip_dst_not_supported(char *direction, struct sk_buff *skb)
 {
@@ -975,11 +931,15 @@ static inline struct xip_dst *use_dst_table_rcu(
 
 tail_call:
 	if (!xdst_hint) {
-		if (unlikely(!are_edges_valid(*plast_row, *plast_node,
-			num_dst))) {
+		u32 visited = 0;
+		if (unlikely(xia_are_edges_valid(*plast_row, *plast_node,
+			num_dst, &visited))) {
 			*pdrop = 1;
 			return NULL;
 		}
+
+		/* This function isn't supposed to be called on sinks! */
+		BUG_ON(is_it_a_sink(*plast_row, *plast_node, num_dst));
 
 		*pkey_hash = hash_edges(addr, *plast_row, input);
 

@@ -212,9 +212,57 @@ EXPORT_SYMBOL(ppal_del_map);
  * Validating addresses
  */
 
+int xia_are_edges_valid(const struct xia_row *row,
+	__u8 node, __u8 num_node, __u32 *pvisited)
+{
+	const __u8 *edge;
+	__u32 all_edges, bits;
+	int i;
+
+	BUILD_BUG_ON(XIA_OUTDEGREE_MAX != 4);
+
+	/* The plus one is just to make sure that the following number
+	 * is valid ((1U << num_node) - 1).
+	 */
+	BUILD_BUG_ON(XIA_NODES_MAX + 1 > sizeof(*pvisited) * 8);
+
+	if (unlikely(is_any_edge_chosen(row))) {
+		/* Since at least an edge of last_node has already
+		 * been chosen, the address is corrupted.
+		 */
+		return -XIAEADDR_CHOSEN_EDGE;
+	}
+
+	edge = row->s_edge.a;
+	all_edges = __be32_to_cpu(row->s_edge.i);
+	bits = 0xffffffff;
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++, edge++) {
+		__u8 e = *edge;
+		if (e == XIA_EMPTY_EDGE) {
+			if ((all_edges & bits) !=
+				(XIA_EMPTY_EDGES & bits))
+				return -XIAEADDR_EE_MISPLACED;
+			else
+				break;
+		} else if (e >= num_node) {
+			return -XIAEADDR_EDGE_OUT_RANGE;
+		} else if (node < (num_node - 1) && e <= node) {
+			/* Notice that if (node == XIA_ENTRY_NODE_INDEX)
+			 * it still works fine because XIA_ENTRY_NODE_INDEX
+			 * is greater than (num_node - 1).
+			 */
+			return -XIAEADDR_NOT_TOPOLOGICAL;
+		}
+		bits >>= 8;
+		*pvisited |= 1 << e;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(xia_are_edges_valid);
+
 int xia_test_addr(const struct xia_addr *addr)
 {
-	int i, j, n;
+	int i, n;
 	int saw_nat = 0;
 	__u32 visited = 0;
 
@@ -232,33 +280,11 @@ int xia_test_addr(const struct xia_addr *addr)
 	}
 	/* n = number of nodes from here. */
 
-	BUILD_BUG_ON(XIA_OUTDEGREE_MAX != 4);
-	BUILD_BUG_ON(XIA_NODES_MAX + 1 > sizeof(visited) * 8);
-
 	/* Test edges are well formed. */
 	for (i = 0; i < n; i++) {
-		const struct xia_row *row = &addr->s_row[i];
-		const __u8 *edge = row->s_edge.a;
-		__u32 all_edges = __be32_to_cpu(row->s_edge.i);
-		__u32 bits = 0xffffffff;
-		for (j = 0; j < XIA_OUTDEGREE_MAX; j++, edge++) {
-			__u8 e = *edge;
-			if (e & XIA_CHOSEN_EDGE) {
-				return -XIAEADDR_CHOSEN_EDGE;
-			} else if (e == XIA_EMPTY_EDGE) {
-				if ((all_edges & bits) !=
-					(XIA_EMPTY_EDGES & bits))
-					return -XIAEADDR_EE_MISPLACED;
-				else
-					break;
-			} else if (e >= n) {
-				return -XIAEADDR_EDGE_OUT_RANGE;
-			} else if (i < (n - 1) && e <= i) {
-				return -XIAEADDR_NOT_TOPOLOGICAL;
-			}
-			bits >>= 8;
-			visited |= 1 << e;
-		}
+		int rc = xia_are_edges_valid(&addr->s_row[i], i, n, &visited);
+		if (rc)
+			return rc;
 	}
 
 	if (n >= 1) {

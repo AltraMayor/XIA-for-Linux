@@ -840,8 +840,9 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		return process_announcement(skb);
 	case NWP_TYPE_NEIGH_LIST:
 		return process_neigh_list(skb);
+	default:
+		goto freeskb;
 	}
-	BUG();
 
 freeskb:
 	kfree_skb(skb);
