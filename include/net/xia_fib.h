@@ -76,8 +76,6 @@ struct fib_xid_buckets {
 	struct hlist_head	*buckets;
 	/* Number of buckets; it is a power of 2. */
 	int			divisor;
-	/* Index of this branch. One should use it to scan struct fib_xid's. */
-	int			index;
 };
 
 struct fib_xid_table {
@@ -111,6 +109,18 @@ struct fib_xid_table {
 
 	const struct xia_ppal_rt_eops	*fxt_eops;
 };
+
+/* Return index of @branch. One must use it to scan buckets. */
+static inline int xtbl_branch_index(struct fib_xid_table *xtbl,
+	struct fib_xid_buckets *branch)
+{
+	if (branch == &xtbl->fxt_branch[0])
+		return 0;
+	else if (branch == &xtbl->fxt_branch[1])
+		return 1;
+	else
+		BUG();
+}
 
 static inline struct net *xtbl_net(struct fib_xid_table *xtbl)
 {
