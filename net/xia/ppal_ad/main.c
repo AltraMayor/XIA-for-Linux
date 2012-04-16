@@ -71,7 +71,7 @@ static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		? RTN_LOCAL : RTN_UNICAST;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
-	
+
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
@@ -163,11 +163,11 @@ static int main_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		? RTN_LOCAL : RTN_UNICAST;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
-	
+
 	dst.xid_type = xtbl->fxt_ppal_type;
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 
-	if (unlikely(	nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
 			nla_put(skb, RTA_GATEWAY, sizeof(mad->gw), &mad->gw)
 		))
 		goto nla_put_failure;
@@ -309,7 +309,7 @@ static int __init xia_ad_init(void)
 	if (rc)
 		goto route;
 
-	printk(KERN_ALERT "XIA Principal AD loaded\n");
+	pr_alert("XIA Principal AD loaded\n");
 	goto out;
 
 route:
@@ -328,7 +328,7 @@ static void __exit xia_ad_exit(void)
 	ppal_del_map(XIDTYPE_AD);
 	xip_del_router(&ad_rt_proc);
 	xia_unregister_pernet_subsys(&ad_net_ops);
-	printk(KERN_ALERT "XIA Principal AD UNloaded\n");
+	pr_alert("XIA Principal AD UNloaded\n");
 }
 
 module_init(xia_ad_init);

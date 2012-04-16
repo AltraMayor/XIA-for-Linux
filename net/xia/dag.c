@@ -130,7 +130,7 @@ static int is_name_valid(const char *name)
 
 static inline void lowerstr(char *s)
 {
-	while(*s) {
+	while (*s) {
 		*s = tolower(*s);
 		s++;
 	}
@@ -435,7 +435,7 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 			return rc;
 		move_buf(&dst, &dstlen, &tot, rc);
 	}
-	
+
 	for (i = 0; i < XIA_NODES_MAX; i++) {
 		const struct xia_row *row = &src->s_row[i];
 
@@ -497,13 +497,13 @@ static int read_invalid_flag(const char **pp, size_t *pleft, int *invalid_flag)
 
 static inline int ascii_to_int(char ch)
 {
-	if (ch >= '0' && ch <= '9') {
+	if (ch >= '0' && ch <= '9')
 		return ch - '0';
-	} else if (ch >= 'A' && ch <= 'Z') {
-		return ch - 'A' + 10; 
-	} else if (ch >= 'a' && ch <= 'z') {
+	else if (ch >= 'A' && ch <= 'Z')
+		return ch - 'A' + 10;
+	else if (ch >= 'a' && ch <= 'z')
 		return ch - 'a' + 10;
-	} else
+	else
 		return 64;
 }
 
@@ -525,7 +525,7 @@ static int read_name(const char **pp, size_t *pleft, char *name, int len)
 {
 	int i = 0;
 	int last = len - 1;
-	
+
 	BUG_ON(len < 1);
 
 	while (*pleft >= 1 && isname(**pp) && i < last) {
@@ -660,7 +660,7 @@ int xia_pton(const char *src, size_t srclen, struct xia_addr *dst,
 	const char *p = src;
 	size_t left = srclen;
 	int i = 0;
- 
+
 	memset(dst, 0, sizeof(*dst));
 
 	if (read_invalid_flag(&p, &left, invalid_flag))
@@ -687,7 +687,7 @@ int xia_ptoxid(const char *src, size_t srclen, struct xia_xid *dst)
 {
 	const char *p = src;
 	size_t left = srclen;
- 
+
 	if (read_type(&p, &left, &dst->xid_type))
 		return -1;
 	if (read_sep(&p, &left, '-'))
@@ -706,7 +706,7 @@ int xia_ptoid(const char *src, size_t srclen, struct xia_xid *dst)
 {
 	const char *p = src;
 	size_t left = srclen;
- 
+
 	if (read_xid(&p, &left, dst->xid_id))
 		return -1;
 

@@ -1,7 +1,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_ether.h>
 #include <linux/jiffies.h>
-#include <asm/cache.h>
+#include <linux/cache.h>
 #include <net/ip_vs.h>
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
@@ -348,7 +348,7 @@ struct general_hdr {
 	u8	type;
 	u8	hid_count;
 	u8	haddr_len;
-} __attribute__ ((packed));
+} __packed;
 
 struct announcement_hdr {
 	u8	version;
@@ -358,7 +358,7 @@ struct announcement_hdr {
 
 	u8	haddr_begin[0];
 	u8	haddr[MAX_ADDR_LEN];
-} __attribute__ ((packed));
+} __packed;
 
 struct neighs_hdr {
 	u8	version;
@@ -374,7 +374,7 @@ struct neighs_hdr {
  *
  *	count == hid_count.
  */
-} __attribute__ ((packed));
+} __packed;
 
 static inline int announcement_hdr_len(struct net_device *dev)
 {
@@ -392,9 +392,7 @@ static int __announce_on_dev(struct fib_xid_table *xtbl,
 	if (skb->len + XIA_XID_MAX > state->data_len) {
 		/* XXX Enhance NWP to support multiple-frame announcements. */
 		if (net_ratelimit())
-			printk(KERN_WARNING "XIA HID NWP: Can't announce all "
-				"local HIDs on dev %s because its largest "
-				"frame (MTU=%u) doesn't fit them\n",
+			pr_warn("XIA HID NWP: Can't announce all local HIDs on dev %s because its largest frame (MTU=%u) doesn't fit them\n",
 				dev->name, state->mtu);
 		return 1;
 	}
@@ -403,9 +401,8 @@ static int __announce_on_dev(struct fib_xid_table *xtbl,
 	if (nwp->hid_count == 0xff) {
 		/* XXX Enhance NWP to support multiple-frame announcements. */
 		if (net_ratelimit())
-			printk(KERN_WARNING "XIA HID NWP: Can't announce all "
-				"local HIDs on dev %s because there are "
-				"more than 255 local HIDs\n", dev->name);
+			pr_warn("XIA HID NWP: Can't announce all local HIDs on dev %s because there are more than 255 local HIDs\n",
+				dev->name);
 		return 1;
 	}
 
@@ -443,9 +440,7 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	struct announcement_state state;
 
 	if (mtu < min_annoucement) {
-		pr_err("XIA HID NWP: Can't send an announcement "
-			"because dev %s has MTU (%u) smaller than "
-			"the smallest annoucement frame (%i)\n",
+		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
 			dev->name, mtu, min_annoucement);
 		dump_stack();
 		return;
@@ -492,7 +487,7 @@ static int my_turn(int me, struct hid_dev *hdev)
 	others = atomic_read(&hdev->neigh_cnt);
 	if (others <= 0)
 		return 1;
-		
+
 	threshold = (0xffffffffU / (u32)(others + me)) * (u32)me;
 	get_random_bytes(&rand, sizeof(rand));
 	return rand <= threshold;
@@ -515,7 +510,7 @@ static void announce_event(unsigned long data)
 
 	last_announced = atomic_read(&state->announced);
 	force = next_to_announce != last_announced;
-	
+
 	for_each_netdev(net, dev) {
 		struct hid_dev *hdev;
 		/* No NWP on this interface. */
@@ -552,7 +547,7 @@ int hid_new_hid_state(struct net *net)
 	/* XXX Having a random delay should help to avoid synchronization. */
 	/* XXX Not starting timer if there's nothing to announce. */
 	mod_timer(&state->announce_timer, jiffies + 5*HZ);
-	
+
 	return 0;
 }
 
@@ -583,9 +578,7 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	struct neighs_hdr *nwp;
 
 	if (mtu < min_list) {
-		pr_err("XIA HID NWP: Can't send a neighbor list "
-			"because dev %s has MTU (%u) smaller than "
-			"the smallest neighbor list frame (%i)\n",
+		pr_err("XIA HID NWP: Can't send a neighbor list because dev %s has MTU (%u) smaller than the smallest neighbor list frame (%i)\n",
 			dev->name, mtu, min_list);
 		dump_stack();
 		return NULL;
@@ -711,11 +704,7 @@ static void read_announcement(struct sk_buff *skb)
 		u8 *next_xid = skb_pull(skb, XIA_XID_MAX);
 		if (!next_xid) {
 			if (net_ratelimit())
-				printk(KERN_WARNING
-					"XIA HID NWP: An announcement "
-					"was received truncated. "
-					"It should contain %i HID(s), "
-					"but %i HID(s) are missing\n",
+				pr_warn("XIA HID NWP: An announcement was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
 					nwp->hid_count, count);
 			break;
 		}
@@ -789,11 +778,7 @@ static int process_neigh_list(struct sk_buff *skb)
 		int original_ha_count, ha_count;
 		if (!haddr_or_xid) {
 			if (net_ratelimit())
-				printk(KERN_WARNING
-					"XIA HID NWP: A neighbor list "
-					"was received truncated. "
-					"It should contain %i HID(s), "
-					"but %i HID(s) are missing\n",
+				pr_warn("XIA HID NWP: A neighbor list was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
 					nwp->hid_count, hid_count);
 			break;
 		}
@@ -805,11 +790,7 @@ static int process_neigh_list(struct sk_buff *skb)
 				if (net_ratelimit()) {
 					char str[XIA_MAX_STRXID_SIZE];
 					str_of_xid(str, xid);
-					printk(KERN_WARNING "XIA HID NWP: "
-						"A neighbor list was received "
-						"truncated. It should contain "
-						"%i link layer addresses "
-						"for %s, but %i are missing\n",
+					pr_warn("XIA HID NWP: A neighbor list was received truncated. It should contain %i link layer addresses for %s, but %i are missing\n",
 						original_ha_count, str,
 						ha_count);
 				}
@@ -847,7 +828,7 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		ghdr->haddr_len != dev->addr_len	||
 		dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
 		skb->pkt_type == PACKET_OTHERHOST	||
-		skb->pkt_type == PACKET_LOOPBACK	)
+		skb->pkt_type == PACKET_LOOPBACK)
 		goto freeskb;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);
@@ -882,11 +863,11 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 	struct net_device *dev = hdev->dev;
 
 #ifdef NET_REFCNT_DEBUG
-	printk(KERN_DEBUG "%s: %p=%s\n", __FUNCTION__, hdev, dev->name);
+	pr_debug("%s: %p=%s\n", __func__, hdev, dev->name);
 #endif
 	if (!hdev->dead) {
 		pr_err("%s: freeing alive hid_dev %p=%s\n",
-			__FUNCTION__, hdev, dev->name);
+			__func__, hdev, dev->name);
 		dump_stack();
 	}
 

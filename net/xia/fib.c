@@ -135,7 +135,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 	struct fib_xid_table *new_xtbl;
 	struct fib_xid_buckets *abranch;
 	int rc;
-	
+
 	rc = -EEXIST;
 	if (__xia_find_xtbl(rtbl, ty, &head))
 		goto out; /* Duplicate. */
@@ -168,7 +168,7 @@ int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
 
 	rc = 0;
 	goto out;
-	
+
 new_xtbl:
 	kfree(new_xtbl);
 out:
@@ -246,13 +246,11 @@ static void xtbl_death_work(struct work_struct *work)
 	}
 
 	/* It doesn't return an error here because there's nothing
-         * the caller can do about this error/bug.
+	 * the caller can do about this error/bug.
 	 */
 	c = atomic_read(&xtbl->fxt_count);
 	if (c != rm_count) {
-		pr_err("While freeing XID table of principal %x "
-			"%i entries were found, whereas %i are counted! "
-			"Ignoring it, but it's a serious bug!\n",
+		pr_err("While freeing XID table of principal %x, %i entries were found, whereas %i are counted! Ignoring it, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
 		dump_stack();
 	}
@@ -268,11 +266,10 @@ void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 	xtbl->dead = 1;
 	barrier(); /* Announce that @xtbl is dead as soon as possible. */
 
-	if (in_interrupt()) {
+	if (in_interrupt())
 		schedule_work(&xtbl->fxt_death_work);
-	} else {
+	else
 		xtbl_death_work(&xtbl->fxt_death_work);
-	}
 }
 EXPORT_SYMBOL_GPL(xtbl_finish_destroy);
 
@@ -281,9 +278,8 @@ void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty)
 	struct hlist_head *head;
 	struct fib_xid_table *xtbl = __xia_find_xtbl(rtbl, ty, &head);
 	if (!xtbl) {
-		pr_err("Not found XID table %x when running %s. "
-			"Ignoring it, but it's a serious bug!\n",
-			__be32_to_cpu(ty), __FUNCTION__);
+		pr_err("Not found XID table %x when running %s. Ignoring it, but it's a serious bug!\n",
+			__be32_to_cpu(ty), __func__);
 		dump_stack();
 		return;
 	}
@@ -509,13 +505,11 @@ static void rehash_work(struct work_struct *work)
 	rcu_assign_pointer(xtbl->fxt_active_branch, nbranch);
 
 	/* It doesn't return an error here because there's nothing
-         * the caller can do about this error/bug.
+	 * the caller can do about this error/bug.
 	 */
 	c = atomic_read(&xtbl->fxt_count);
 	if (c != mv_count) {
-		pr_err("While rehashing XID table of principal %x, "
-			"%i entries were found, whereas %i are registered! "
-			"Fixing the counter for now, but it's a serious bug!\n",
+		pr_err("While rehashing XID table of principal %x, %i entries were found, whereas %i are registered! Fixing the counter for now, but it's a serious bug!\n",
 			__be32_to_cpu(xtbl->fxt_ppal_type), mv_count, c);
 		dump_stack();
 		/* "Fixing" bug. */
@@ -549,7 +543,7 @@ int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 	/* Grow table as needed. */
 	if (should_rehash && !xtbl->dead)
 		schedule_work(&xtbl->fxt_rehash_work);
-	
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(fib_add_fxid_locked);

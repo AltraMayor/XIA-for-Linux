@@ -98,7 +98,7 @@ static inline void xia_unmark_edge(__u8 *edge)
 #define XIA_NODES_MAX		9
 struct xia_addr {
 	struct xia_row s_row[XIA_NODES_MAX];
-}; 
+};
 
 static inline void xia_null_addr(struct xia_addr *addr)
 {
@@ -110,14 +110,10 @@ static inline int xia_is_nat(xid_type_t ty)
 	return ty == XIDTYPE_NAT;
 }
 
-/* XXX This is only needed for applications.
- * Isn't there a clearer way to do it?
- */
 #ifndef __KERNEL__
-/* sa_family_t is not available to applications. */
-typedef unsigned short sa_family_t;
-/* _K_SS_MAXSIZE is redefined because we want to compile with
- * old kernels installed.
+/* XXX This is only needed for applications.
+ * _K_SS_MAXSIZE is redefined because we want to compile application with
+ * old kernels' headers installed.
  */
 #undef	_K_SS_MAXSIZE
 #define	_K_SS_MAXSIZE 256
@@ -125,12 +121,12 @@ typedef unsigned short sa_family_t;
 
 /* Structure describing an XIA socket address. */
 struct sockaddr_xia {
-  sa_family_t		sxia_family;	/* Address family		*/
-  __u16			__pad0;		/* Ensure 32-bit alignment	*/
-  struct xia_addr	sxia_addr;	/* XIA address			*/
+	__kernel_sa_family_t	sxia_family;	/* Address family	*/
+	__u16		__pad0;		/* Ensure 32-bit alignment	*/
+	struct xia_addr	sxia_addr;	/* XIA address			*/
 
-  /* Pad to size of `struct __kernel_sockaddr_storage'. */
-  __u8			__pad1[_K_SS_MAXSIZE - sizeof(sa_family_t) -
+	/* Pad to size of `struct __kernel_sockaddr_storage'. */
+	__u8		__pad1[_K_SS_MAXSIZE - sizeof(__kernel_sa_family_t) -
 			sizeof(__u16) - sizeof(struct xia_addr)];
 };
 
@@ -163,16 +159,16 @@ struct sockaddr_xia {
 struct xia_sock {
 	/* sk has to be the first member of xia_sock. */
 	struct sock		sk;
-	
+
 	/* Protocol specific data members per socket from here on. */
 
 	/* XID type, XID, and full address of source socket. */
-	xid_type_t 		xia_sxid_type;
+	xid_type_t		xia_sxid_type;
 	u8			xia_sxid[XIA_XID_MAX];
 	struct xia_addr		xia_saddr; /* It's used for transmission. */
 
 	/* XID type, and full address of destination socket. */
-	xid_type_t 		xia_dxid_type;
+	xid_type_t		xia_dxid_type;
 	struct xia_addr		xia_daddr; /* It's used for transmission. */
 };
 
