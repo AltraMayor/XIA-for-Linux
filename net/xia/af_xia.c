@@ -216,7 +216,13 @@ static int xia_getname(struct socket *sock, struct sockaddr *uaddr,
 		else
 			copy_and_shade(&sxia->sxia_addr, &xia->xia_saddr);
 	}
-	memset(sxia->__pad1, 0, sizeof(sxia->__pad1));
+
+	BUILD_BUG_ON(sizeof(sxia->__pad1));
+	/* If the previous build test fails, remove it, and uncomment
+	 * the following line:
+	 * memset(sxia->__pad1, 0, sizeof(sxia->__pad1));
+	 */
+
 	*uaddr_len = sizeof(*sxia);
 	return 0;
 }

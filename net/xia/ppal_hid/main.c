@@ -416,7 +416,7 @@ static int main_input_output(struct sk_buff *skb)
 	 * include/net/neighbour.h:neigh_hh_output.
 	 */
 	/* Fill the device header. */
-	rc = dev_hard_header(skb, skb->dev, skb->protocol, ha->ha,
+	rc = dev_hard_header(skb, skb->dev, ntohs(skb->protocol), ha->ha,
 		dev->dev_addr, skb->len);
 	if (rc < 0)
 		goto drop;
