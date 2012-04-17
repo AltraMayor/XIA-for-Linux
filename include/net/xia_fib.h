@@ -316,7 +316,7 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
  *	that share the same lock table.
  */
 struct fib_xid *xia_find_xid_lock(u32 *pbucket, struct fib_xid_table *xtbl,
-	const u8 *xid);
+	const u8 *xid) __acquires(xip_bucket_lock);
 
 /** xia_iterate_xids - Visit all XIDs in @xtbl.
  * NOTE
@@ -368,7 +368,8 @@ void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
  */
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
 
-void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket);
+void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
+	__releases(xip_bucket_lock);
 
 #endif /* __KERNEL__ */
 #endif /* _NET_XIA_FIB_H */

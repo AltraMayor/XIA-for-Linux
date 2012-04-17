@@ -79,9 +79,12 @@ static inline int is_edge_chosen(__u8 e)
 	return e & XIA_CHOSEN_EDGE;
 }
 
+/* To be used when flipping bytes isn't necessary. */
+#define be32_to_raw_cpu(n)	((__force __u32)(n))
+
 static inline int is_any_edge_chosen(const struct xia_row *row)
 {
-	return row->s_edge.i & XIA_CHOSEN_EDGES;
+	return be32_to_raw_cpu(row->s_edge.i) & XIA_CHOSEN_EDGES;
 }
 
 static inline int is_empty_edge(__u8 e)
@@ -92,7 +95,8 @@ static inline int is_empty_edge(__u8 e)
 static inline int is_it_a_sink(struct xia_row *row, __u8 node, __u8 num_dst)
 {
 	return	node == (num_dst - 1) ||
-		(row->s_edge.i & XIA_EMPTY_EDGES) == XIA_EMPTY_EDGES;
+		(be32_to_raw_cpu(row->s_edge.i) & XIA_EMPTY_EDGES) ==
+			XIA_EMPTY_EDGES;
 }
 
 static inline int is_row_valid(__u8 row, __u8 num_dst)
