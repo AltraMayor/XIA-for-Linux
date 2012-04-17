@@ -26,12 +26,14 @@ static inline u32 hash_bucket(struct fib_xid_table *xtbl, u32 bucket)
 
 /* Don't make this function inline, it's bigger than it looks like! */
 static void bucket_lock(struct fib_xid_table *xtbl, u32 bucket)
+	__acquires(bucket)
 {
 	xia_lock_table_lock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
 }
 
 /* Don't make this function inline, it's bigger than it looks like! */
 static void bucket_unlock(struct fib_xid_table *xtbl, u32 bucket)
+	__releases(bucket)
 {
 	xia_lock_table_unlock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
 }
@@ -57,7 +59,7 @@ static inline struct hlist_head *ppalhead(struct fib_xia_rtable *rtbl,
 						xid_type_t ty)
 {
 	BUILD_BUG_ON_NOT_POWER_OF_2(NUM_PRINCIPAL_HINT);
-	return &rtbl->ppal[ty & (NUM_PRINCIPAL_HINT - 1)];
+	return &rtbl->ppal[__be32_to_cpu(ty) & (NUM_PRINCIPAL_HINT - 1)];
 }
 
 static struct fib_xid_table *__xia_find_xtbl(struct fib_xia_rtable *rtbl,
@@ -364,29 +366,39 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid)
 EXPORT_SYMBOL_GPL(xia_find_xid_rcu);
 
 static u32 fib_lock_bucket_xid(struct fib_xid_table *xtbl, const u8 *xid)
+	__acquires(xip_bucket_lock)
 {
 	u32 bucket;
 	read_lock(&xtbl->fxt_writers_lock);
 	bucket = get_bucket(xid, xtbl->fxt_active_branch->divisor);
 	bucket_lock(xtbl, bucket);
+
+	/* Make sparse happy with only one __acquires. */
+	__release(bucket);
+
 	return bucket;
 }
 
 static inline u32 fib_lock_bucket(struct fib_xid_table *xtbl,
-	struct fib_xid *fxid)
+	struct fib_xid *fxid) __acquires(xip_bucket_lock)
 {
 	return fib_lock_bucket_xid(xtbl, fxid->fx_xid);
 }
 
 void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
+	__releases(xip_bucket_lock)
 {
+
+	/* Make sparse happy with only one __releases. */
+	__acquire(bucket);
+
 	bucket_unlock(xtbl, bucket);
 	read_unlock(&xtbl->fxt_writers_lock);
 }
 EXPORT_SYMBOL_GPL(fib_unlock_bucket);
 
 struct fib_xid *xia_find_xid_lock(u32 *pbucket, struct fib_xid_table *xtbl,
-	const u8 *xid)
+	const u8 *xid) __acquires(xip_bucket_lock)
 {
 	struct hlist_head *head;
 	*pbucket = fib_lock_bucket_xid(xtbl, xid);

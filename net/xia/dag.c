@@ -61,7 +61,7 @@ static inline struct hlist_head *head_per_name(const char *name)
 static inline struct hlist_head *head_per_type(xid_type_t type)
 {
 	BUILD_BUG_ON_NOT_POWER_OF_2(PPAL_MAP_SIZE);
-	return &ppal_head_per_type[type & (PPAL_MAP_SIZE - 1)];
+	return &ppal_head_per_type[__be32_to_cpu(type) & (PPAL_MAP_SIZE - 1)];
 }
 
 int ppal_name_to_type(const char *name, xid_type_t *pty)
@@ -292,7 +292,7 @@ int xia_test_addr(const struct xia_addr *addr)
 		 * friendlier error since it's also XIAEADDR_MULTI_COMPONENTS.
 		 */
 		__be32 all_edges = addr->s_row[n - 1].s_edge.i;
-		if (all_edges == XIA_EMPTY_EDGES)
+		if (be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -XIAEADDR_NO_ENTRY;
 
 		if (visited != ((1U << n) - 1))
