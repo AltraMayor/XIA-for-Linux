@@ -166,13 +166,13 @@ static inline u32 hash_bucket(struct net *net, u32 bucket)
 }
 
 /* Don't make this function inline, it's bigger than it looks like! */
-static void xdst_lock_bucket(struct net *net, u32 bucket)
+static void xdst_lock_bucket(struct net *net, u32 bucket) __acquires(bucket)
 {
 	xia_lock_table_lock(&xia_main_lock_table, hash_bucket(net, bucket));
 }
 
 /* Don't make this function inline, it's bigger than it looks like! */
-static void xdst_unlock_bucket(struct net *net, u32 bucket)
+static void xdst_unlock_bucket(struct net *net, u32 bucket) __releases(bucket)
 {
 	xia_lock_table_unlock(&xia_main_lock_table, hash_bucket(net, bucket));
 }
@@ -469,13 +469,13 @@ static inline u32 hash_anchor(struct xip_dst_anchor *anchor)
 }
 
 /* Don't make this function inline, it's bigger than it looks like! */
-static void lock_anchor(struct xip_dst_anchor *anchor)
+static void lock_anchor(struct xip_dst_anchor *anchor) __acquires(anchor)
 {
 	xia_lock_table_lock(&anchor_locktbl, hash_anchor(anchor));
 }
 
 /* Don't make this function inline, it's bigger than it looks like! */
-static void unlock_anchor(struct xip_dst_anchor *anchor)
+static void unlock_anchor(struct xip_dst_anchor *anchor) __releases(anchor)
 {
 	xia_lock_table_unlock(&anchor_locktbl, hash_anchor(anchor));
 }
@@ -741,7 +741,7 @@ static struct hlist_head principals[NUM_PRINCIPAL_HINT];
 static inline struct hlist_head *ppalhead(xid_type_t ty)
 {
 	BUILD_BUG_ON_NOT_POWER_OF_2(NUM_PRINCIPAL_HINT);
-	return &principals[ty & (NUM_PRINCIPAL_HINT - 1)];
+	return &principals[__be32_to_cpu(ty) & (NUM_PRINCIPAL_HINT - 1)];
 }
 
 static struct xip_route_proc *find_rproc_locked(xid_type_t ty,
