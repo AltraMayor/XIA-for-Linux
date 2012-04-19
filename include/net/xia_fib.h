@@ -51,24 +51,19 @@ struct xia_fib_config {
  * as fist element.
  */
 struct fib_xid {
-	union {
-		/* Pointers to add this struct in bucket lists of
-		 * an XID table.
-		 */
-		struct hlist_node	fx_branch_list[2];
-
-		/* Once function free_fxid is called, the previous struct
-		 * isn't being used anymore, so the following struct is used
-		 * to support function call_rcu instead of synchronize_rcu.
-		 */
-		struct {
-			struct fib_xid_table	*xtbl;
-			struct rcu_head		rcu_head;
-		} dead;
-	} u;
+	/* Pointers to add this struct in bucket lists of an XID table. */
+	struct hlist_node	fx_branch_list[2];
 
 	/* XID */
 	u8			fx_xid[XIA_XID_MAX];
+
+	/* Once function free_fxid is called the following struct is used
+	 * to support function call_rcu instead of synchronize_rcu.
+	 */
+	struct {
+		struct fib_xid_table	*xtbl;
+		struct rcu_head		rcu_head;
+	} dead;
 };
 
 struct fib_xid_buckets {
@@ -141,9 +136,18 @@ struct xia_ppal_rt_eops {
 		struct netlink_callback *cb);
 
 	/* Optional callback to release dependencies.
-	 * Please notice that this callback runs in atomic context.
-	 * If this callback is defined, consider call flush_scheduled_work()
-	 * when unloading your module.
+	 *
+	 * NOTE
+	 *	This callback is always called after an RCU synch, so no
+	 *	RCU reader has access to @fxid.
+	 *
+	 *	This callback may run in atomic context.
+	 *
+	 *	Don't call kfree() on @fxid, it's done once this callback
+	 *	returns.
+	 *
+	 *	If this callback is defined, consider calling
+	 *	flush_scheduled_work() when unloading your module.
 	 */
 	free_fxid_t free_fxid;
 };
