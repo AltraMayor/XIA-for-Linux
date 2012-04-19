@@ -1,12 +1,15 @@
 #ifndef _XIA_H
 #define _XIA_H
 
+#include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/socket.h>
 #include <asm/byteorder.h>
 
 #ifdef __KERNEL__
 #include <net/sock.h>
+#else
+#define __force
 #endif
 
 /*
@@ -31,11 +34,11 @@ struct xia_xid {
 	__u8		xid_id[XIA_XID_MAX];	/* eXpressive IDentifier*/
 };
 
-static inline int are_xids_equal(const u8 *xid1, const u8 *xid2)
+static inline int are_xids_equal(const __u8 *xid1, const __u8 *xid2)
 {
-	const u32 *n1 = (const u32 *)xid1;
-	const u32 *n2 = (const u32 *)xid2;
-	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const u32) * 5);
+	const __u32 *n1 = (const __u32 *)xid1;
+	const __u32 *n2 = (const __u32 *)xid2;
+	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const __u32) * 5);
 	return	n1[0] == n2[0] &&
 		n1[1] == n2[1] &&
 		n1[2] == n2[2] &&
@@ -46,9 +49,9 @@ static inline int are_xids_equal(const u8 *xid1, const u8 *xid2)
 static inline int are_sxids_equal(const struct xia_xid *xid1,
 	const struct xia_xid *xid2)
 {
-	const u64 *n1 = (const u64 *)xid1;
-	const u64 *n2 = (const u64 *)xid2;
-	BUILD_BUG_ON(sizeof(struct xia_xid) != sizeof(const u64) * 3);
+	const __u64 *n1 = (const __u64 *)xid1;
+	const __u64 *n2 = (const __u64 *)xid2;
+	BUILD_BUG_ON(sizeof(struct xia_xid) != sizeof(const __u64) * 3);
 	return	n1[0] == n2[0] &&
 		n1[1] == n2[1] &&
 		n1[2] == n2[2];
@@ -131,10 +134,10 @@ static inline int xia_is_nat(xid_type_t ty)
 }
 
 #ifndef __KERNEL__
-/* XXX This is only needed for applications.
- * _K_SS_MAXSIZE is redefined because we want to compile application with
- * old kernels' headers installed.
+/* XXX This section is only needed to make compiling applications with
+ * old kernels' headers installed easier.
  */
+typedef unsigned short __kernel_sa_family_t;
 #undef	_K_SS_MAXSIZE
 #define	_K_SS_MAXSIZE 256
 #endif
