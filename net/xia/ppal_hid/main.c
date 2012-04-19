@@ -226,12 +226,6 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-/* Don't call this function! Use free_fxid instead. */
-static void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
-{
-	free_mhid((struct fib_xid_hid_main *)fxid);
-}
-
 static const struct xia_ppal_rt_eops hid_rt_eops_main = {
 	.newroute = main_newroute,
 	.delroute = main_delroute,
