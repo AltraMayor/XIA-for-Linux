@@ -6,11 +6,6 @@
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
 
-/* XXX Consider implementing slabs for struct hrdw_addr and
- * struct fib_xid_hid_main to release the memory preasure when priority
- * is GFP_ATOMIC.
- */
-
 /*
  *	Neighbor Table
  */
@@ -28,16 +23,32 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	return ha;
 }
 
-/* ATTENTION! @ha should not be inserted in a list! If so, remove with
- * a del_ha* function.
+/* ATTENTION!
+ *	@ha must not be inserted in a list! If so, remove it with
+ *	a del_ha* function, and use free_ha instead.
+ *
+ *	This function expects that no RCU readers can reach @ha.
  */
-static inline void free_ha(struct hrdw_addr *ha)
+static inline void free_ha_norcu(struct hrdw_addr *ha)
 {
-	/* XXX Once NWP supports removing entries, this must be made atomic! */
-	synchronize_rcu();
 	xdst_free_anchor(&ha->anchor);
 	dev_put(ha->dev);
 	kfree(ha);
+}
+
+/* Don't call this function, use free_ha instead. */
+static void __free_ha(struct rcu_head *head)
+{
+	free_ha_norcu(container_of(head, struct hrdw_addr, rcu_head));
+}
+
+/* ATTENTION!
+ *	@ha should not be inserted in a list! If so, remove it with
+ *	a del_ha* function before calling this function.
+ */
+static inline void free_ha(struct hrdw_addr *ha)
+{
+	call_rcu(&ha->rcu_head, __free_ha);
 }
 
 static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
@@ -276,7 +287,7 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 	goto out;
 
 ha:
-	free_ha(ha);
+	free_ha_norcu(ha);
 out:
 	fib_unlock_bucket(local_xtbl, local_bucket);
 	xtbl_put(local_xtbl);
@@ -311,19 +322,17 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	return 0;
 }
 
-static void free_haddrs(struct list_head *head)
+/* Don't call this function! Use free_fxid instead. */
+void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
+	struct fib_xid_hid_main *mhid = (struct fib_xid_hid_main *)fxid;
 	struct hrdw_addr *pos_ha, *nxt;
-	list_for_each_entry_safe(pos_ha, nxt, head, ha_list) {
+
+	/* Free hardware addresses. */
+	list_for_each_entry_safe(pos_ha, nxt, &mhid->xhm_haddrs, ha_list) {
 		del_ha(pos_ha);
 		free_ha(pos_ha);
 	}
-}
-
-/* Don't call this function! Use free_fxid instead. */
-void free_mhid(struct fib_xid_hid_main *mhid)
-{
-	free_haddrs(&mhid->xhm_haddrs);
 }
 
 /*

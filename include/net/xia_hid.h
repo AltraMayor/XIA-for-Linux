@@ -51,6 +51,7 @@ struct hrdw_addr {
 	struct list_head	hdev_list;
 	struct net_device	*dev;
 	struct xip_dst_anchor	anchor;
+	struct rcu_head		rcu_head;
 
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
@@ -70,7 +71,7 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	struct net_device *dev, const u8 *lladdr);
 
-void free_mhid(struct fib_xid_hid_main *mhid);
+void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
 /*
  *	HID Device
