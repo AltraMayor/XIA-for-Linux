@@ -9,6 +9,7 @@
 #ifdef __KERNEL__
 #include <net/sock.h>
 #else
+#define BUILD_BUG_ON(x)
 #define __force
 #endif
 
@@ -137,7 +138,6 @@ static inline int xia_is_nat(xid_type_t ty)
 /* XXX This section is only needed to make compiling applications with
  * old kernels' headers installed easier.
  */
-typedef unsigned short __kernel_sa_family_t;
 #undef	_K_SS_MAXSIZE
 #define	_K_SS_MAXSIZE 256
 #endif

@@ -183,19 +183,16 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 
 		/* Obtain xid of the first entry in @hdev->neighs.
 		 *
-		 * We use rcu_read_lock() here just to allow one to remove
+		 * We use rcu_read_lock() here to allow one to remove
 		 * entries in parallel.
 		 */
 		rcu_read_lock();
-		if (list_empty(&hdev->neighs)) {
+		ha = list_first_or_null_rcu(&hdev->neighs, struct hrdw_addr,
+			hdev_list);
+		if (!ha) {
 			rcu_read_unlock();
 			break;
 		}
-		/* TODO Review this code once the new list_first_entry_rcu
-		 * gets into the kernel.
-		 */
-		ha = list_first_entry_rcu(&hdev->neighs, struct hrdw_addr,
-			hdev_list);
 		memmove(xid, ha->mhid->xhm_common.fx_xid, XIA_XID_MAX);
 		rcu_read_unlock();
 
@@ -973,16 +970,6 @@ out:
 
 void hid_nwp_exit(void)
 {
-	struct net *net;
-	struct net_device *dev;
-
 	dev_remove_pack(&nwp_packet_type);
 	unregister_netdevice_notifier(&hid_netdev_notifier);
-
-	/* Remove hid_dev from all devices. */
-	rtnl_lock();
-	for_each_net(net)
-		for_each_netdev(net, dev)
-			hdev_destroy(__hid_dev_get_rtnl(dev));
-	rtnl_unlock();
 }
