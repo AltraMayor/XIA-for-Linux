@@ -431,12 +431,6 @@ static int main_output_input(struct sk_buff *skb)
 
 #define main_output_output main_input_output
 
-#define my_list_first_entry_rcu(ptr, type, member) \
-	({struct list_head *__ptr = ptr; \
-	  struct list_head __rcu *__next = list_next_rcu(__ptr); \
-	  likely(__ptr != __next) ? container_of(__next, type, member) : NULL; \
-	})
-
 static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
@@ -444,20 +438,16 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_hid_main *mhid;
 	struct hrdw_addr *ha;
-	int rc;
+	int rc = XRP_ACT_NEXT_EDGE;
 
 	rcu_read_lock();
 	main_xtbl = xia_find_xtbl_rcu(net->xia.main_rtbl, XIDTYPE_HID);
 	BUG_ON(!main_xtbl);
 	mhid = (struct fib_xid_hid_main *)xia_find_xid_rcu(main_xtbl, xid);
-
-	rc = XRP_ACT_NEXT_EDGE;
 	if (!mhid)
 		goto out;
-	/* TODO Review this code once the new list_first_entry_rcu
-	 * gets into the kernel.
-	 */
-	ha = my_list_first_entry_rcu(&mhid->xhm_haddrs, struct hrdw_addr,
+
+	ha = list_first_or_null_rcu(&mhid->xhm_haddrs, struct hrdw_addr,
 		ha_list);
 	if (unlikely(!ha)) {
 		/* @ha may be NULL because we don't have a lock over @mhid,
