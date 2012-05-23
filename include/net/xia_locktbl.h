@@ -45,8 +45,4 @@ void xia_lock_table_finish(struct xia_lock_table *lock_table);
 /* Main lock table to be shared by XIA stack. */
 extern struct xia_lock_table xia_main_lock_table;
 
-/* Initialize main lock table. */
-int init_main_lock_table(int *size_byte, int *n);
-void destroy_main_lock_table(void);
-
 #endif	/* _NET_XIA_LOCKTBL_H */

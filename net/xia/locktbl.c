@@ -54,7 +54,7 @@ EXPORT_SYMBOL_GPL(xia_lock_table_finish);
 struct xia_lock_table xia_main_lock_table __read_mostly;
 EXPORT_SYMBOL_GPL(xia_main_lock_table);
 
-int init_main_lock_table(int *size_byte, int *n)
+int __init init_main_lock_table(int *size_byte, int *n)
 {
 	int rc = xia_lock_table_init(&xia_main_lock_table,
 		XIA_LTBL_SPREAD_LARGE);
