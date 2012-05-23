@@ -149,6 +149,18 @@ static inline struct xip_dst *skb_xdst(struct sk_buff *skb)
 	return dst_xdst(skb_dst(skb));
 }
 
+extern struct dst_ops xip_dst_ops_template;
+static inline struct net *dstops_net(struct dst_ops *ops)
+{
+	BUG_ON(ops == &xip_dst_ops_template);
+	return container_of(ops, struct net, xia.xip_dst_ops);
+}
+
+static inline struct net *xdst_net(struct xip_dst *xdst)
+{
+	return dstops_net(xdst->dst.ops);
+}
+
 /* Possible returns for method @main_deliver in struct xip_route_proc. */
 enum XRP_ACTION {
 	/* XID is unknown, this action forces another edge of an address be
