@@ -74,7 +74,7 @@ static struct neighbour *xip_neigh_lookup(const struct dst_entry *dst,
 	return ERR_PTR(-EINVAL);
 }
 
-static struct dst_ops xip_dst_ops_template __read_mostly = {
+struct dst_ops xip_dst_ops_template __read_mostly = {
 	.family =		AF_XIA,
 	.protocol =		cpu_to_be16(ETH_P_XIP),
 	/* XXX This value should be reconsidered once struct xip_dst_table
@@ -94,6 +94,7 @@ static struct dst_ops xip_dst_ops_template __read_mostly = {
 	.local_out =		__xip_local_out,
 	.neigh_lookup =		xip_neigh_lookup,
 };
+EXPORT_SYMBOL_GPL(xip_dst_ops_template);
 
 static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
 {
@@ -405,17 +406,6 @@ static void clear_xdst_table(struct net *net)
 			dsth = next;
 		}
 	}
-}
-
-static inline struct net *dstops_net(struct dst_ops *ops)
-{
-	BUG_ON(ops == &xip_dst_ops_template);
-	return container_of(ops, struct net, xia.xip_dst_ops);
-}
-
-static inline struct net *xdst_net(struct xip_dst *xdst)
-{
-	return dstops_net(xdst->dst.ops);
 }
 
 /* XXX This is a barebone implementation, more must be done.
