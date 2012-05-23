@@ -273,7 +273,7 @@ int xia_register_pernet_subsys(struct pernet_operations *ops)
 }
 EXPORT_SYMBOL_GPL(xia_register_pernet_subsys);
 
-int xia_fib_init(void)
+int __init xia_fib_init(void)
 {
 	int rc;
 

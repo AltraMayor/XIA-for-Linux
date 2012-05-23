@@ -1203,7 +1203,7 @@ static struct pernet_operations xip_route_net_ops __read_mostly = {
 	.exit = xip_route_net_exit,
 };
 
-int xip_route_init(void)
+int __init xip_route_init(void)
 {
 	int rc;
 
