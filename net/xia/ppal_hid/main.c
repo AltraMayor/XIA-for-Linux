@@ -7,7 +7,7 @@
  */
 
 struct fib_xid_hid_local {
-	struct fib_xid	xhl_common; /* It must be first field! */
+	struct fib_xid	xhl_common;
 
 	/* XXX Adding a list of devs in which the HID is valid, would allow
 	 * a network administrator to enforce physical network isolations;
@@ -16,6 +16,13 @@ struct fib_xid_hid_local {
 
 	struct xip_dst_anchor	xhl_anchor;
 };
+
+static inline struct fib_xid_hid_local *fxid_lhid(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_hid_local, xhl_common)
+		: NULL;
+}
 
 static int local_newroute(struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
@@ -119,7 +126,7 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	xdst_free_anchor(&((struct fib_xid_hid_local *)fxid)->xhl_anchor);
+	xdst_free_anchor(&fxid_lhid(fxid)->xhl_anchor);
 }
 
 static const struct xia_ppal_rt_eops hid_rt_eops_local = {
@@ -167,7 +174,7 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	u32 pid = NETLINK_CB(cb->skb).pid;
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
-	struct fib_xid_hid_main *mhid = (struct fib_xid_hid_main *)fxid;
+	struct fib_xid_hid_main *mhid = fxid_mhid(fxid);
 	struct xia_xid dst;
 	struct nlattr *ha_attr;
 	struct hrdw_addr *pos_ha;
@@ -297,7 +304,7 @@ static int hid_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_HID);
 	BUG_ON(!local_xtbl);
-	lhid = (struct fib_xid_hid_local *)xia_find_xid_rcu(local_xtbl, xid);
+	lhid = fxid_lhid(xia_find_xid_rcu(local_xtbl, xid));
 	if (!lhid) {
 		rcu_read_unlock();
 		return -ENOENT;
@@ -382,7 +389,7 @@ static int main_input_output(struct sk_buff *skb)
 	int rc;
 
 	skb->dev = dev;
-	skb->protocol = htons(ETH_P_XIP);
+	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 
 	if (skb->len > xip_skb_dst_mtu(skb)) {
 		kfree_skb(skb);
@@ -410,7 +417,7 @@ static int main_input_output(struct sk_buff *skb)
 	 * include/net/neighbour.h:neigh_hh_output.
 	 */
 	/* Fill the device header. */
-	rc = dev_hard_header(skb, skb->dev, ntohs(skb->protocol), ha->ha,
+	rc = dev_hard_header(skb, skb->dev, ETH_P_XIP, ha->ha,
 		dev->dev_addr, skb->len);
 	if (rc < 0)
 		goto drop;
@@ -443,7 +450,7 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	main_xtbl = xia_find_xtbl_rcu(net->xia.main_rtbl, XIDTYPE_HID);
 	BUG_ON(!main_xtbl);
-	mhid = (struct fib_xid_hid_main *)xia_find_xid_rcu(main_xtbl, xid);
+	mhid = fxid_mhid(xia_find_xid_rcu(main_xtbl, xid));
 	if (!mhid)
 		goto out;
 

@@ -11,10 +11,17 @@
  */
 
 struct fib_xid_ad_local {
-	struct fib_xid		common; /* It must be first field! */
+	struct fib_xid		common;
 
 	struct xip_dst_anchor   anchor;
 };
+
+static inline struct fib_xid_ad_local *fxid_lad(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_ad_local, common)
+		: NULL;
+}
 
 static int local_newroute(struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
@@ -87,7 +94,7 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	xdst_free_anchor(&((struct fib_xid_ad_local *)fxid)->anchor);
+	xdst_free_anchor(&fxid_lad(fxid)->anchor);
 }
 
 static const struct xia_ppal_rt_eops ad_rt_eops_local = {
@@ -102,9 +109,16 @@ static const struct xia_ppal_rt_eops ad_rt_eops_local = {
  */
 
 struct fib_xid_ad_main {
-	struct fib_xid		common; /* It must be first field! */
+	struct fib_xid		common;
 	struct xia_xid		gw;
 };
+
+static inline struct fib_xid_ad_main *fxid_mad(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_ad_main, common)
+		: NULL;
+}
 
 static int main_newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
@@ -142,7 +156,7 @@ static int main_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	u32 pid = NETLINK_CB(cb->skb).pid;
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
-	struct fib_xid_ad_main *mad = (struct fib_xid_ad_main *)fxid;
+	struct fib_xid_ad_main *mad = fxid_mad(fxid);
 	struct xia_xid dst;
 
 	nlh = nlmsg_put(skb, pid, seq, RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
@@ -182,7 +196,7 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void main_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct fib_xid_ad_main *mad = (struct fib_xid_ad_main *)fxid;
+	struct fib_xid_ad_main *mad = fxid_mad(fxid);
 	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_AD,
 		mad->common.fx_xid, &mad->gw);
 }
@@ -244,7 +258,7 @@ static int ad_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_AD);
 	BUG_ON(!local_xtbl);
-	lad = (struct fib_xid_ad_local *)xia_find_xid_rcu(local_xtbl, xid);
+	lad = fxid_lad(xia_find_xid_rcu(local_xtbl, xid));
 	if (!lad) {
 		rcu_read_unlock();
 		return -ENOENT;
@@ -269,7 +283,7 @@ static int ad_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	main_xtbl = xia_find_xtbl_rcu(net->xia.main_rtbl, XIDTYPE_AD);
 	BUG_ON(!main_xtbl);
-	mad = (struct fib_xid_ad_main *)xia_find_xid_rcu(main_xtbl, xid);
+	mad = fxid_mad(xia_find_xid_rcu(main_xtbl, xid));
 
 	rc = XRP_ACT_NEXT_EDGE;
 	if (!mad)

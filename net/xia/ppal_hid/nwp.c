@@ -197,8 +197,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 		rcu_read_unlock();
 
 		/* We don't lock hdev->neigh_lock to avoid deadlock. */
-		mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(&bucket,
-			xtbl, xid);
+		mhid = fxid_mhid(xia_find_xid_lock(&bucket, xtbl, xid));
 		if (mhid) {
 			/* We must test mhid != NULL because
 			 * we didn't hold a lock before the find.
@@ -256,8 +255,7 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 	if (!ha)
 		goto out;
 
-	mhid = (struct fib_xid_hid_main *)
-		xia_find_xid_lock(&main_bucket, xtbl, xid);
+	mhid = fxid_mhid(xia_find_xid_lock(&main_bucket, xtbl, xid));
 	if (mhid) {
 		rc = add_ha(mhid, ha);
 		fib_unlock_bucket(xtbl, main_bucket);
@@ -298,7 +296,7 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	struct fib_xid_hid_main *mhid;
 	int rc;
 
-	mhid = (struct fib_xid_hid_main *)xia_find_xid_lock(&bucket, xtbl, xid);
+	mhid = fxid_mhid(xia_find_xid_lock(&bucket, xtbl, xid));
 	if (!mhid) {
 		fib_unlock_bucket(xtbl, bucket);
 		return -ENOENT;
@@ -322,7 +320,7 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 /* Don't call this function! Use free_fxid instead. */
 void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct fib_xid_hid_main *mhid = (struct fib_xid_hid_main *)fxid;
+	struct fib_xid_hid_main *mhid = fxid_mhid(fxid);
 	struct hrdw_addr *pos_ha, *nxt;
 
 	/* Free hardware addresses. */
@@ -459,7 +457,7 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	skb_reset_network_header(skb);
 	nwp = (struct announcement_hdr *)skb_put(skb, hdr_len);
 	skb->dev = dev;
-	skb->protocol = htons(ETH_P_NWP);
+	skb->protocol = __cpu_to_be16(ETH_P_NWP);
 
 	/* Fill out the NWP header. */
 	nwp->version	= NWP_VERSION;
@@ -597,7 +595,7 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	skb_reset_network_header(skb);
 	nwp = (struct neighs_hdr *)skb_put(skb, hdr_len);
 	skb->dev = dev;
-	skb->protocol = htons(ETH_P_NWP);
+	skb->protocol = __cpu_to_be16(ETH_P_NWP);
 
 	/* Fill out the NWP header. */
 	nwp->version	= NWP_VERSION;
