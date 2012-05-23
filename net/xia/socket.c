@@ -1,24 +1,5 @@
-/*
- * XIA		An implementation of the XIA protocol suite for the LINUX
- *		operating system.  XIA is implemented using the BSD Socket
- *		interface as the means of communication with the user level.
- *
- *		PF_XIA protocol family socket handler.
- *
- * Author:	Michel Machado, <michel@digirati.com.br>
- */
-
-#include <linux/init.h>
 #include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/net.h>
-#include <linux/socket.h>
-#include <net/xia.h>
-#include <net/xia_locktbl.h>
-#include <net/xia_fib.h>
-#include <net/xia_route.h>
 #include <net/xia_dag.h>
-#include <net/sock.h>
 
 static void xia_sock_destruct(struct sock *sk)
 {
@@ -85,6 +66,8 @@ static int xia_release(struct socket *sock)
 	}
 	return 0;
 }
+/* TODO review all exported symbols that are static! */
+EXPORT_SYMBOL_GPL(xia_release);
 
 /* XXX This code should be moved to an SID module. */
 #define XIDTYPE_SID (__cpu_to_be32(0x13))
@@ -152,6 +135,7 @@ out_release_sk:
 out:
 	return rc;
 }
+EXPORT_SYMBOL_GPL(xia_bind);
 
 static int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 		int addr_len, int flags)
@@ -168,6 +152,7 @@ static int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
 }
+EXPORT_SYMBOL_GPL(xia_dgram_connect);
 
 /** copy_and_shade - Copy @src to @dst. The not used rows in @src are
  *  zeroed (shaded) in dst.
@@ -226,6 +211,7 @@ static int xia_getname(struct socket *sock, struct sockaddr *uaddr,
 	*uaddr_len = sizeof(*sxia);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xia_getname);
 
 static int xia_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
@@ -235,6 +221,7 @@ static int xia_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		rc = sk->sk_prot->ioctl(sk, cmd, arg);
 	return rc;
 }
+EXPORT_SYMBOL_GPL(xia_ioctl);
 
 static int xia_shutdown(struct socket *sock, int how)
 {
@@ -264,6 +251,7 @@ static int xia_shutdown(struct socket *sock, int how)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xia_shutdown);
 
 static int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
 		struct msghdr *msg, size_t size)
@@ -277,6 +265,7 @@ static int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	return sk->sk_prot->sendmsg(iocb, sk, msg, size);
 }
+EXPORT_SYMBOL_GPL(xia_sendmsg);
 
 static int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 		struct msghdr *msg, size_t size, int flags)
@@ -293,8 +282,9 @@ static int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 		msg->msg_namelen = addr_len;
 	return rc;
 }
+EXPORT_SYMBOL_GPL(xia_recvmsg);
 
-static ssize_t	xia_sendpage(struct socket *sock, struct page *page,
+static ssize_t xia_sendpage(struct socket *sock, struct page *page,
 		int offset, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
@@ -308,31 +298,7 @@ static ssize_t	xia_sendpage(struct socket *sock, struct page *page,
 		return sk->sk_prot->sendpage(sk, page, offset, size, flags);
 	return sock_no_sendpage(sock, page, offset, size, flags);
 }
-
-/*
- * For SOCK_RAW sockets; should be the same as xia_dgram_ops but without
- * XXX udp_poll
- */
-static const struct proto_ops xia_sockraw_ops = {
-	.family		   = PF_XIA,
-	.owner		   = THIS_MODULE,
-	.release	   = xia_release,
-	.bind		   = xia_bind,
-	.connect	   = xia_dgram_connect,
-	.socketpair	   = sock_no_socketpair,
-	.accept		   = sock_no_accept,
-	.getname	   = xia_getname,
-	.poll		   = datagram_poll,
-	.ioctl		   = xia_ioctl,
-	.listen		   = sock_no_listen,
-	.shutdown	   = xia_shutdown,
-	.setsockopt	   = sock_common_setsockopt,
-	.getsockopt	   = sock_common_getsockopt,
-	.sendmsg	   = xia_sendmsg,
-	.recvmsg	   = xia_recvmsg,
-	.mmap		   = sock_no_mmap,
-	.sendpage	   = xia_sendpage,
-};
+EXPORT_SYMBOL_GPL(xia_sendpage);
 
 /* XXX These constants must go away in order to support loadable principals. */
 /* XIP protocols. */
@@ -371,10 +337,11 @@ static int xia_create(struct net *net, struct socket *sock,
 	if (!net_eq(net, &init_net))
 		goto out;
 
-	WARN_ON(xia_raw_prot.slab == NULL);
+	/* TODO WARN_ON(xia_raw_prot.slab == NULL); */
 
 	rc = -ENOBUFS;
-	sk = sk_alloc(net, PF_XIA, GFP_KERNEL, &xia_raw_prot);
+	sk = NULL; /* TODO See line below. */
+	/* TODO sk = sk_alloc(net, PF_XIA, GFP_KERNEL, &xia_raw_prot); */
 	if (!sk)
 		goto out;
 
@@ -384,7 +351,7 @@ static int xia_create(struct net *net, struct socket *sock,
 	sk->sk_backlog_rcv = sk->sk_prot->backlog_rcv;
 	sk->sk_no_check = 1;		/* Checksum off by default */
 	sk_refcnt_debug_inc(sk);
-	sock->ops = &xia_sockraw_ops;
+	/* TODO sock->ops = &xia_sockraw_ops; */
 
 	xia = xia_sk(sk);
 	xia->xia_sxid_type = __cpu_to_be32(XIDTYPE_NAT);
@@ -409,90 +376,12 @@ static const struct net_proto_family xia_family_ops = {
 	.owner	= THIS_MODULE,
 };
 
-/*
- * xia_init - this function is called when the module is loaded.
- * Returns zero if successfully loaded, nonzero otherwise.
- */
-static int __init xia_init(void)
+int __init xia_socket_init(void)
 {
-	int rc, size, n;
-
-	rc = init_main_lock_table(&size, &n);
-	if (rc)
-		goto out;
-
-	/* Add Not A Type principal. */
-	rc = ppal_add_map("nat", XIDTYPE_NAT);
-	if (rc)
-		goto locks;
-
-	rc = xia_fib_init();
-	if (rc)
-		goto nat;
-
-	rc = xip_route_init();
-	if (rc)
-		goto fib;
-
-	rc = proto_register(&xia_raw_prot, 1);
-	if (rc)
-		goto route;
-
-	/*
-	 *	Tell SOCKET that we are alive...
-	 */
-	rc = sock_register(&xia_family_ops);
-	if (rc)
-		goto raw_prot;
-
-	pr_info("XIA lock table entries: %i = 2^%i (%i bytes)\n",
-		n, ilog2(n), size);
-	pr_alert("XIA loaded\n");
-	goto out;
-
-/*
-sock:
-	sock_unregister(PF_XIA);
-*/
-raw_prot:
-	proto_unregister(&xia_raw_prot);
-route:
-	xip_route_exit();
-fib:
-	xia_fib_exit();
-nat:
-	ppal_del_map(XIDTYPE_NAT);
-locks:
-	destroy_main_lock_table();
-out:
-	return rc;
+	return sock_register(&xia_family_ops);
 }
 
-/*
- * xia_exit - this function is called when the modlule is removed.
- */
-static void __exit xia_exit(void)
+void xia_socket_exit(void)
 {
 	sock_unregister(PF_XIA);
-	proto_unregister(&xia_raw_prot);
-	xip_route_exit();
-	xia_fib_exit();
-	ppal_del_map(XIDTYPE_NAT);
-
-	/* The order of the following two calls is critical to properly
-	 * release structures that use call_rcu, or work queues.
-	 */
-	rcu_barrier();
-	flush_scheduled_work();
-
-	destroy_main_lock_table();
-	pr_alert("XIA UNloaded\n");
 }
-
-module_init(xia_init);
-module_exit(xia_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Michel Machado <michel@digirati.com.br>");
-MODULE_DESCRIPTION("XIA Network Stack");
-MODULE_ALIAS_NETPROTO(PF_XIA);
