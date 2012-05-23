@@ -61,9 +61,16 @@ struct hrdw_addr {
 };
 
 struct fib_xid_hid_main {
-	struct fib_xid		xhm_common; /* It must be first field! */
+	struct fib_xid		xhm_common;
 	struct list_head	xhm_haddrs;
 };
+
+static inline struct fib_xid_hid_main *fxid_mhid(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_hid_main, xhm_common)
+		: NULL;
+}
 
 int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 	struct net_device *dev, const u8 *lladdr);
