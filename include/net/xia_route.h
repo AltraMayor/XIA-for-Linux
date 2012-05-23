@@ -210,8 +210,4 @@ int xip_add_router(struct xip_route_proc *rproc);
 /** xip_add_router - Remove @rproc from XIA routing mechanism. */
 void xip_del_router(struct xip_route_proc *rproc);
 
-/* Initilization functions. */
-int xip_route_init(void);
-void xip_route_exit(void);
-
 #endif /* _NET_XIA_ROUTE_H */
