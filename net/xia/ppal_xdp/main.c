@@ -1,7 +1,10 @@
 #include <linux/module.h>
+#include <asm/ioctls.h>
+#include <net/tcp_states.h>
 #include <net/xia_fib.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
+#include <net/xia_socket.h>
 
 /* XDP Principal */
 #define XIDTYPE_XDP (__cpu_to_be32(0x12))
@@ -12,7 +15,7 @@
 
 struct fib_xid_xdp_local {
 	struct fib_xid		common;
-	struct sock		sk;
+	struct sock		*sk;
 	struct xip_dst_anchor   anchor;
 };
 
@@ -75,7 +78,9 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	xdst_free_anchor(&fxid_lxdp(fxid)->anchor);
+	struct fib_xid_xdp_local *lxdp = fxid_lxdp(fxid);
+	xdst_free_anchor(&lxdp->anchor);
+	sock_put(lxdp->sk);
 }
 
 static const struct xia_ppal_rt_eops xdp_rt_eops_local = {
@@ -366,6 +371,252 @@ static struct xip_route_proc xdp_rt_proc __read_mostly = {
 	.main_deliver = xdp_main_deliver,
 };
 
+/*
+ *	Socket API
+ */
+
+static void xdp_close(struct sock *sk, long timeout)
+{
+	/* TODO How to release struct fib_xid_xdp_local if the socket is
+	 * bound? What about the DST entry in struc xia_sock?
+	 */
+	sk_common_release(sk);
+}
+
+static int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty)
+{
+	int i;
+	int n = xia_test_addr(&addr->sxia_addr);
+
+	if (n < 1) {
+		/* Invalid address since it's empty. */
+		return -EINVAL;
+	}
+
+	/* Verify the type of all sinks. */
+	for (i = 0; i < n; i++) {
+		struct xia_row *row = &addr->sxia_addr.s_row[i];
+		if (is_it_a_sink(row, i, n) && row->s_xid.xid_type != ty)
+			return -EINVAL;
+	}
+
+	return n;
+}
+
+static int xdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+{
+	DECLARE_SOCKADDR(struct sockaddr_xia *, daddr, uaddr);
+	struct xia_sock *xia;
+	struct xip_dst *xdst;
+	int rc, n;
+
+	/* XDP isn't meant as a tool to poke other principals, thus
+	 * enforce that all sinks are XIDTYPE_XDP.
+	 */
+	rc = check_type_of_all_sinks(daddr, XIDTYPE_XDP);
+	if (rc < 0)
+		goto out;
+	n = rc;
+
+	xia = xia_sk(sk);
+	sk_dst_reset(sk);
+
+	lock_sock(sk);
+
+	/* Set destination. */
+	xia->xia_dlast_node = XIA_ENTRY_NODE_INDEX;
+	memmove(&xia->xia_daddr, daddr, sizeof(xia->xia_daddr));
+	xdst = xip_mark_addr_and_get_dst(sock_net(sk), xia->xia_daddr.s_row,
+		n, &xia->xia_dlast_node, 0);
+	if (IS_ERR(xdst)) {
+		rc = PTR_ERR(xdst);
+		goto out_release_sk;
+	}
+	xia->xia_daddr_set = 1;
+
+	sk->sk_state = TCP_ESTABLISHED;
+	sk_dst_set(sk, &xdst->dst);
+	rc = 0;
+
+out_release_sk:
+	release_sock(sk);
+out:
+	return rc;
+}
+
+static int xdp_disconnect(struct sock *sk, int flags)
+{
+	struct xia_sock *xia = xia_sk(sk);
+	sk->sk_state = TCP_CLOSE;
+	xia->xia_daddr_set = 0;
+	sock_rps_reset_rxhash(sk);	/* XXX Review RPS calls. */
+	sk_dst_reset(sk);
+	return 0;
+}
+
+/**
+ * first_packet_length	- return length of first packet in receive queue
+ *	@sk: socket
+ *
+ *	Returns the length of found skb, or 0 if none is found.
+ */
+static unsigned int first_packet_length(struct sock *sk)
+{
+	struct sk_buff_head *rcvq = &sk->sk_receive_queue;
+	struct sk_buff *skb;
+	unsigned int res;
+
+	spin_lock_bh(&rcvq->lock);
+	skb = skb_peek(rcvq);
+	res = skb ? skb->len : 0;
+	spin_unlock_bh(&rcvq->lock);
+
+	return res;
+}
+
+static int xdp_ioctl(struct sock *sk, int cmd, unsigned long arg)
+{
+	switch (cmd) {
+	case SIOCOUTQ:
+	{
+		int amount = sk_wmem_alloc_get(sk);
+		return put_user(amount, (int __user *)arg);
+	}
+
+	case SIOCINQ:
+	{
+		unsigned int amount = first_packet_length(sk);
+		return put_user(amount, (int __user *)arg);
+	}
+
+	default:
+		return -ENOIOCTLCMD;
+
+	}
+}
+
+static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+{
+	struct xia_sock *xia = xia_sk(sk);
+
+	/* Make sure we are allowed to bind here. */
+	if (xia->xia_ssink->s_xid.xid_type != XIDTYPE_XDP)
+		return -EXTYNOSUPPORT;
+
+	if (sk->sk_prot->get_port(sk, 0))
+		return -EADDRINUSE;
+
+	return 0;
+}
+
+/* The second parameter of this method is ignored because XIA
+ * doesn't use port numbers.
+ */
+static int xdp_get_port(struct sock *sk, unsigned short snum)
+{
+	struct xia_sock *xia = xia_sk(sk);
+	struct net *net = sock_net(sk);
+	struct fib_xid_xdp_local *lxdp;
+	struct fib_xid_table *local_xtbl;
+	int rc;
+
+	BUG_ON(xia->xia_ssink);
+
+	rc = -ENOMEM;
+	lxdp = kzalloc(sizeof(*lxdp), GFP_KERNEL);
+	if (!lxdp)
+		goto out;
+	init_fxid(&lxdp->common, xia->xia_ssink->s_xid.xid_id);
+	lxdp->sk = sk;
+	sock_hold(sk); /* TODO UDP doesn't seem to use it! See get_port. */
+
+	rcu_read_lock();
+	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
+	BUG_ON(!local_xtbl);
+	rc = fib_add_fxid(local_xtbl, &lxdp->common);
+	if (rc)
+		goto lxdp;
+	goto out_rcu;
+
+lxdp:
+	free_fxid(local_xtbl, &lxdp->common);
+out_rcu:
+	rcu_read_unlock();
+out:
+	return rc;
+}
+
+static struct proto xdp_prot __read_mostly = {
+	.name			= "XDP",
+	.owner			= THIS_MODULE,
+	.close			= xdp_close,
+	.connect		= xdp_connect,
+	.disconnect		= xdp_disconnect,
+	.ioctl			= xdp_ioctl,
+	/* TODO
+	.destroy
+	.setsockopt
+	.getsockopt
+	.sendmsg
+	.recvmsg
+	.sendpage
+	*/
+	.bind			= xdp_bind,
+	/* TODO
+	.backlog_rcv
+	.hash
+	.unhash
+	.rehash
+	*/
+	.get_port		= xdp_get_port,
+	/* TODO
+	.clear_sk
+	.memory_allocated	= 
+	.sysctl_mem
+	.sysctl_wmem
+	.sysctl_rmem
+	.obj_size
+	.slab_flags
+	.h.udp_table
+	*/
+};
+
+static const struct proto_ops xdp_dgram_ops = {
+	.family		= PF_XIA,
+	.owner		= THIS_MODULE,
+	.release	= xia_release,
+	.bind		= xia_bind,
+	.connect	= xia_dgram_connect,
+	.socketpair	= sock_no_socketpair,
+	.accept		= sock_no_accept,
+	.getname	= xia_getname,
+	.poll		= datagram_poll,
+	.ioctl		= xia_ioctl,
+	.listen		= sock_no_listen,
+	.shutdown	= xia_shutdown,
+	.setsockopt	= sock_common_setsockopt,
+	.getsockopt	= sock_common_getsockopt,
+	.sendmsg	= xia_sendmsg,
+	.recvmsg	= xia_recvmsg,
+	.mmap		= sock_no_mmap,
+	.sendpage	= xia_sendpage,
+	/* XXX Does one need support to CONFIG_COMPAT? */
+};
+
+static const struct xia_socket_type_proc xdp_dgram = {
+	.prot = &xdp_prot,
+	.ops = &xdp_dgram_ops,
+};
+
+static struct xia_socket_proc xdp_sock_proc __read_mostly = {
+	.ppal_type = XIDTYPE_XDP,
+	.procs[SOCK_DGRAM] = &xdp_dgram,
+};
+
+/*
+ *	Main
+ */
+
 static int __init xia_xdp_init(void)
 {
 	int rc;
@@ -382,9 +633,15 @@ static int __init xia_xdp_init(void)
 	if (rc)
 		goto route;
 
+	rc = xia_add_socket(&xdp_sock_proc);
+	if (rc)
+		goto map;
+
 	pr_alert("XIA Principal XDP loaded\n");
 	goto out;
 
+map:
+	ppal_del_map(XIDTYPE_XDP);
 route:
 	xip_del_router(&xdp_rt_proc);
 net:
@@ -398,6 +655,7 @@ out:
  */
 static void __exit xia_xdp_exit(void)
 {
+	xia_del_socket(&xdp_sock_proc);
 	ppal_del_map(XIDTYPE_XDP);
 	xip_del_router(&xdp_rt_proc);
 	xia_unregister_pernet_subsys(&xdp_net_ops);
