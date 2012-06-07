@@ -1072,8 +1072,8 @@ out:
 	return xdst;
 }
 
-static int xip_route(struct sk_buff *skb, struct xia_row *addr,
-		int num_dst, u8 *plast_node, int input)
+struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
+	struct xia_row *addr, int num_dst, u8 *plast_node, int input)
 {
 	int last_node = *plast_node;
 	struct xia_row *last_row;
@@ -1087,15 +1087,25 @@ static int xip_route(struct sk_buff *skb, struct xia_row *addr,
 		/* This case is undefined in XIA,
 		 * so we assume that @addr is broken.
 		 */
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 	}
 
 	/* Inductive step. */
-	xdst = choose_an_edge(skb_net(skb), addr, num_dst, plast_node,
-		last_row, input);
+	xdst = choose_an_edge(net, addr, num_dst, plast_node, last_row, input);
 	if (unlikely(!xdst))
-		return -EINVAL;
+		return ERR_PTR(-ENETUNREACH);
 
+	return xdst;
+}
+EXPORT_SYMBOL_GPL(xip_mark_addr_and_get_dst);
+
+static inline int xip_route(struct sk_buff *skb, struct xia_row *addr,
+		int num_dst, u8 *plast_node, int input)
+{
+	struct xip_dst *xdst = xip_mark_addr_and_get_dst(skb_net(skb),
+		addr, num_dst, plast_node, input);
+	if (IS_ERR(xdst))
+		return PTR_ERR(xdst);
 	skb_dst_set(skb, &xdst->dst);
 	return 0;
 }

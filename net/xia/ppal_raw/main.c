@@ -1,4 +1,24 @@
 /*
+ * Raw socket
+ */
+
+struct xia_raw_sock {
+	/* xia_sock has to be the first member */
+	struct xia_sock		xia;
+
+	/* Raw specific data members per socket from here on. */
+
+	/* EMPTY */
+};
+
+static inline struct xia_raw_sock *xia_raw_sk(const struct sock *sk)
+{
+	return (struct xia_raw_sock *)sk;
+}
+
+extern struct proto xia_raw_prot;
+
+/*
  * For SOCK_RAW sockets; should be the same as xia_dgram_ops but without
  * XXX udp_poll
  */
