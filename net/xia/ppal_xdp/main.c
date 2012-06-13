@@ -293,17 +293,8 @@ static int local_output_output(struct sk_buff *skb)
 		return -1;
 	}
 
-	/* Deliver @skb to its socket.
-	 * It's based on ipv4/ip_output.c:ip_dev_loopback_xmit.
-	 * XXX Adopt dev_loopback_xmit.
-	 */
-	skb_reset_mac_header(skb);
-	__skb_pull(skb, skb_network_offset(skb));
-	skb->pkt_type = PACKET_LOOPBACK;
-	WARN_ON(!xdst);
-	skb_dst_force(skb);
-	netif_rx_ni(skb);
-	return 0;
+	/* Deliver @skb to its socket. */
+	return dev_loopback_xmit(skb);
 }
 
 static int xdp_local_deliver(struct xip_route_proc *rproc, struct net *net,
