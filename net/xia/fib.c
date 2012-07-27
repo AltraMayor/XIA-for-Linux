@@ -189,13 +189,8 @@ static void free_fxid_rcu(struct rcu_head *head)
 	struct fib_xid *fxid =
 		container_of(head, struct fib_xid, dead.rcu_head);
 	struct fib_xid_table *xtbl = fxid->dead.xtbl;
-	free_fxid_t f = xtbl->fxt_eops->free_fxid;
-
-	if (f)
-		f(xtbl, fxid);
-
+	xtbl->fxt_eops->free_fxid(xtbl, fxid);
 	xtbl_put(xtbl);
-	kfree(fxid);
 }
 
 void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
@@ -205,15 +200,6 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	call_rcu(&fxid->dead.rcu_head, free_fxid_rcu);
 }
 EXPORT_SYMBOL_GPL(free_fxid);
-
-void free_fxid_norcu(struct fib_xid_table *xtbl, struct fib_xid *fxid)
-{
-	free_fxid_t f = xtbl->fxt_eops->free_fxid;
-	if (f)
-		f(xtbl, fxid);
-	kfree(fxid);
-}
-EXPORT_SYMBOL_GPL(free_fxid_norcu);
 
 static void xtbl_death_work(struct work_struct *work)
 {

@@ -106,10 +106,11 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	/* TODO It is buggy because we can't use kfree() afterwards! */
 	struct fib_xid_xdp_local *lxdp = fxid_lxdp(fxid);
 	xdst_free_anchor(&lxdp->anchor);
 	sock_put(&lxdp->xia_sk.sk);
+
+	/* DO NOT deallocate memory here because @fxid is only part of @lxdp. */
 }
 
 static const struct xia_ppal_rt_eops xdp_rt_eops_local = {
@@ -214,6 +215,7 @@ static void main_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	struct fib_xid_xdp_main *mxdp = fxid_mxdp(fxid);
 	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_XDP,
 		mxdp->common.fx_xid, &mxdp->gw);
+	kfree(mxdp);
 }
 
 static const struct xia_ppal_rt_eops xdp_rt_eops_main = {
