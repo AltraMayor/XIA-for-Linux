@@ -117,7 +117,7 @@ static inline int xtbl_branch_index(struct fib_xid_table *xtbl,
 		BUG();
 }
 
-static inline struct net *xtbl_net(struct fib_xid_table *xtbl)
+static inline struct net *xtbl_net(const struct fib_xid_table *xtbl)
 {
 	return xtbl->fxt_net;
 }
@@ -135,19 +135,20 @@ struct xia_ppal_rt_eops {
 		struct fib_xia_rtable *rtbl, struct sk_buff *skb,
 		struct netlink_callback *cb);
 
-	/* Optional callback to release dependencies.
+	/* Callback to release dependencies.
 	 *
 	 * NOTE
-	 *	This callback is always called after an RCU synch, so no
-	 *	RCU reader has access to @fxid.
+	 *	This callback is always called after an RCU synch, or some
+	 *	other guarantee such that no RCU reader has access to @fxid.
 	 *
 	 *	This callback may run in atomic context.
 	 *
-	 *	Don't call kfree() on @fxid, it's done once this callback
-	 *	returns.
+	 *	This callback must deallocate @fxid's memory, that is,
+	 *	call a function	like kfree() on @fxid.
 	 *
-	 *	If this callback is defined, consider calling
-	 *	flush_scheduled_work() when unloading your module.
+	 *	If this callback is defined with a function in kernel
+	 *	module, consider calling flush_scheduled_work() when unloading
+	 *	the module.
 	 */
 	free_fxid_t free_fxid;
 };
@@ -293,7 +294,11 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
  *	readers, for example calling synchronize_rcu(), otherwise use
  *	free_fxid.
  */
-void free_fxid_norcu(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+static inline void free_fxid_norcu(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid)
+{
+	xtbl->fxt_eops->free_fxid(xtbl, fxid);
+}
 
 /** xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
  * RETURN

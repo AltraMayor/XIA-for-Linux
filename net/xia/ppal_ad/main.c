@@ -94,7 +94,9 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	xdst_free_anchor(&fxid_lad(fxid)->anchor);
+	struct fib_xid_ad_local *lad = fxid_lad(fxid);
+	xdst_free_anchor(&lad->anchor);
+	kfree(lad);
 }
 
 static const struct xia_ppal_rt_eops ad_rt_eops_local = {
@@ -199,6 +201,7 @@ static void main_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	struct fib_xid_ad_main *mad = fxid_mad(fxid);
 	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_AD,
 		mad->common.fx_xid, &mad->gw);
+	kfree(mad);
 }
 
 static const struct xia_ppal_rt_eops ad_rt_eops_main = {

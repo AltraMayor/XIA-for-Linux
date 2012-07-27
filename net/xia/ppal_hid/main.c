@@ -126,7 +126,9 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	xdst_free_anchor(&fxid_lhid(fxid)->xhl_anchor);
+	struct fib_xid_hid_local *lhid = fxid_lhid(fxid);
+	xdst_free_anchor(&lhid->xhl_anchor);
+	kfree(lhid);
 }
 
 static const struct xia_ppal_rt_eops hid_rt_eops_local = {

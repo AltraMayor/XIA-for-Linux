@@ -328,6 +328,9 @@ void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 		del_ha(pos_ha);
 		free_ha(pos_ha);
 	}
+
+	/* TODO Doesn't ha refer to mhid? */
+	kfree(mhid);
 }
 
 /*
