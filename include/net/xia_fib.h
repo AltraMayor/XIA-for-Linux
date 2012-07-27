@@ -255,7 +255,7 @@ void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
 struct fib_xid_table *xia_find_xtbl_rcu(struct fib_xia_rtable *rtbl,
 	xid_type_t ty);
 
-/* Don't call this function directly, use xtbl_put instead. */
+/* Don't call this function directly, call xtbl_put() instead. */
 void xtbl_finish_destroy(struct fib_xid_table *xtbl);
 
 static inline void xtbl_put(struct fib_xid_table *xtbl)
