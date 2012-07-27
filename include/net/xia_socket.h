@@ -7,26 +7,50 @@
 
 /* Implementation of a type/protocol pair. */
 struct xia_socket_type_proc {
-	struct proto		*prot;
+	struct proto		*proto;
+	bool			alloc_slab;
 	const struct proto_ops	*ops;
 };
 
 /* Socket processing per principal. */
 struct xia_socket_proc {
+	const char		*name;
+
 	/* Attachment to bucket list. */
 	struct hlist_node	list;
 
-	/* Principal type. */
-	xid_type_t		ppal_type;
+	/* This field is used to check that xia_del_socket_begin() and
+	 * xia_del_socket_end() are called in order.
+	 *
+	 * 0 -> It hasn't been added by xia_add_socket()
+	 * 1 -> It was added by xia_add_socket()
+	 * 2 -> xia_del_socket_begin() was called
+	 * 3 -> xia_del_socket_end() was called
+	 */
+	int			dead;
 
+	/* Principal type. */
+	const xid_type_t	ppal_type;
+
+	/* Supported socket types. */
 	const struct xia_socket_type_proc *procs[SOCK_MAX];
+
+	/* Counter for all socket types in this struct. */
+	struct percpu_counter	sockets_allocated;
 };
 
 /* Registering and unregistering new socket interfaces for PF_XIA family. */
 int xia_add_socket(struct xia_socket_proc *sproc);
-void xia_del_socket(struct xia_socket_proc *sproc);
 
-/* Support functions for principals */
+/* Drop @sproc as an option for creating new sockets. */
+void xia_del_socket_begin(struct xia_socket_proc *sproc);
+/* Unregister @sprocs->procs[i]->proto for all i. */
+void xia_del_socket_end(struct xia_socket_proc *sproc);
+
+/*
+ *	Support functions for principals
+ */
+
 int xia_release(struct socket *sock);
 int xia_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len);
 int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
@@ -42,8 +66,38 @@ int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 ssize_t xia_sendpage(struct socket *sock, struct page *page,
 	int offset, size_t size, int flags);
 
+static inline int xip_setsockopt(struct sock *sk, int level, int optname,
+	char __user *optval, unsigned int optlen)
+{
+	/* TODO Implement some options that make sense to XIA. */
+	return -ENOPROTOOPT;
+}
+
+static inline int xip_getsockopt(struct sock *sk, int level, int optname,
+	char __user *optval, int __user *optlen)
+{
+	/* TODO Implement some options that make sense to XIA.
+	 * See net/ipv4/ip_sockglue.c:do_ip_getsockopt and
+	 * net/ipv4/ip_sockglue.c:ip_getsockopt.
+	 */
+	return -ENOPROTOOPT;
+}
+
+/** copy_and_shade_xia_addr - Copy @src to @dst. The not used rows in @src are
+ *				zeroed (shaded) in dst.
+ *
+ *  This function is useful when passing an XIA address to userland because
+ *  it ensures that there's no information leak due to uninitialized memory.
+ */
+void copy_and_shade_xia_addr(struct xia_addr *dst, const struct xia_addr *src);
+
+/*
+ *	XIA Sock
+ */
+
 /* All XIA sockets should `inherit' from this struct. */
 struct xia_sock {
+	/* struct sock must be the first member to work with sk_alloc(). */
 	struct sock		sk;
 
 	/* General XIA socket data members per socket from here on. */
@@ -74,6 +128,11 @@ static inline struct xia_sock *xia_sk(const struct sock *sk)
 	return likely(sk)
 		? container_of(sk, struct xia_sock, sk)
 		: NULL;
+}
+
+static inline bool xia_sk_bound(const struct xia_sock *xia)
+{
+	return !!xia->xia_ssink;
 }
 
 #endif /* _NET_XIA_SOCKET_H */

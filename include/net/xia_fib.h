@@ -268,6 +268,7 @@ static inline void xtbl_hold(struct fib_xid_table *xtbl)
 	atomic_inc(&xtbl->refcnt);
 }
 
+/* DO NOT forget to call xtb_put() afterwards! */
 struct fib_xid_table *xia_find_xtbl_hold(struct fib_xia_rtable *rtbl,
 	xid_type_t ty);
 

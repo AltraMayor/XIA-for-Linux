@@ -70,7 +70,7 @@ static int check_valid_single_sink(struct sockaddr_xia *addr)
 		if (be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -EINVAL; /* There's more than a sink. */
 	}
-		
+
 	return n;
 }
 
@@ -95,20 +95,21 @@ int xia_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
 	lock_sock(sk);
 
-	if (xia->xia_ssink) {
+	if (xia_sk_bound(xia)) {
 		/* Double bind. */
 		rc = -EINVAL;
 		goto out_release_sk;
 	}
 	xia->xia_saddr = addr->sxia_addr;
-	xia->xia_ssink = &xia->xia_saddr.s_row[n - 1];
 
-	rc = sk->sk_prot->bind(sk, uaddr, addr_len);
+	/* Originally, the last parameter would be `int addr_len', however
+	 * it has been changed to `int node_n' to better fit XIA.
+	 */
+	rc = sk->sk_prot->bind(sk, uaddr, n);
 	if (likely(!rc)) {
 		xia->xia_daddr_set = 0;
 		sk_dst_reset(sk);
-	} else {
-		xia->xia_ssink = NULL;
+		xia->xia_ssink = &xia->xia_saddr.s_row[n - 1];
 	}
 
 out_release_sk:
@@ -132,22 +133,17 @@ int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 	sk = sock->sk;
 	xia = xia_sk(sk);
 
-	if (!xia->xia_ssink)
+	if (!xia_sk_bound(xia))
 		return -ESNOTBOUND; /* Please bind first! */
 
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
 }
 EXPORT_SYMBOL_GPL(xia_dgram_connect);
 
-/** copy_and_shade - Copy @src to @dst. The not used rows in @src are
- *  zeroed (shaded) in dst.
- *  This function is useful when passing an XIA address to userland because
- *  it ensures that there's no information leak due to uninitialized memory.
- */
-static void copy_and_shade(struct xia_addr *dst, struct xia_addr *src)
+void copy_and_shade_xia_addr(struct xia_addr *dst, const struct xia_addr *src)
 {
 	struct xia_row *rdst = dst->s_row;
-	struct xia_row *rsrc = src->s_row;
+	const struct xia_row *rsrc = src->s_row;
 	int i;
 
 	for (i = 0; i < XIA_NODES_MAX; i++) {
@@ -161,6 +157,7 @@ static void copy_and_shade(struct xia_addr *dst, struct xia_addr *src)
 	/* Copy it. */
 	memmove(rdst, rsrc, i * sizeof(struct xia_row));
 }
+EXPORT_SYMBOL_GPL(copy_and_shade_xia_addr);
 
 /* This does both peername and sockname. */
 int xia_getname(struct socket *sock, struct sockaddr *uaddr,
@@ -175,10 +172,11 @@ int xia_getname(struct socket *sock, struct sockaddr *uaddr,
 	if (peer) {
 		if (!xia->xia_daddr_set)
 			return -ENOTCONN;
-		copy_and_shade(&sxia->sxia_addr, &xia->xia_daddr);
+		copy_and_shade_xia_addr(&sxia->sxia_addr, &xia->xia_daddr);
 	} else {
-		if (xia->xia_ssink)
-			copy_and_shade(&sxia->sxia_addr, &xia->xia_saddr);
+		if (xia_sk_bound(xia))
+			copy_and_shade_xia_addr(&sxia->sxia_addr,
+				&xia->xia_saddr);
 		else
 			memset(&sxia->sxia_addr, 0, sizeof(sxia->sxia_addr));
 	}
@@ -255,7 +253,7 @@ int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
 	/* XXX Review RPS calls. */
 	sock_rps_record_flow(sk);
 
-	if (!xia_sk(sk)->xia_ssink)
+	if (!xia_sk_bound(xia_sk(sk)))
 		return -ESNOTBOUND;
 
 	return sk->sk_prot->sendmsg(iocb, sk, msg, size);
@@ -288,7 +286,7 @@ ssize_t xia_sendpage(struct socket *sock, struct page *page,
 	/* XXX Review RPS calls. */
 	sock_rps_record_flow(sk);
 
-	if (!xia_sk(sk)->xia_ssink)
+	if (!xia_sk_bound(xia_sk(sk)))
 		return -ESNOTBOUND;
 
 	if (sk->sk_prot->sendpage)
@@ -338,34 +336,101 @@ static struct xia_socket_proc *find_sproc_rcu(xid_type_t ty,
 	return NULL;
 }
 
+#define WAIT_SOCKS	5
+
+static void unregister_protos(struct xia_socket_proc *sproc, int last_proc)
+{
+	while (last_proc >= 0) {
+		const struct xia_socket_type_proc *stproc =
+			sproc->procs[last_proc];
+		struct proto *prot;
+		last_proc--;
+		if (!stproc)
+			continue;
+		prot = stproc->proto;
+		proto_unregister(prot);
+		prot->sockets_allocated = NULL;
+	}
+}
+
 int xia_add_socket(struct xia_socket_proc *sproc)
 {
 	xid_type_t ty = sproc->ppal_type;
 	struct hlist_head *head = ppalhead(ty);
-	int rc;
+	int rc, last_proc;
 
+	BUG_ON(sproc->dead != 0);
+
+	rc = percpu_counter_init(&sproc->sockets_allocated, 0);
+	if (rc)
+		goto out;
+
+	/* Register all protos with socket API. */
+	for (last_proc = 0; last_proc < SOCK_MAX; last_proc++) {
+		const struct xia_socket_type_proc *stproc =
+			sproc->procs[last_proc];
+		stproc->proto->sockets_allocated = &sproc->sockets_allocated;
+		rc = proto_register(stproc->proto, stproc->alloc_slab);
+		if (rc) {
+			last_proc--;
+			goto procs;
+		}
+	}
+	last_proc--;
+
+	/* Make it visible for new socks. */
 	spin_lock(&ppal_lock);
-
 	rc = -EEXIST;
 	if (find_sproc_locked(ty, head))
-		goto out;
+		goto lock;
 	hlist_add_head_rcu(&sproc->list, head);
-	rc = 0;
-
-out:
 	spin_unlock(&ppal_lock);
+	sproc->dead = 1;
+	return 0;
+
+lock:
+	spin_unlock(&ppal_lock);
+procs:
+	/* One doesn't need to wait all socks to be released because
+	 * none has been created.
+	 */
+	unregister_protos(sproc, last_proc);
+	percpu_counter_destroy(&sproc->sockets_allocated);
+out:
 	return rc;
 }
 EXPORT_SYMBOL_GPL(xia_add_socket);
 
-void xia_del_socket(struct xia_socket_proc *sproc)
+void xia_del_socket_begin(struct xia_socket_proc *sproc)
 {
+	BUG_ON(sproc->dead != 1);
 	spin_lock(&ppal_lock);
 	hlist_del_rcu(&sproc->list);
 	spin_unlock(&ppal_lock);
 	synchronize_rcu();
+	sproc->dead = 2;
 }
-EXPORT_SYMBOL_GPL(xia_del_socket);
+EXPORT_SYMBOL_GPL(xia_del_socket_begin);
+
+void xia_del_socket_end(struct xia_socket_proc *sproc)
+{
+	s64 counter;
+
+	BUG_ON(sproc->dead != 2);
+
+	/* Wait all socks to be closed. */
+	while ((counter = percpu_counter_sum(&sproc->sockets_allocated)) > 0) {
+		pr_warn("Going to wait %is for the release of %lli XIA socks of principal %s\n",
+			WAIT_SOCKS, counter, sproc->name);
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		schedule_timeout(WAIT_SOCKS * HZ);
+	}
+
+	unregister_protos(sproc, SOCK_MAX - 1);
+	percpu_counter_destroy(&sproc->sockets_allocated);
+	sproc->dead = 3;
+}
+EXPORT_SYMBOL_GPL(xia_del_socket_end);
 
 /*
  *	Integration with socket API
@@ -391,6 +456,7 @@ static void xia_sock_destruct(struct sock *sk)
 
 	dst_release(rcu_dereference_check(sk->sk_dst_cache, 1));
 	sk_refcnt_debug_dec(sk);
+	percpu_counter_dec(sk->sk_prot->sockets_allocated);
 }
 
 static int xia_create(struct net *net, struct socket *sock,
@@ -416,7 +482,7 @@ static int xia_create(struct net *net, struct socket *sock,
 	stproc = sproc->procs[sock->type];
 	if (!stproc)
 		goto out_rcu_unlock;
-	chosen_prot = stproc->prot;
+	chosen_prot = stproc->proto;
 	sock->ops = stproc->ops;
 	rcu_read_unlock();
 
@@ -426,6 +492,7 @@ static int xia_create(struct net *net, struct socket *sock,
 	sk = sk_alloc(net, PF_XIA, GFP_KERNEL, chosen_prot);
 	if (!sk)
 		goto out;
+	percpu_counter_inc(chosen_prot->sockets_allocated);
 
 	sock_init_data(sock, sk);
 	sk->sk_destruct		= xia_sock_destruct;
