@@ -1,3 +1,4 @@
+#include <linux/export.h>
 #include <linux/netdevice.h>
 #include <linux/if_ether.h>
 #include <linux/jiffies.h>
@@ -33,6 +34,8 @@ static inline void free_ha_norcu(struct hrdw_addr *ha)
 {
 	xdst_free_anchor(&ha->anchor);
 	dev_put(ha->dev);
+	if (ha->mhid)
+		mhid_put(ha->mhid);
 	kfree(ha);
 }
 
@@ -82,6 +85,7 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 			break;
 	}
 	ha->mhid = mhid;
+	mhid_hold(mhid);
 	if (!insert_here)
 		insert_here = pos_ha;
 	list_add_tail_rcu(&ha->ha_list, &insert_here->ha_list);
@@ -273,6 +277,7 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 	}
 	init_fxid(&mhid->xhm_common, xid);
 	INIT_LIST_HEAD(&mhid->xhm_haddrs);
+	atomic_set(&mhid->xhm_refcnt, 1);
 	rc = add_ha(mhid, ha);
 	BUG_ON(rc);
 	rc = fib_add_fxid_locked(main_bucket, xtbl, &mhid->xhm_common);
@@ -317,6 +322,13 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
 	return 0;
 }
 
+void mhid_finish_destroy(struct fib_xid_hid_main *mhid)
+{
+	BUG_ON(!mhid->xhm_dead);
+	kfree(mhid);
+}
+EXPORT_SYMBOL_GPL(mhid_finish_destroy);
+
 /* Don't call this function! Use free_fxid instead. */
 void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
@@ -329,8 +341,8 @@ void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 		free_ha(pos_ha);
 	}
 
-	/* TODO Doesn't ha refer to mhid? */
-	kfree(mhid);
+	mhid->xhm_dead = true;
+	mhid_put(mhid);
 }
 
 /*
