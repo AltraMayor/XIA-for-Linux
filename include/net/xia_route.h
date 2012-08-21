@@ -161,6 +161,15 @@ static inline struct net *xdst_net(struct xip_dst *xdst)
 	return dstops_net(xdst->dst.ops);
 }
 
+static inline int xip_dst_hoplimit(const struct dst_entry *dst)
+{
+	int hoplimit = dst_metric_raw(dst, RTAX_HOPLIMIT);
+	/* XXX Implement a sysctl like sysctl_ip_default_ttl.
+	 * See include/net/route.h:ip4_dst_hoplimit
+	 */
+	return hoplimit == 0 ? 128 : hoplimit;
+}
+
 /* Possible returns for method @main_deliver in struct xip_route_proc. */
 enum XRP_ACTION {
 	/* XID is unknown, this action forces another edge of an address be
