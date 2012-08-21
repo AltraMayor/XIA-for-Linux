@@ -348,8 +348,9 @@ int xia_iterate_xids(struct fib_xid_table *xtbl,
  */
 int fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
-/** fib_add_fxid_locked - Same as fib_add_fxid, but
- *		it assumes that the lock is already held.Add @fxid into @xtbl.
+/** fib_add_fxid_locked - Same as fib_add_fxid, that is,
+ *		it adds @fxid into @xtbl. However, fib_add_fxid_locked
+ *		assumes that the lock is already held.
  * NOTE
  *	BE VERY CAREFUL when calling this function because if the needed lock
  *	is not held, it may corrupt @xtbl!

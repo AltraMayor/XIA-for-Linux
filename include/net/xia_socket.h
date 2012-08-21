@@ -5,6 +5,10 @@
 #include <net/sock.h>
 #include <net/xia.h>
 
+/*
+ *	Register a principal with XIA socket
+ */
+
 /* Implementation of a type/protocol pair. */
 struct xia_socket_type_proc {
 	struct proto		*proto;
@@ -48,23 +52,40 @@ void xia_del_socket_begin(struct xia_socket_proc *sproc);
 void xia_del_socket_end(struct xia_socket_proc *sproc);
 
 /*
- *	Support functions for principals
+ *	Helpers to implement principals' struct proto_ops' methods
  */
 
+/* This function makes (struct proto).close() required. */
 int xia_release(struct socket *sock);
+
+/* This function makes (struct proto).bind() required. */
 int xia_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len);
+
+/* This function makes (struct proto).connect() required. */
 int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 	int addr_len, int flags);
+
 int xia_getname(struct socket *sock, struct sockaddr *uaddr,
 	int *uaddr_len, int peer);
+
 int xia_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
+
 int xia_shutdown(struct socket *sock, int how);
+
+/* This function makes (struct proto).sendmsg() required. */
 int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
 	struct msghdr *msg, size_t size);
+
+/* This function makes (struct proto).recvmsg() required. */
 int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 	struct msghdr *msg, size_t size, int flags);
+
 ssize_t xia_sendpage(struct socket *sock, struct page *page,
 	int offset, size_t size, int flags);
+
+/*
+ *	Helpers to implement principals' struct proto's methods
+ */
 
 static inline int xip_setsockopt(struct sock *sk, int level, int optname,
 	char __user *optval, unsigned int optlen)
