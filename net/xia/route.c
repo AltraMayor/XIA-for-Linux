@@ -1,8 +1,9 @@
 #include <linux/export.h>
-#include <net/xia_route.h>
+#include <net/ip_vs.h> /* Needed for skb_net. */
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
-#include <net/ip_vs.h> /* Needed for skb_net. */
+#include <net/xia_output.h> /* Needed for __xip_local_out. */
+#include <net/xia_route.h>
 
 /*
  *	Route cache (DST)
@@ -56,16 +57,6 @@ static void xip_update_pmtu(struct dst_entry *dst, u32 mtu)
 		mtu = mtu < XIP_MIN_MTU ? XIP_MIN_MTU : mtu;
 		dst_metric_set(dst, RTAX_MTU, mtu);
 	}
-}
-
-static int __xip_local_out(struct sk_buff *skb)
-{
-	struct xiphdr *xiph = xip_hdr(skb);
-	int len = skb->len - xip_hdr_len(xiph);
-	BUG_ON(len < 0);
-	BUG_ON(len > XIP_MAXPLEN);
-	xiph->payload_len = cpu_to_be16(len);
-	return 1;
 }
 
 static struct neighbour *xip_neigh_lookup(const struct dst_entry *dst,
