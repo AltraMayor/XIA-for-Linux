@@ -51,7 +51,8 @@ static void xip_link_failure(struct sk_buff *skb)
 		pr_warn("%s: unreachable destination\n", __func__);
 }
 
-static void xip_update_pmtu(struct dst_entry *dst, u32 mtu)
+static void xip_update_pmtu(struct dst_entry *dst, struct sock *sk,
+	struct sk_buff *skb, u32 mtu)
 {
 	if (mtu < dst_mtu(dst)) {
 		mtu = mtu < XIP_MIN_MTU ? XIP_MIN_MTU : mtu;
@@ -60,7 +61,7 @@ static void xip_update_pmtu(struct dst_entry *dst, u32 mtu)
 }
 
 static struct neighbour *xip_neigh_lookup(const struct dst_entry *dst,
-	const void *daddr)
+	struct sk_buff *skb, const void *daddr)
 {
 	return ERR_PTR(-EINVAL);
 }
