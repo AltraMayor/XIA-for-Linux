@@ -6,23 +6,29 @@
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
 #include <net/xia_socket.h>
-
-/* XDP Principal */
-#define XIDTYPE_XDP (__cpu_to_be32(0x12))
+#include <net/xia_output.h>
+#include <net/xia_xdp.h>
 
 /*
  *	Local XDP table
  */
 
-/* TODO Solve who is going to free this struct. */
 struct fib_xid_xdp_local {
 	/* Socket related fields. */
 
 	/* struct xia_sock must be the first member to work with sk_alloc(). */
 	struct xia_sock		xia_sk;
 
-	/* FIB XID related fields. */
+	/* Is socket corked? */
+	bool			corkflag;
 
+	/* Any pending outbound frame? */
+	bool			pending;
+
+	/* Total length of pending frames. */
+	unsigned int		len;
+
+	/* FIB XID related fields. */
 	struct fib_xid		fxid;
 	struct xip_dst_anchor   anchor;
 };
@@ -39,6 +45,11 @@ static inline struct fib_xid_xdp_local *xiask_lxdp(struct xia_sock *xia)
 	return likely(xia)
 		? container_of(xia, struct fib_xid_xdp_local, xia_sk)
 		: NULL;
+}
+
+static inline struct fib_xid_xdp_local *sk_lxdp(struct sock *sk)
+{
+	return xiask_lxdp(xia_sk(sk));
 }
 
 static int local_newroute_delroute(struct fib_xid_table *xtbl,
@@ -108,9 +119,10 @@ static void local_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_xdp_local *lxdp = fxid_lxdp(fxid);
 	xdst_free_anchor(&lxdp->anchor);
-	sock_put(&lxdp->xia_sk.sk);
-
-	/* DO NOT deallocate memory here because @fxid is only part of @lxdp. */
+	/* We do not sock_put(&lxdp->xia_sk.sk) because @fxid is released
+	 * before @lxdp, and we do not deallocate memory here because @fxid is
+	 * part of @lxdp.
+	 */
 }
 
 static const struct xia_ppal_rt_eops xdp_rt_eops_local = {
@@ -399,10 +411,6 @@ static struct xip_route_proc xdp_rt_proc __read_mostly = {
 
 static void xdp_close(struct sock *sk, long timeout)
 {
-	/* TODO How to release struct fib_xid_xdp_local if the socket is
-	 * bound? What about the DST entry in struc xia_sock?
-	 * sk->sk_prot->unhash(sk);
-	 */
 	sk_common_release(sk);
 }
 
@@ -518,37 +526,104 @@ static int xdp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 	}
 }
 
+static void flush_pending_frames(struct sock *sk)
+{
+	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
+	if (!lxdp->pending)
+		return;
+	lxdp->len = 0;
+	lxdp->pending = false;
+	xip_flush_pending_frames(sk);
+}
+
 static void xdp_destroy_sock(struct sock *sk)
 {
 	bool slow = lock_sock_fast(sk);
-	/* TODO */
+	flush_pending_frames(sk);
 	unlock_sock_fast(sk, slow);
+}
+
+static int xdp_send_skb(struct sk_buff *skb)
+{
+	/* TODO net/ipv4/udp.c:udp_send_skb */
+	return -1;
+}
+
+/* Push out all pending data as a single XDP datagram. Socket must be locked. */
+static int push_pending_frames(struct sock *sk)
+{
+	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
+	struct sk_buff *skb = xip_finish_skb(sk);
+	int rc = skb ? xdp_send_skb(skb) : 0;
+	lxdp->len = 0;
+	lxdp->pending = false;
+	return rc;
 }
 
 static int xdp_setsockopt(struct sock *sk, int level, int optname,
 	char __user *optval, unsigned int optlen)
 {
-	if (level == XIDTYPE_XDP) {
-		/* TODO Add XDP_CORK option.
-		 * See net/ipv4/udp.c:udp_lib_setsockopt, and
-		 * net/ipv4/udp.c:udp_setsockopt.
-		 */
-		return -ENOPROTOOPT;
+	struct fib_xid_xdp_local *lxdp;
+	int val, rc;
+
+	if (level != XIDTYPE_XDP)
+		return xip_setsockopt(sk, level, optname, optval, optlen);
+	if (optlen < sizeof(int))
+		return -EINVAL;
+	if (get_user(val, (int __user *)optval))
+		return -EFAULT;
+
+	lxdp = sk_lxdp(sk);
+	rc = 0;
+
+	switch (optname) {
+	case XDP_CORK:
+		lxdp->corkflag = !!val;
+		if (val) {
+			lock_sock(sk);
+			push_pending_frames(sk);
+			release_sock(sk);
+		}
+		break;
+
+	default:
+		rc = -ENOPROTOOPT;
+		break;
 	}
-	return xip_setsockopt(sk, level, optname, optval, optlen);
+
+	return rc;
 }
 
 static int xdp_getsockopt(struct sock *sk, int level, int optname,
 	char __user *optval, int __user *optlen)
 {
-	if (level == XIDTYPE_XDP) {
-		/* TODO Add XDP_CORK option.
-		 * See net/ipv4/udp.c:udp_lib_getsockopt, and
-		 * net/ipv4/udp.c:udp_getsockopt.
-		 */
+	struct fib_xid_xdp_local *lxdp;
+	int val, len;
+
+	if (level != XIDTYPE_XDP)
+		return xip_getsockopt(sk, level, optname, optval, optlen);
+	if (get_user(len, optlen))
+		return -EFAULT;
+	if (len < 0)
+		return -EINVAL;
+	len = min_t(int, len, sizeof(int));
+	if (put_user(len, optlen))
+		return -EFAULT;
+
+	lxdp = sk_lxdp(sk);
+	
+	switch (optname) {
+	case XDP_CORK:
+		val = lxdp->corkflag;
+		break;
+
+	default:
 		return -ENOPROTOOPT;
 	}
-	return xip_getsockopt(sk, level, optname, optval, optlen);
+
+	if (copy_to_user(optval, &val, len))
+		return -EFAULT;
+	return 0;
 }
 
 static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
@@ -562,13 +637,6 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 
 static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	size_t len, int noblock, int flags, int *addr_len)
-{
-	/* TODO */
-	return -1;
-}
-
-static int xdp_sendpage(struct sock *sk, struct page *page, int offset,
-	size_t size, int flags)
 {
 	/* TODO */
 	return -1;
@@ -626,16 +694,17 @@ static void xdp_unhash(struct sock *sk)
 	sock_prot_inuse_add(net, sk->sk_prot, -1);
 
 	/* Remove from routing table. */
-	lxdp = xiask_lxdp(xia);
-	rcu_read_lock();
-	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
+	local_xtbl = xia_find_xtbl_hold(net->xia.local_rtbl, XIDTYPE_XDP);
 	BUG_ON(!local_xtbl);
+	lxdp = xiask_lxdp(xia);
 	fib_rm_fxid(local_xtbl, &lxdp->fxid);
-	rcu_read_unlock();
 
 	/* Free DST entries. */
+
+	/* We must wait here because, @lxdp may be reused before RCU synchs.*/
 	synchronize_rcu();
-	xdst_free_anchor(&lxdp->anchor);
+	free_fxid_norcu(local_xtbl, &lxdp->fxid);
+	xtbl_put(local_xtbl);
 }
 
 /* The second parameter of this method was repurposed to better fit XIA.
@@ -657,10 +726,9 @@ static int xdp_get_port(struct sock *sk, unsigned short node_n)
 	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
 	BUG_ON(!local_xtbl);
 	rc = fib_add_fxid(local_xtbl, &lxdp->fxid);
-	if (!rc) {
-		/* TODO UDP doesn't seem to use it! See get_port. */
-		sock_hold(sk);
-	}
+	/* We don't sock_hold(sk) because @lxdp->fxid is always released
+	 * before @lxdp is freed.
+	 */
 	rcu_read_unlock();
 
 	if (!rc)
@@ -685,7 +753,7 @@ static struct proto xdp_prot __read_mostly = {
 	.getsockopt		= xdp_getsockopt,
 	.sendmsg		= xdp_sendmsg,
 	.recvmsg		= xdp_recvmsg,
-	.sendpage		= xdp_sendpage,
+	/* XXX It'd be nice to have .sendpage */
 	.bind			= xdp_bind,
 	.backlog_rcv		= xdp_backlog_rcv,
 	.hash			= xdp_hash_rehash,
