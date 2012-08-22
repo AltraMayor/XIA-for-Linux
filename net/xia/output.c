@@ -20,6 +20,13 @@ int xip_local_out(struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(xip_local_out);
 
+int xip_send_skb(struct sk_buff *skb)
+{
+	int rc = xip_local_out(skb);
+	return rc > 0 ? net_xmit_errno(rc) : rc;
+}
+EXPORT_SYMBOL_GPL(xip_send_skb);
+
 static inline void copy_xia_addr_to(const struct xia_addr *addr, int n,
 	struct xia_row *to)
 {

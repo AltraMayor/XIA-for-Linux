@@ -9,6 +9,8 @@ int __xip_local_out(struct sk_buff *skb);
 
 int xip_local_out(struct sk_buff *skb);
 
+int xip_send_skb(struct sk_buff *skb);
+
 struct sk_buff *xip_finish_skb(struct sock *sk);
 
 /* Throw away all pending outbound data on the socket. */
