@@ -176,52 +176,58 @@ int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n)
 }
 EXPORT_SYMBOL_GPL(xia_set_dest);
 
-void copy_and_shade_xia_addr(struct xia_addr *dst, const struct xia_addr *src)
+void copy_n_and_shade_xia_addr(struct xia_addr *dst,
+	const struct xia_row *rsrc, int n)
 {
 	struct xia_row *rdst = dst->s_row;
-	const struct xia_row *rsrc = src->s_row;
-	int i;
 
-	for (i = 0; i < XIA_NODES_MAX; i++) {
-		if (xia_is_nat(rsrc[i].s_xid.xid_type)) {
-			/* Shade it. */
-			memset(&rdst[i], 0,
-				(XIA_NODES_MAX - i) * sizeof(struct xia_row));
-			break;
-		}
-	}
+	BUG_ON(n < 0 || n > XIA_NODES_MAX);
+
 	/* Copy it. */
-	memmove(rdst, rsrc, i * sizeof(struct xia_row));
+	memmove(rdst, rsrc, n * sizeof(*rdst));
+
+	/* Shade it. */
+	memset(rdst + n, 0, (XIA_NODES_MAX - n) * sizeof(*rdst));
 }
-EXPORT_SYMBOL_GPL(copy_and_shade_xia_addr);
+EXPORT_SYMBOL_GPL(copy_n_and_shade_xia_addr);
 
-/* This does both peername and sockname. */
-int xia_getname(struct socket *sock, struct sockaddr *uaddr,
-	int *uaddr_len, int peer)
+static inline void init_sockaddr_xia_but_addr(struct sockaddr_xia *sxia)
 {
-	struct sock *sk		= sock->sk;
-	struct xia_sock *xia	= xia_sk(sk);
-	DECLARE_SOCKADDR(struct sockaddr_xia *, sxia, uaddr);
-
 	sxia->sxia_family = AF_XIA;
 	sxia->__pad0 = 0;
-	if (peer) {
-		if (!xia->xia_daddr_set)
-			return -ENOTCONN;
-		copy_and_shade_xia_addr(&sxia->sxia_addr, &xia->xia_daddr);
-	} else {
-		if (xia_sk_bound(xia))
-			copy_and_shade_xia_addr(&sxia->sxia_addr,
-				&xia->xia_saddr);
-		else
-			memset(&sxia->sxia_addr, 0, sizeof(sxia->sxia_addr));
-	}
-
 	BUILD_BUG_ON(sizeof(sxia->__pad1));
 	/* If the previous build test fails, remove it, and uncomment
 	 * the following line:
 	 * memset(sxia->__pad1, 0, sizeof(sxia->__pad1));
 	 */
+}
+
+void copy_n_and_shade_sockaddr_xia(struct sockaddr_xia *dst,
+	const struct xia_row *rsrc, int n)
+{
+	init_sockaddr_xia_but_addr(dst);
+	copy_n_and_shade_xia_addr(&dst->sxia_addr, rsrc, n);
+}
+EXPORT_SYMBOL_GPL(copy_n_and_shade_sockaddr_xia);
+
+/* This does both peername and sockname. */
+int xia_getname(struct socket *sock, struct sockaddr *uaddr,
+	int *uaddr_len, int peer)
+{
+	struct xia_sock *xia = xia_sk(sock->sk);
+	DECLARE_SOCKADDR(struct sockaddr_xia *, sxia, uaddr);
+
+	if (peer) {
+		if (!xia->xia_daddr_set)
+			return -ENOTCONN;
+		copy_n_and_shade_sockaddr_xia_from_addr(sxia, &xia->xia_daddr,
+			xia->xia_dnum);
+	} else {
+		if (!xia_sk_bound(xia))
+			return -ESNOTBOUND;
+		copy_n_and_shade_sockaddr_xia_from_addr(sxia, &xia->xia_saddr,
+			xia->xia_snum);
+	}
 
 	*uaddr_len = sizeof(*sxia);
 	return 0;
