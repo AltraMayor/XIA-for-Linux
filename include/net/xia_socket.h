@@ -131,6 +131,7 @@ struct xia_sock {
 	/* XID type, XID, and full address of source socket. */
 	struct xia_row		*xia_ssink;
 	struct xia_addr		xia_saddr; /* It's used for transmission. */
+	u8			xia_snum; /* Number of nodes in @xia_saddr. */
 
 	/* Destination address
 	 *
@@ -138,9 +139,10 @@ struct xia_sock {
 	 * have valid values.
 	 */
 	u8			xia_daddr_set;
+	/* Number of nodes in @xia_daddr. */
+	u8			xia_dnum;
 	/* Index of the last node of @xia_daddr. */
 	u8			xia_dlast_node;
-	/* 2 bytes free. */
 	struct xia_addr		xia_daddr; /* It's used for transmission. */
 };
 
@@ -155,5 +157,22 @@ static inline bool xia_sk_bound(const struct xia_sock *xia)
 {
 	return !!xia->xia_ssink;
 }
+
+static inline void xia_reset_src(struct xia_sock *xia)
+{
+	xia->xia_ssink = NULL;
+}
+
+void xia_reset_dest(struct xia_sock *xia);
+
+/** xia_set_src - Set source of packets sent from @xia.
+ *			@n is the number of nodes in @src.
+ */
+void xia_set_src(struct xia_sock *xia, struct xia_addr *src, int n);
+
+/** xia_set_dest - Set destination of packets sent from @xia.
+ *			@n is the number of nodes in @dest.
+ */
+int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n);
 
 #endif /* _NET_XIA_SOCKET_H */
