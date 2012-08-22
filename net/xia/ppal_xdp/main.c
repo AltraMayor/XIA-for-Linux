@@ -521,10 +521,12 @@ static void xdp_destroy_sock(struct sock *sk)
 	unlock_sock_fast(sk, slow);
 }
 
-static int xdp_send_skb(struct sk_buff *skb)
+/* Since XDP is headerless, this function is just a wrapper for
+ * xip_send_skb().
+ */
+static inline int xdp_send_skb(struct sk_buff *skb)
 {
-	/* TODO net/ipv4/udp.c:udp_send_skb */
-	return -1;
+	return xip_send_skb(skb);
 }
 
 /* Push out all pending data as a single XDP datagram. Socket must be locked. */
