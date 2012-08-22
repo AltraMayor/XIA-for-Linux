@@ -1,6 +1,8 @@
 #include <linux/module.h>
+#include <net/tcp_states.h>
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
+#include <net/xia_route.h>
 #include <net/xia_socket.h>
 
 /*
@@ -100,16 +102,14 @@ int xia_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		rc = -EINVAL;
 		goto out_release_sk;
 	}
-	xia->xia_saddr = addr->sxia_addr;
 
 	/* Originally, the last parameter would be `int addr_len', however
 	 * it has been changed to `int node_n' to better fit XIA.
 	 */
 	rc = sk->sk_prot->bind(sk, uaddr, n);
 	if (likely(!rc)) {
-		xia->xia_daddr_set = 0;
-		sk_dst_reset(sk);
-		xia->xia_ssink = &xia->xia_saddr.s_row[n - 1];
+		xia_reset_dest(xia);
+		xia_set_src(xia, &addr->sxia_addr, n);
 	}
 
 out_release_sk:
@@ -139,6 +139,42 @@ int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
 }
 EXPORT_SYMBOL_GPL(xia_dgram_connect);
+
+void xia_set_src(struct xia_sock *xia, struct xia_addr *src, int n)
+{
+	xia->xia_saddr = *src;
+	xia->xia_snum = n;
+	xia->xia_ssink = &xia->xia_saddr.s_row[n - 1];
+}
+EXPORT_SYMBOL_GPL(xia_set_src);
+
+void xia_reset_dest(struct xia_sock *xia)
+{
+	xia->xia_daddr_set = 0;
+	sk_dst_reset(&xia->sk);
+}
+EXPORT_SYMBOL_GPL(xia_reset_dest);
+
+int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n)
+{
+	struct sock *sk = &xia->sk;
+	struct xip_dst *xdst;
+
+	xia->xia_dnum = n;
+	xia->xia_dlast_node = XIA_ENTRY_NODE_INDEX;
+	memmove(&xia->xia_daddr, dest, sizeof(xia->xia_daddr));
+
+	xdst = xip_mark_addr_and_get_dst(sock_net(sk),
+		xia->xia_daddr.s_row, n, &xia->xia_dlast_node, 0);
+	if (IS_ERR(xdst))
+		return PTR_ERR(xdst);
+
+	sk_dst_set(sk, &xdst->dst);
+	xia->xia_daddr_set = 1;
+	sk->sk_state = TCP_ESTABLISHED;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(xia_set_dest);
 
 void copy_and_shade_xia_addr(struct xia_addr *dst, const struct xia_addr *src)
 {
@@ -502,8 +538,8 @@ static int xia_create(struct net *net, struct socket *sock,
 	sk_refcnt_debug_inc(sk);
 
 	xia = xia_sk(sk);
-	xia->xia_ssink = NULL;
-	xia->xia_daddr_set = 0;
+	xia_reset_src(xia);
+	xia_reset_dest(xia);
 
 	rc = 0;
 	if (sk->sk_prot->init) {

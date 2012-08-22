@@ -437,8 +437,6 @@ static int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty)
 static int xdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, daddr, uaddr);
-	struct xia_sock *xia;
-	struct xip_dst *xdst;
 	int rc, n;
 
 	/* XDP isn't meant as a tool to poke other principals, thus
@@ -449,27 +447,8 @@ static int xdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		goto out;
 	n = rc;
 
-	xia = xia_sk(sk);
-	sk_dst_reset(sk);
-
 	lock_sock(sk);
-
-	/* Set destination. */
-	xia->xia_dlast_node = XIA_ENTRY_NODE_INDEX;
-	memmove(&xia->xia_daddr, daddr, sizeof(xia->xia_daddr));
-	xdst = xip_mark_addr_and_get_dst(sock_net(sk), xia->xia_daddr.s_row,
-		n, &xia->xia_dlast_node, 0);
-	if (IS_ERR(xdst)) {
-		rc = PTR_ERR(xdst);
-		goto out_release_sk;
-	}
-	xia->xia_daddr_set = 1;
-
-	sk->sk_state = TCP_ESTABLISHED;
-	sk_dst_set(sk, &xdst->dst);
-	rc = 0;
-
-out_release_sk:
+	rc = xia_set_dest(xia_sk(sk), &daddr->sxia_addr, n);
 	release_sock(sk);
 out:
 	return rc;
@@ -479,9 +458,8 @@ static int xdp_disconnect(struct sock *sk, int flags)
 {
 	struct xia_sock *xia = xia_sk(sk);
 	sk->sk_state = TCP_CLOSE;
-	xia->xia_daddr_set = 0;
 	sock_rps_reset_rxhash(sk);	/* XXX Review RPS calls. */
-	sk_dst_reset(sk);
+	xia_reset_dest(xia);
 	return 0;
 }
 
@@ -644,8 +622,8 @@ static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 {
-	struct xia_sock	*xia = xia_sk(sk);
-	struct xia_row	*ssink = &xia->xia_saddr.s_row[node_n - 1];
+	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
+	struct xia_row *ssink = &addr->sxia_addr.s_row[node_n - 1];
 
 	/* Make sure we are allowed to bind here. */
 	if (ssink->s_xid.xid_type != XIDTYPE_XDP)
@@ -688,7 +666,7 @@ static void xdp_unhash(struct sock *sk)
 
 	if (!xia_sk_bound(xia))
 		return;
-	xia->xia_ssink = NULL;
+	xia_reset_src(xia);
 
 	net = sock_net(sk);
 	sock_prot_inuse_add(net, sk->sk_prot, -1);
