@@ -20,6 +20,14 @@ int xip_local_out(struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(xip_local_out);
 
+static inline void copy_xia_addr_to(const struct xia_addr *addr, int n,
+	struct xia_row *to)
+{
+	int len = sizeof(struct xia_row) * n;
+	BUG_ON(n < 0 || n > XIA_NODES_MAX);
+	memmove(to, addr, len);
+}
+
 /* Combined all pending XIP fragments on the socket as one XIP datagram
  * and push them out.
  * This function was based on include/net/ip.h:ip_finish_skb.
@@ -30,6 +38,7 @@ struct sk_buff *xip_finish_skb(struct sock *sk)
 	struct sk_buff_head *queue = &sk->sk_write_queue;
 	struct sk_buff *skb, *tmp_skb;
 	struct sk_buff **tail_skb;
+	struct dst_entry *dst;
 	struct xiphdr *xiph;
 
 	skb = __skb_dequeue(queue);
@@ -54,28 +63,30 @@ struct sk_buff *xip_finish_skb(struct sock *sk)
 		tmp_skb->sk = NULL;
 	}
 
-	/* XXX Remove these limitations! */
+	/* XXX Remove these limitations adding a `cork' structure to
+	 * struct xia_sock!
+	 */
 	BUG_ON(!xia_sk_bound(xia));
 	BUG_ON(xia->xia_daddr_set);
 
+	dst = sk_dst_get(sk);
+	BUG_ON(!dst);
+
+	/* Fill XIP header. */
 	xiph = (struct xiphdr *)skb->data;
 	xiph->version = 1;
 	xiph->next_hdr = 0;
-	/* TODO
-	xiph->hop_limit = xip_dst_hoplimit(XXXdst);
-	xiph->num_dst = xia->xia_dlast_node;
-	xiph->num_src = XXX;
+	xiph->hop_limit = xip_dst_hoplimit(dst);
+	xiph->num_dst = xia->xia_dnum;
+	xiph->num_src = xia->xia_snum;
 	xiph->last_node = xia->xia_dlast_node;
-	XXXCopyAddresses
-	*/
+	copy_xia_addr_to(&xia->xia_daddr, xia->xia_dnum, &xiph->dst_addr[0]);
+	copy_xia_addr_to(&xia->xia_saddr, xia->xia_snum,
+		&xiph->dst_addr[xia->xia_dnum]);
 
 	skb->priority = sk->sk_priority;
 	skb->mark = sk->sk_mark;
-
-	/* TODO Add ref! and
-	skb_dst_set(skb, &rt->dst);
-	*/
-
+	skb_dst_set(skb, dst);
 	return skb;
 }
 EXPORT_SYMBOL_GPL(xip_finish_skb);
