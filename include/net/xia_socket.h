@@ -104,13 +104,38 @@ static inline int xip_getsockopt(struct sock *sk, int level, int optname,
 	return -ENOPROTOOPT;
 }
 
-/** copy_and_shade_xia_addr - Copy @src to @dst. The not used rows in @src are
- *				zeroed (shaded) in dst.
+/** copy_n_and_shade_xia_addr - Copy the first @n rows of @rsrc to @dst, and
+ *				zero (shade) the not used rows in @dst.
  *
- *  This function is useful when passing an XIA address to userland because
- *  it ensures that there's no information leak due to uninitialized memory.
+ *  This function is useful when passing a struct xia_addr to userland
+ *  because it ensures that there's no information leak due to
+ *  uninitialized memory.
  */
-void copy_and_shade_xia_addr(struct xia_addr *dst, const struct xia_addr *src);
+void copy_n_and_shade_xia_addr(struct xia_addr *dst,
+	const struct xia_row *rsrc, int n);
+
+static inline void copy_n_and_shade_xia_addr_from_addr(struct xia_addr *dst,
+	const struct xia_addr *src, int n)
+{
+	copy_n_and_shade_xia_addr(dst, src->s_row, n);
+}
+
+/** copy_n_and_shade_sockaddr_xia - Initialize @dst's fields,
+ *				copy the first @n rows of @rsrc to @dst, and
+ *				zero (shade) the not used rows in @dst.
+ *
+ *  This function is useful when passing a struct sockaddr_xia to userland
+ *  because it ensures that there's no information leak due to
+ *  uninitialized memory.
+ */
+void copy_n_and_shade_sockaddr_xia(struct sockaddr_xia *dst,
+	const struct xia_row *rsrc, int n);
+
+static inline void copy_n_and_shade_sockaddr_xia_from_addr(
+	struct sockaddr_xia *dst, const struct xia_addr *src, int n)
+{
+	copy_n_and_shade_sockaddr_xia(dst, src->s_row, n);
+}
 
 /*
  *	XIA Sock

@@ -102,7 +102,12 @@ static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	xia = &fxid_lxdp(fxid)->xia_sk;
 	if (xia->xia_daddr_set) {
 		struct xia_addr src;
-		copy_and_shade_xia_addr(&src, &xia->xia_daddr);
+		/* XXX We only have an RCU read lock here, don't we need
+		 * a lock over @xia to avoid races over xia->xia_daddr_set,
+		 * xia->xia_daddr and xia->xia_dnum?
+		 */
+		copy_n_and_shade_xia_addr_from_addr(&src, &xia->xia_daddr,
+			xia->xia_dnum);
 		if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src)))
 			goto nla_put_failure;
 	}
