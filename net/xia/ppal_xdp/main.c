@@ -620,11 +620,63 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	return -1;
 }
 
+/* If there is a packet there, return it, otherwise block. */
 static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	size_t len, int noblock, int flags, int *addr_len)
 {
-	/* TODO */
-	return -1;
+	struct sockaddr_xia *sxia = (struct sockaddr_xia *)msg->msg_name;
+	struct sk_buff *skb;
+	unsigned int ulen, copied;
+	int rc, peeked;
+	int offset = 0;
+
+	if (addr_len)
+		*addr_len = sizeof(*sxia);
+
+	if (flags & MSG_ERRQUEUE)
+		return xip_recv_error(sk, msg, len);
+
+	skb = __skb_recv_datagram(sk, flags | (noblock ? MSG_DONTWAIT : 0),
+		&peeked, &offset, &rc);
+	if (!skb)
+		return rc;
+
+	ulen = skb->len;	/* Bytes available to user.		*/
+	copied = len;		/* Bytes that will be copied to user.	*/
+	if (copied > ulen)
+		copied = ulen;
+	else if (copied < ulen)
+		 msg->msg_flags |= MSG_TRUNC;
+
+	rc = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
+	if (unlikely(rc))
+		goto out_free;
+
+	sock_recv_ts_and_drops(msg, sk, skb);
+
+	/* Return source address. */
+	if (sxia) {
+		const struct xiphdr *xiph = xip_hdr(skb);
+		copy_n_and_shade_sockaddr_xia(sxia,
+			&xiph->dst_addr[xiph->num_dst], xiph->num_src);
+	}
+
+	/* XXX Add support to control messages that return extra information
+	 * about the datagram.
+	 * In net/ipv4/udp.c:udp_recvmsg this is done this way:
+	 *	if (inet->cmsg_flags)
+	 *		ip_cmsg_recv(msg, skb);
+	 */
+
+	rc = flags & MSG_TRUNC ? ulen : copied;
+
+out_free:
+	/* XXX Write a patch or not to replace to skb_free_datagram() here
+	 * and IPv4's and IPv6's UDP implementation?
+	 * See comment of net/core/datagram.c:__skb_recv_datagram
+	 */
+	skb_free_datagram_locked(sk, skb);
+	return rc;
 }
 
 static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
