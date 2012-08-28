@@ -302,6 +302,13 @@ int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
 }
 EXPORT_SYMBOL_GPL(xia_sendmsg);
 
+int xip_recv_error(struct sock *sk, struct msghdr *msg, int len)
+{
+	/* XXX net/ipv4/ip_sockglue.c:ip_recv_error */
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(xip_recv_error);
+
 int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 	struct msghdr *msg, size_t size, int flags)
 {
