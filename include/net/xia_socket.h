@@ -137,6 +137,9 @@ static inline void copy_n_and_shade_sockaddr_xia_from_addr(
 	copy_n_and_shade_sockaddr_xia(dst, src->s_row, n);
 }
 
+/* Handle MSG_ERRQUEUE. */
+int xip_recv_error(struct sock *sk, struct msghdr *msg, int len);
+
 /*
  *	XIA Sock
  */
