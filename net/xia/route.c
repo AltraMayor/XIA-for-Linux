@@ -170,16 +170,6 @@ static void xdst_unlock_bucket(struct net *net, u32 bucket) __releases(bucket)
 	xia_lock_table_unlock(&xia_main_lock_table, hash_bucket(net, bucket));
 }
 
-static inline void xdst_hold(struct xip_dst *xdst)
-{
-	dst_hold(&xdst->dst);
-}
-
-static inline void xdst_put(struct xip_dst *xdst)
-{
-	dst_release(&xdst->dst);
-}
-
 static void detach_anchors(struct xip_dst *xdst);
 
 /* DO NOT call this function! Call xdst_free or xdst_rcu_free instead. */
