@@ -104,6 +104,8 @@ static inline int xip_getsockopt(struct sock *sk, int level, int optname,
 	return -ENOPROTOOPT;
 }
 
+int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len);
+
 /** copy_n_and_shade_xia_addr - Copy the first @n rows of @rsrc to @dst, and
  *				zero (shade) the not used rows in @dst.
  *
@@ -156,10 +158,21 @@ struct xia_sock {
 	 * The source address must have exactly one sink.
 	 */
 
+	/* XXX xia_ssink and xia_daddr_set are being read without locks,
+	 * is it safe?
+	 */
+
 	/* XID type, XID, and full address of source socket. */
 	struct xia_row		*xia_ssink;
 	struct xia_addr		xia_saddr; /* It's used for transmission. */
 	u8			xia_snum; /* Number of nodes in @xia_saddr. */
+
+	/* XXX Not only DST entries have dependencies on anchors,
+	 * but XIP addresses too! This happens because addresses may use
+	 * multiple DST entries to be routed.
+	 * This implies that the destination address here must carry
+	 * the dependencies as well.
+	 */
 
 	/* Destination address
 	 *
