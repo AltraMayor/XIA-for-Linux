@@ -46,7 +46,7 @@ int xia_release(struct socket *sock)
 }
 EXPORT_SYMBOL_GPL(xia_release);
 
-static int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len)
+int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len)
 {
 	if (addr_len != sizeof(struct sockaddr_xia))
 		return -EINVAL;
@@ -54,6 +54,7 @@ static int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len)
 		return -EAFNOSUPPORT;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(check_sockaddr_xia);
 
 static int check_valid_single_sink(struct sockaddr_xia *addr)
 {
