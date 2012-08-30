@@ -149,6 +149,16 @@ static inline struct xip_dst *skb_xdst(struct sk_buff *skb)
 	return dst_xdst(skb_dst(skb));
 }
 
+static inline void xdst_hold(struct xip_dst *xdst)
+{
+	dst_hold(&xdst->dst);
+}
+
+static inline void xdst_put(struct xip_dst *xdst)
+{
+	dst_release(&xdst->dst);
+}
+
 extern struct dst_ops xip_dst_ops_template;
 static inline struct net *dstops_net(struct dst_ops *ops)
 {

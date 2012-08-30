@@ -509,7 +509,7 @@ static int xdp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 	}
 }
 
-static void flush_pending_frames(struct sock *sk)
+static void xdp_flush_pending_frames(struct sock *sk)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	if (!lxdp->pending)
@@ -522,7 +522,7 @@ static void flush_pending_frames(struct sock *sk)
 static void xdp_destroy_sock(struct sock *sk)
 {
 	bool slow = lock_sock_fast(sk);
-	flush_pending_frames(sk);
+	xdp_flush_pending_frames(sk);
 	unlock_sock_fast(sk, slow);
 }
 
@@ -535,7 +535,7 @@ static inline int xdp_send_skb(struct sk_buff *skb)
 }
 
 /* Push out all pending data as a single XDP datagram. Socket must be locked. */
-static int push_pending_frames(struct sock *sk)
+static int xdp_push_pending_frames(struct sock *sk)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct sk_buff *skb = xip_finish_skb(sk);
@@ -566,7 +566,7 @@ static int xdp_setsockopt(struct sock *sk, int level, int optname,
 		lxdp->corkflag = !!val;
 		if (val) {
 			lock_sock(sk);
-			push_pending_frames(sk);
+			xdp_push_pending_frames(sk);
 			release_sock(sk);
 		}
 		break;
@@ -611,13 +611,153 @@ static int xdp_getsockopt(struct sock *sk, int level, int optname,
 	return 0;
 }
 
+static int xdp_getfrag(void *from, char *to, int  offset, int len,
+	int odd, struct sk_buff *skb)
+{
+	return memcpy_fromiovecend(to, (struct iovec *)from, offset, len);
+}
+
 static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	struct msghdr *msg, size_t len)
 {
-	if (len > 0xFFFF) /* TODO Improve this test. */
-		return -EMSGSIZE;
-	/* TODO */
-	return -1;
+	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
+	struct xia_sock *xia = &lxdp->xia_sk;
+	int corkreq = lxdp->corkflag || (msg->msg_flags & MSG_MORE);
+	struct xia_addr *dest, dest_stack;
+	struct xip_dst *xdst;
+	int rc, dest_n;
+	bool connected = false;
+	u8 dest_last_node;
+
+	if (msg->msg_flags & MSG_OOB)
+		return -EOPNOTSUPP;
+
+	if (lxdp->pending) {
+		/* There are pending frames.
+		 * The socket lock must be held while it's corked.
+		 */
+		lock_sock(sk);
+		if (likely(lxdp->pending)) {
+			/* TODO Is it the best way to initialize @xdst? */
+			xdst = NULL;
+			goto append_data;
+		}
+		release_sock(sk);
+	}
+
+	/* Is source address available? */
+	if (!xia_sk_bound(xia))
+		return -ESNOTBOUND; /* Please bind first! */
+
+	/* Obtain destination address. */
+	if (msg->msg_name) {
+		rc = check_sockaddr_xia(msg->msg_name, msg->msg_namelen);
+		if (rc)
+			return rc;
+		dest = msg->msg_name;
+		dest_n = xia_test_addr(dest);
+		dest_last_node = XIA_ENTRY_NODE_INDEX;
+		if (dest_n < 1)
+			return -EINVAL;
+	} else {
+		if (!xia->xia_daddr_set)
+			return -EDESTADDRREQ;
+		dest = &xia->xia_daddr;
+		dest_n = xia->xia_dnum;
+		dest_last_node = xia->xia_dlast_node;
+		/* Open fast path for connected socket. */
+		connected = true;
+	}
+	
+	/* XXX Shouldn't one support sock_tx_timestamp and something similar
+	 * to IP's control messages (see ip_cmsg_send())?
+	 * See net/ipv4/udp.c:udp_sendmsg for an example.
+	 */
+
+	/* Routing. */
+	xdst = connected ? dst_xdst(sk_dst_check(sk, 0)) : NULL;
+	if (!xdst) {
+		struct net *net = sock_net(sk);
+		memmove(&dest_stack, dest, sizeof(dest_stack));
+		dest = &dest_stack;
+		if (connected) {
+			unmark_xia_addr(dest);
+			dest_last_node = XIA_ENTRY_NODE_INDEX;
+		}
+		xdst = xip_mark_addr_and_get_dst(net, dest->s_row,
+			dest_n, &dest_last_node, 0);
+		if (IS_ERR(xdst))
+			return PTR_ERR(xdst);
+		if (connected) {
+			xdst_hold(xdst);
+			lock_sock(sk);
+			memmove(&xia->xia_daddr, dest, sizeof(xia->xia_daddr));
+			xia->xia_dlast_node = dest_last_node;
+			sk_dst_set(sk, &xdst->dst);
+			release_sock(sk);
+		}
+	}
+
+	/* From now on, don't just `return', but `goto out'! */
+
+	if (msg->msg_flags & MSG_CONFIRM) {
+		dst_confirm(&xdst->dst);
+		if ((msg->msg_flags & MSG_PROBE) && !len) {
+			rc = 0;
+			goto out;
+		}
+	}
+
+	/* Lockless fast path for the non-corking case. */
+	if (!corkreq) {
+		struct sk_buff *skb = xip_make_skb(sk, dest, dest_n,
+			dest_last_node, xdp_getfrag, msg->msg_iov, len,
+			0, xdst);
+		if (IS_ERR(skb))
+			rc = PTR_ERR(skb);
+		else if (!skb)
+			rc = -SOCK_NOSPACE;
+		else
+			rc = xdp_send_skb(skb);
+		goto out;
+	}
+
+	lock_sock(sk);
+	if (unlikely(lxdp->pending)) {
+		/* The socket is already corked while preparing it;
+		 * this condition is an application bug.
+		 *
+		 * It can be triggered when two threads call,
+		 * about the same time, send(2) on the same socket, and
+		 * each call uses flag MSG_MORE.
+		 */
+		release_sock(sk);
+		LIMIT_NETDEBUG(KERN_DEBUG pr_fmt("XDP %s(): cork app bug\n"),
+			__func__);
+		rc = -EINVAL;
+		goto out;
+	}
+
+	/* Now cork the socket to append data. */
+	lxdp->pending = true;
+
+append_data:
+	/* Socket must be locked at this point. */
+
+	lxdp->len += len;
+	rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len, 0, xdst,
+		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
+	if (rc)
+		xdp_flush_pending_frames(sk);
+	else if (!corkreq)
+		rc = xdp_push_pending_frames(sk);
+	else if (unlikely(skb_queue_empty(&sk->sk_write_queue)))
+		lxdp->pending = false;
+	release_sock(sk);
+
+out:
+	xdst_put(xdst);
+	return rc ? rc : len;
 }
 
 /* If there is a packet there, return it, otherwise block. */

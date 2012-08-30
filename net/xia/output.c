@@ -106,3 +106,25 @@ void xip_flush_pending_frames(struct sock *sk)
 		kfree_skb(skb);
 }
 EXPORT_SYMBOL_GPL(xip_flush_pending_frames);
+
+int xip_append_data(struct sock *sk,
+	int getfrag(void *from, char *to, int offset,
+		int len, int odd, struct sk_buff *skb),
+	struct iovec *from, int length, int transhdrlen,
+	struct xip_dst *xdst, unsigned int flags)
+{
+	/* TODO */
+	return -EINVAL;
+}
+EXPORT_SYMBOL_GPL(xip_append_data);
+
+struct sk_buff *xip_make_skb(struct sock *sk,
+	struct xia_addr *dest, int dest_n, u8 dest_last_node,
+	int getfrag(void *from, char *to, int offset,
+		int len, int odd, struct sk_buff *skb),
+	struct iovec *from, int length, int transhdrlen, struct xip_dst *xdst)
+{
+	/* TODO */
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(xip_make_skb);

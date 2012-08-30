@@ -134,6 +134,13 @@ static inline int xia_is_nat(xid_type_t ty)
 	return ty == XIDTYPE_NAT;
 }
 
+static inline void unmark_xia_addr(struct xia_addr *addr)
+{
+	int i;
+	for (i = 0; i < XIA_NODES_MAX; i++)
+		addr->s_row[i].s_edge.i &= ~XIA_CHOSEN_EDGES;
+}
+
 #ifndef __KERNEL__
 /* XXX This section is only needed to make compiling applications with
  * old kernels' headers installed easier.
