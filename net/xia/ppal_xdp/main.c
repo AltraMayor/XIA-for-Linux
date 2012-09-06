@@ -336,7 +336,8 @@ static int local_output_output(struct sk_buff *skb)
 
 	/* XXX Add support to path MTU here. */
 	if (unlikely(skb->len > dev->mtu)) {
-		pr_err();
+		pr_err("XIA XDP %s: dropping %u-byte packet; MTU is %uB\n",
+			__func__, skb->len, dev->mtu);
 		kfree_skb(skb);
 		return -1;
 	}
@@ -365,6 +366,9 @@ static int xdp_local_deliver(struct xip_route_proc *rproc, struct net *net,
 
 	xdst->sink_action = XDA_METHOD;
 	xdst->info = &lxdp->xia_sk.sk;
+	BUG_ON(xdst->dst.dev);
+	xdst->dst.dev = net->loopback_dev;
+	dev_hold(xdst->dst.dev);
 	if (xdst->input) {
 		xdst->dst.input = local_input_input;
 		xdst->dst.output = local_input_output;
@@ -638,7 +642,6 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		 */
 		lock_sock(sk);
 		if (likely(lxdp->pending)) {
-			/* TODO Is it the best way to initialize @xdst? */
 			xdst = NULL;
 			goto append_data;
 		}
@@ -756,7 +759,10 @@ append_data:
 	release_sock(sk);
 
 out:
-	xdst_put(xdst);
+	/* @xdst is NULL when appending data. */
+	if (xdst)
+		xdst_put(xdst);
+
 	return rc ? rc : len;
 }
 

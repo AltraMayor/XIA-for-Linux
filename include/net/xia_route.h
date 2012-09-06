@@ -5,7 +5,7 @@
 #include <net/dst.h>
 #include <net/xia_dst_table.h>
 
-#define XIP_MIN_MTU	1500
+#define XIP_MIN_MTU	1024
 
 struct xiphdr {
 	__u8	version;	/* XIP version. */
@@ -37,6 +37,7 @@ static inline int xip_hdr_len(const struct xiphdr *xiph)
 /* Max Payload Length. */
 #define XIP_MAXPLEN	0xffff
 
+#define MIN_XIP_HEADER	(sizeof(struct xiphdr) + sizeof(struct xia_row))
 #define MAX_XIP_HEADER	(sizeof(struct xiphdr) + sizeof(struct xia_addr) * 2)
 
 /* Min Maximum Segment Size (MSS). */

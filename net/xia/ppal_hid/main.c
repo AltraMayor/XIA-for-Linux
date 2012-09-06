@@ -322,6 +322,11 @@ static int hid_local_deliver(struct xip_route_proc *rproc, struct net *net,
 
 /* Forward packets. */
 
+static inline struct hrdw_addr *xdst_ha(struct xip_dst *xdst)
+{
+	return xdst->info;
+}
+
 static int main_input_input(struct sk_buff *skb)
 {
 	struct xiphdr *xiph;
@@ -354,7 +359,7 @@ static int main_input_input(struct sk_buff *skb)
 	}
 
 	/* We are about to mangle packet. Copy it! */
-	ha = (struct hrdw_addr *)xdst->info;
+	ha = xdst_ha(xdst);
 	if (skb_cow(skb, LL_RESERVED_SPACE(ha->dev) + xdst->dst.header_len))
 		goto drop;
 	xiph = xip_hdr(skb);
@@ -371,7 +376,7 @@ drop:
 
 static inline struct hrdw_addr *skb_ha(struct sk_buff *skb)
 {
-	return (struct hrdw_addr *)skb_xdst(skb)->info;
+	return xdst_ha(skb_xdst(skb));
 }
 
 static inline int xip_skb_dst_mtu(struct sk_buff *skb)
@@ -468,6 +473,9 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	xdst->passthrough_action = XDA_METHOD;
 	xdst->sink_action = XDA_METHOD;
 	xdst->info = ha;
+	BUG_ON(xdst->dst.dev);
+	xdst->dst.dev = ha->dev;
+	dev_hold(xdst->dst.dev);
 	if (xdst->input) {
 		xdst->dst.input = main_input_input;
 		xdst->dst.output = main_input_output;
