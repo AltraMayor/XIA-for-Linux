@@ -107,14 +107,92 @@ void xip_flush_pending_frames(struct sock *sk)
 }
 EXPORT_SYMBOL_GPL(xip_flush_pending_frames);
 
+/* If it's not the first chunk of data, @xdst may be NULL. */
+static int __xip_append_data(struct sock *sk, struct sk_buff_head *queue,
+	int getfrag(void *from, char *to, int offset,
+		int len, int odd, struct sk_buff *skb),
+	struct iovec *from, int length, int transhdrlen,
+	struct xip_dst *xdst, unsigned int flags)
+{
+	struct sk_buff *skb;
+	int copy;
+	unsigned int offset;
+
+	skb = skb_peek_tail(queue);
+
+	if (!skb) {
+		/* TODO This part should really be another function. */
+		struct net_device *dev = xdst->dst.dev;
+		u32 mtu, alloclen;
+		int hh_len, rc;
+
+		if (!dev) {
+			if (net_ratelimit())
+				pr_warn("XIP %s: there is a bug somewhere, tried to senda datagram, but dst.dev is NULL\n",
+					__func__);
+			return -ENODEV;
+		}
+
+		mtu = dst_mtu(&xdst->dst);
+		if (mtu < XIP_MIN_MTU) {
+			if (net_ratelimit())
+				pr_warn("XIP %s: cannot send datagram out because mtu (= %u) of dev %s is less than minimum MTU (= %u)\n",
+					__func__, mtu, dev->name, XIP_MIN_MTU);
+			return -EMSGSIZE;
+		}
+
+		/* One must reserve space for the link layer header;
+		 * Perhaps a full-size XIP header will be used; and 
+		 * reserve space for the largest payload possible.
+		 */
+		hh_len = LL_RESERVED_SPACE(dev);
+		alloclen = hh_len + MAX_XIP_HEADER +
+			(mtu - MIN_XIP_HEADER - transhdrlen);
+
+		skb = sock_alloc_send_skb(sk, alloclen,
+			(flags & MSG_DONTWAIT), &rc);
+		if (unlikely(!skb))
+			return rc;
+
+		/* Fill in the control structures. */
+		skb_reserve(skb, hh_len + MAX_XIP_HEADER);
+		/* TODO Where will network header be added? */
+		skb_set_transport_header(skb, 0);
+		skb_put(skb, transhdrlen);
+		/* XXX Does we need to set skb_shinfo(skb)->tx_flags? */
+		
+		/* Put the packet on the pending queue. */
+		__skb_queue_tail(queue, skb);
+	}
+
+	/* Copy data into packet. */
+	copy = min_t(int, skb_tailroom(skb), length);
+	offset = skb->len;
+	if (getfrag(from, skb_put(skb, copy), 0, copy, offset, skb) < 0) {
+		__skb_trim(skb, offset);
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+/* xip_append_data() makes one large XIP datagram from many pieces of data.
+ *
+ * Once all pieces of data are added, which are held on the socket,
+ * one must call xip_finish_skb() before consuming the datagram.
+ */
+/* TODO Who is releasing @xdst? In IP it's done by ip_setup_cork() called by
+ * ip_append_data(). */
 int xip_append_data(struct sock *sk,
 	int getfrag(void *from, char *to, int offset,
 		int len, int odd, struct sk_buff *skb),
 	struct iovec *from, int length, int transhdrlen,
 	struct xip_dst *xdst, unsigned int flags)
 {
-	/* TODO */
-	return -EINVAL;
+	if (flags & MSG_PROBE)
+		return 0;
+	return __xip_append_data(sk, &sk->sk_write_queue, getfrag, from,
+		length, transhdrlen, xdst, flags);
 }
 EXPORT_SYMBOL_GPL(xip_append_data);
 
