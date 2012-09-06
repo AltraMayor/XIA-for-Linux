@@ -32,8 +32,15 @@ static unsigned int xip_default_advmss(const struct dst_entry *dst)
 static unsigned int xip_mtu(const struct dst_entry *dst)
 {
 	unsigned int mtu = dst_metric_raw(dst, RTAX_MTU);
+	struct net_device *dev;
+
 	if (mtu)
 		return mtu;
+
+	dev = dst->dev;
+	if (dev)
+		return dev->mtu;
+
 	return XIP_MIN_MTU;
 }
 
@@ -55,7 +62,7 @@ static void xip_update_pmtu(struct dst_entry *dst, struct sock *sk,
 	struct sk_buff *skb, u32 mtu)
 {
 	if (mtu < dst_mtu(dst)) {
-		mtu = mtu < XIP_MIN_MTU ? XIP_MIN_MTU : mtu;
+		mtu = max_t(u32, mtu, XIP_MIN_MTU);
 		dst_metric_set(dst, RTAX_MTU, mtu);
 	}
 }
@@ -91,7 +98,7 @@ EXPORT_SYMBOL_GPL(xip_dst_ops_template);
 static struct xip_dst *xip_dst_alloc(struct net *net, int flags)
 {
 	struct xip_dst *xdst = dst_alloc(&net->xia.xip_dst_ops,
-		NULL, 1, 0, flags | DST_NOCACHE);
+		NULL, 1, DST_OBSOLETE_NONE, flags | DST_NOCACHE);
 	if (xdst)
 		memset(xdst->after_dst, 0, sizeof(*xdst) - sizeof(xdst->dst));
 	return xdst;
@@ -176,6 +183,12 @@ static void detach_anchors(struct xip_dst *xdst);
 static void xdst_free_common(struct xip_dst *xdst)
 {
 	detach_anchors(xdst);
+
+	xdst->dst.obsolete = DST_OBSOLETE_KILL;
+
+	/* XXX The following cleanup isn't really safe, but DST's interface
+	 * does not provide a safe alternative.
+	 */
 
 	/* Clear references to a principal that may be unloading. */
 	xdst->dst.input = dst_discard;
