@@ -327,20 +327,14 @@ static int local_input_output(struct sk_buff *skb)
 
 static int local_output_output(struct sk_buff *skb)
 {
-	struct xip_dst *xdst = skb_xdst(skb);
-	struct net *net = xdst_net(xdst);
-	struct net_device *dev = net->loopback_dev;
+	struct net_device *dev = skb_dst(skb)->dev;
+
+	skb = xip_trim_packet_if_needed(skb, dev->mtu);
+	if (!skb)
+		return -1;
 
 	skb->dev = dev;
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
-
-	/* XXX Add support to path MTU here. */
-	if (unlikely(skb->len > dev->mtu)) {
-		pr_err("XIA XDP %s: dropping %u-byte packet; MTU is %uB\n",
-			__func__, skb->len, dev->mtu);
-		kfree_skb(skb);
-		return -1;
-	}
 
 	/* Deliver @skb to its socket. */
 	return dev_loopback_xmit(skb);

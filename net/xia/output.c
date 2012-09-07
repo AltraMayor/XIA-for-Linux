@@ -27,6 +27,19 @@ int xip_send_skb(struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(xip_send_skb);
 
+struct sk_buff *xip_trim_packet_if_needed(struct sk_buff *skb, u32 mtu)
+{
+	if (likely(skb->len <= mtu))
+		return skb;
+
+	BUG_ON(mtu < XIP_MIN_MTU);
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (likely(skb))
+		__skb_trim(skb, mtu);
+	return skb;
+}
+EXPORT_SYMBOL_GPL(xip_trim_packet_if_needed);
+
 static inline void copy_xia_addr_to(const struct xia_addr *addr, int n,
 	struct xia_row *to)
 {
