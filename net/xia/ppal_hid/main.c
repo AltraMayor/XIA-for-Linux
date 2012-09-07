@@ -1,5 +1,6 @@
 #include <linux/module.h>
 #include <net/xia_dag.h>
+#include <net/xia_output.h>
 #include <net/xia_hid.h>
 
 /*
@@ -342,21 +343,19 @@ static int main_input_input(struct sk_buff *skb)
 
 	xiph = xip_hdr(skb);
 	if (!xiph->hop_limit) {
-		/* XXX An ICMP-like error should be genererated here. */
-		if (net_ratelimit())
-			pr_warn("%s: hop limit reached\n", __func__);
+		/* XXX Is this warning necessary? If so,
+		 * shouldn't it report more?
+		 */
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("%s: hop limit reached\n"),
+			__func__);
 		goto drop;
 	}
 
 	xdst = skb_xdst(skb);
 
-	if (unlikely(skb->len > dst_mtu(&xdst->dst))) {
-		/* XXX An ICMP-like error should be genererated here. */
-		if (net_ratelimit())
-			pr_warn("%s: packet is larger than MTU (%i > %i)\n",
-				__func__, skb->len, dst_mtu(&xdst->dst));
-		goto drop;
-	}
+	skb = xip_trim_packet_if_needed(skb, dst_mtu(&xdst->dst));
+	if (unlikely(!skb))
+		return NET_RX_DROP;
 
 	/* We are about to mangle packet. Copy it! */
 	ha = xdst_ha(xdst);
@@ -381,29 +380,26 @@ static inline struct hrdw_addr *skb_ha(struct sk_buff *skb)
 
 static inline int xip_skb_dst_mtu(struct sk_buff *skb)
 {
-	/* XXX Allow a transport protocol to probe the Path MTU, and
-	 * use skb_ha(skb)->dev-mtu in that case.
-	 * See net/ipv4/ip_output.c:ip_skb_dst_mtu for an example.
-	 */
 	return dst_mtu(skb_dst(skb));
 }
 
 static int main_input_output(struct sk_buff *skb)
 {
 	struct hrdw_addr *ha = skb_ha(skb);
-	struct net_device *dev = ha->dev;
-	unsigned int hh_len = LL_RESERVED_SPACE(dev);
+	struct net_device *dev;
+	unsigned int hh_len;
 	int rc;
 
+	skb = xip_trim_packet_if_needed(skb, xip_skb_dst_mtu(skb));
+	if (!skb)
+		return NET_RX_DROP;
+
+	dev = ha->dev;
 	skb->dev = dev;
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 
-	if (skb->len > xip_skb_dst_mtu(skb)) {
-		kfree_skb(skb);
-		return NET_RX_DROP;
-	}
-
 	/* Be paranoid, rather than too clever. */
+	hh_len = LL_RESERVED_SPACE(dev);
 	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) {
 		struct sk_buff *skb2;
 
