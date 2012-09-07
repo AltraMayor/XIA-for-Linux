@@ -543,7 +543,7 @@ static int xdp_push_pending_frames(struct sock *sk)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct sk_buff *skb = xip_finish_skb(sk);
-	int rc = skb ? xdp_send_skb(skb) : 0;
+	int rc = !IS_ERR_OR_NULL(skb) ? xdp_send_skb(skb) : PTR_ERR(skb);
 	lxdp->len = 0;
 	lxdp->pending = false;
 	return rc;
@@ -715,7 +715,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	if (!corkreq) {
 		struct sk_buff *skb = xip_make_skb(sk, dest, dest_n,
 			dest_last_node, xdp_getfrag, msg->msg_iov, len,
-			0, xdst);
+			0, xdst, msg->msg_flags);
 		if (IS_ERR(skb))
 			rc = PTR_ERR(skb);
 		else if (!skb)
