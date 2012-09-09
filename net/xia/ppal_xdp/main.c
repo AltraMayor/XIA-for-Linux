@@ -25,8 +25,7 @@ struct fib_xid_xdp_local {
 	/* Any pending outbound frame? */
 	bool			pending;
 
-	/* Total length of pending frames. */
-	unsigned int		len;
+	/* Two free bytes. */
 
 	/* FIB XID related fields. */
 	struct fib_xid		fxid;
@@ -377,6 +376,7 @@ static int xdp_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	return 0;
 }
 
+/* Redirect. */
 static int xdp_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
@@ -417,6 +417,9 @@ static void xdp_close(struct sock *sk, long timeout)
 	sk_common_release(sk);
 }
 
+/* XDP isn't meant as a tool to poke other principals, thus
+ * enforce that all sinks are XIDTYPE_XDP.
+ */
 static int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty)
 {
 	int i;
@@ -442,27 +445,24 @@ static int xdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	DECLARE_SOCKADDR(struct sockaddr_xia *, daddr, uaddr);
 	int rc, n;
 
-	/* XDP isn't meant as a tool to poke other principals, thus
-	 * enforce that all sinks are XIDTYPE_XDP.
-	 */
 	rc = check_type_of_all_sinks(daddr, XIDTYPE_XDP);
 	if (rc < 0)
-		goto out;
+		return rc;
 	n = rc;
 
 	lock_sock(sk);
 	rc = xia_set_dest(xia_sk(sk), &daddr->sxia_addr, n);
 	release_sock(sk);
-out:
 	return rc;
 }
 
 static int xdp_disconnect(struct sock *sk, int flags)
 {
-	struct xia_sock *xia = xia_sk(sk);
-	sk->sk_state = TCP_CLOSE;
 	sock_rps_reset_rxhash(sk);	/* XXX Review RPS calls. */
-	xia_reset_dest(xia);
+	lock_sock(sk);
+	xia_reset_dest(xia_sk(sk));
+	sk->sk_state = TCP_CLOSE;
+	release_sock(sk);
 	return 0;
 }
 
@@ -512,7 +512,6 @@ static void xdp_flush_pending_frames(struct sock *sk)
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	if (!lxdp->pending)
 		return;
-	lxdp->len = 0;
 	lxdp->pending = false;
 	xip_flush_pending_frames(sk);
 }
@@ -538,7 +537,6 @@ static int xdp_push_pending_frames(struct sock *sk)
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct sk_buff *skb = xip_finish_skb(sk);
 	int rc = !IS_ERR_OR_NULL(skb) ? xdp_send_skb(skb) : PTR_ERR(skb);
-	lxdp->len = 0;
 	lxdp->pending = false;
 	return rc;
 }
@@ -648,14 +646,17 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 
 	/* Obtain destination address. */
 	if (msg->msg_name) {
-		rc = check_sockaddr_xia(msg->msg_name, msg->msg_namelen);
+		DECLARE_SOCKADDR(struct sockaddr_xia *, addr, msg->msg_name);
+		rc = check_sockaddr_xia((struct sockaddr *)addr,
+			msg->msg_namelen);
 		if (rc)
 			return rc;
-		dest = msg->msg_name;
-		dest_n = xia_test_addr(dest);
+		rc = check_type_of_all_sinks(addr, XIDTYPE_XDP);
+		if (rc < 0)
+			return rc;
+		dest_n = rc;
+		dest = &addr->sxia_addr;
 		dest_last_node = XIA_ENTRY_NODE_INDEX;
-		if (dest_n < 1)
-			return -EINVAL;
 	} else {
 		if (!xia->xia_daddr_set)
 			return -EDESTADDRREQ;
@@ -741,7 +742,6 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 append_data:
 	/* Socket must be locked at this point. */
 
-	lxdp->len += len;
 	rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len, 0, xdst,
 		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
 	if (rc)
@@ -764,7 +764,7 @@ out:
 static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	size_t len, int noblock, int flags, int *addr_len)
 {
-	struct sockaddr_xia *sxia = (struct sockaddr_xia *)msg->msg_name;
+	DECLARE_SOCKADDR(struct sockaddr_xia *, sxia, msg->msg_name);
 	struct sk_buff *skb;
 	unsigned int ulen, copied;
 	int rc, peeked;
