@@ -28,10 +28,15 @@ static inline struct xiphdr *xip_hdr(const struct sk_buff *skb)
 	return (struct xiphdr *)skb_network_header(skb);
 }
 
-static inline int xip_hdr_len(const struct xiphdr *xiph)
+static inline int xip_hdr_size(int num_dst, int num_src)
 {
 	return sizeof(struct xiphdr) +
-		(xiph->num_dst + xiph->num_src) * sizeof(struct xia_row);
+		(num_dst + num_src) * sizeof(struct xia_row);
+}
+
+static inline int xip_hdr_len(const struct xiphdr *xiph)
+{
+	return xip_hdr_size(xiph->num_dst, xiph->num_src);
 }
 
 /* Max Payload Length. */
