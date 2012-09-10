@@ -634,8 +634,17 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		 */
 		lock_sock(sk);
 		if (likely(lxdp->pending)) {
-			xdst = NULL;
-			goto append_data;
+			rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len,
+				corkreq ? msg->msg_flags|MSG_MORE :
+					msg->msg_flags);
+			if (rc)
+				xdp_flush_pending_frames(sk);
+			else if (!corkreq)
+				rc = xdp_push_pending_frames(sk);
+			else if (unlikely(skb_queue_empty(&sk->sk_write_queue)))
+				lxdp->pending = false;
+			release_sock(sk);
+			goto out;
 		}
 		release_sock(sk);
 	}
@@ -696,13 +705,13 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		}
 	}
 
-	/* From now on, don't just `return', but `goto out'! */
+	/* From now on, don't just `return' or `goto out', but `goto xdst'! */
 
 	if (msg->msg_flags & MSG_CONFIRM) {
 		dst_confirm(&xdst->dst);
 		if ((msg->msg_flags & MSG_PROBE) && !len) {
 			rc = 0;
-			goto out;
+			goto xdst;
 		}
 	}
 
@@ -717,7 +726,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 			rc = -SOCK_NOSPACE;
 		else
 			rc = xdp_send_skb(skb);
-		goto out;
+		goto xdst;
 	}
 
 	lock_sock(sk);
@@ -733,30 +742,28 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		LIMIT_NETDEBUG(KERN_DEBUG pr_fmt("XDP %s(): cork app bug\n"),
 			__func__);
 		rc = -EINVAL;
-		goto out;
+		goto xdst;
+	}
+
+	rc = xip_start_skb(sk, xdst, dest, dest_n, dest_last_node, 0,
+		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
+	if (rc) {
+		release_sock(sk);
+		goto xdst;
 	}
 
 	/* Now cork the socket to append data. */
 	lxdp->pending = true;
 
-append_data:
-	/* Socket must be locked at this point. */
-
-	rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len, 0, xdst,
+	rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len,
 		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
 	if (rc)
 		xdp_flush_pending_frames(sk);
-	else if (!corkreq)
-		rc = xdp_push_pending_frames(sk);
-	else if (unlikely(skb_queue_empty(&sk->sk_write_queue)))
-		lxdp->pending = false;
 	release_sock(sk);
 
+xdst:
+	xdst_put(xdst);
 out:
-	/* @xdst is NULL when appending data. */
-	if (xdst)
-		xdst_put(xdst);
-
 	return rc ? rc : len;
 }
 
