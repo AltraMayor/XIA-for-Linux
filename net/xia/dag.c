@@ -292,7 +292,7 @@ int xia_test_addr(const struct xia_addr *addr)
 		 * friendlier error since it's also XIAEADDR_MULTI_COMPONENTS.
 		 */
 		__be32 all_edges = addr->s_row[n - 1].s_edge.i;
-		if (be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
+		if (__be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -XIAEADDR_NO_ENTRY;
 
 		if (visited != ((1U << n) - 1))
