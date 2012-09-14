@@ -419,6 +419,10 @@ int xia_add_socket(struct xia_socket_proc *sproc)
 	for (last_proc = 0; last_proc < SOCK_MAX; last_proc++) {
 		const struct xia_socket_type_proc *stproc =
 			sproc->procs[last_proc];
+		if (!stproc)	/* Skip undefined socket types. */
+			continue;
+
+		BUG_ON(!stproc->proto);
 		stproc->proto->sockets_allocated = &sproc->sockets_allocated;
 		rc = proto_register(stproc->proto, stproc->alloc_slab);
 		if (rc) {
