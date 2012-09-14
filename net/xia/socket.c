@@ -70,7 +70,7 @@ static int check_valid_single_sink(struct sockaddr_xia *addr)
 	i = n - 2;
 	while (i >= 0) {
 		__be32 all_edges = addr->sxia_addr.s_row[i].s_edge.i;
-		if (be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
+		if (__be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -EINVAL; /* There's more than a sink. */
 	}
 
@@ -516,7 +516,7 @@ static void xia_sock_destruct(struct sock *sk)
 static int xia_create(struct net *net, struct socket *sock,
 		int protocol, int kern)
 {
-	xid_type_t ty = __cpu_to_be32(protocol);
+	xid_type_t ty = __raw_cpu_to_be32(protocol);
 	struct hlist_head *head = ppalhead(ty);
 	struct xia_socket_proc *sproc;
 	const struct xia_socket_type_proc *stproc;
