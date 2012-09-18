@@ -292,6 +292,7 @@ static int local_input_input(struct sk_buff *skb)
 	if (sk_rcvqueues_full(sk, skb, sk->sk_rcvbuf))
 		goto drop;
 
+	skb_pull_xiphdr(skb);
 	skb_dst_drop(skb);
 
 	bh_lock_sock(sk);
