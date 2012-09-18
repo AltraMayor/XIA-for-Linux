@@ -1,8 +1,9 @@
 #include <linux/export.h>
-#include <net/ip_vs.h> /* Needed for skb_net. */
+#include <net/ip_vs.h> /* Needed for skb_net(). */
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
-#include <net/xia_output.h> /* Needed for __xip_local_out. */
+#include <net/xia_output.h> /* Needed for __xip_local_out(). */
+#include <net/xia_socket.h> /* Needed for copy_n_and_shade_xia_addr(). */
 #include <net/xia_route.h>
 
 /*
@@ -298,9 +299,20 @@ static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
 /* XXX An ICMP-like error should be genererated here. */
 static inline int xip_dst_unreachable(char *direction, struct sk_buff *skb)
 {
-	if (net_ratelimit())
-		pr_warn("XIP: unreachable destination on direction %s\n",
-			direction);
+	/* XXX The should be a variation of xia_ntop() that receives
+	 * a struct xia_row instead of a struct xia_addr.
+	 * Once copy_n_and_shade_xia_addr() is removed, remove include to
+	 * <net/xia_socket.h>.
+	 */
+	if (net_ratelimit()) {
+		const struct xiphdr *xiph = xip_hdr(skb);
+		struct xia_addr addr;
+		char str_addr[XIA_MAX_STRADDR_SIZE];
+		copy_n_and_shade_xia_addr(&addr, xiph->dst_addr, xiph->num_dst);
+		BUG_ON(xia_ntop(&addr, str_addr, XIA_MAX_STRADDR_SIZE, 0) < 0);
+		pr_warn("XIP: unreachable destination on direction %s, last_node=%i, destination_address=`%s'\n",
+			direction, xiph->last_node, str_addr);
+	}
 	return dst_discard(skb);
 }
 
@@ -865,8 +877,8 @@ static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
 	int index)
 {
 	u8 *pe = &last_row->s_edge.a[index];
-	xia_mark_edge(pe);
 	*plast_node = *pe;
+	xia_mark_edge(pe);
 }
 
 /* XXX An ICMP-like error should be genererated here. */
