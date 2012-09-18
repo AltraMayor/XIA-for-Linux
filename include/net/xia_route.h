@@ -238,4 +238,6 @@ void xip_del_router(struct xip_route_proc *rproc);
 struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 	struct xia_row *addr, int num_dst, u8 *plast_node, int input);
 
+void skb_pull_xiphdr(struct sk_buff *skb);
+
 #endif /* _NET_XIA_ROUTE_H */

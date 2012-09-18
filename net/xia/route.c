@@ -1121,6 +1121,15 @@ static inline int xip_route(struct sk_buff *skb, struct xia_row *addr,
  *	Handling XIP incoming packets
  */
 
+void skb_pull_xiphdr(struct sk_buff *skb)
+{
+	__skb_pull(skb, xip_hdr_len(xip_hdr(skb)));
+
+	/* Point into the XIP datagram, just past the XIP header. */
+	skb_reset_transport_header(skb);
+}
+EXPORT_SYMBOL_GPL(skb_pull_xiphdr);
+
 /* Main XIP receive routine. */
 static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct packet_type *pt, struct net_device *orig_dev)
