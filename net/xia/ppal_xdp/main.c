@@ -830,15 +830,31 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
 	struct xia_row *ssink = &addr->sxia_addr.s_row[node_n - 1];
+	struct fib_xid_xdp_local *lxdp;
+	struct fib_xid_table *local_xtbl;
+	struct net *net;
+	int rc;
 
 	/* Make sure we are allowed to bind here. */
 	if (ssink->s_xid.xid_type != XIDTYPE_XDP)
 		return -EXTYNOSUPPORT;
 
-	if (sk->sk_prot->get_port(sk, node_n))
-		return -EADDRINUSE;
+	lxdp = sk_lxdp(sk);
+	init_fxid(&lxdp->fxid, ssink->s_xid.xid_id);
 
-	return 0;
+	net = sock_net(sk);
+	rcu_read_lock();
+	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
+	BUG_ON(!local_xtbl);
+	rc = fib_add_fxid(local_xtbl, &lxdp->fxid);
+	/* We don't sock_hold(sk) because @lxdp->fxid is always released
+	 * before @lxdp is freed.
+	 */
+	rcu_read_unlock();
+
+	if (!rc)
+		sock_prot_inuse_add(net, sk->sk_prot, 1);
+	return rc == -EEXIST ? -EADDRINUSE : rc;
 }
 
 static int xdp_backlog_rcv(struct sock *sk, struct sk_buff *skb)
@@ -891,35 +907,6 @@ static void xdp_unhash(struct sock *sk)
 	xtbl_put(local_xtbl);
 }
 
-/* The second parameter of this method was repurposed to better fit XIA.
- * Originally it was `snum' for port numbers.
- */
-static int xdp_get_port(struct sock *sk, unsigned short node_n)
-{
-	struct xia_sock	*xia = xia_sk(sk);
-	struct xia_row	*ssink = &xia->xia_saddr.s_row[node_n - 1];
-	struct net *net = sock_net(sk);
-	struct fib_xid_xdp_local *lxdp;
-	struct fib_xid_table *local_xtbl;
-	int rc;
-
-	lxdp = xiask_lxdp(xia);
-	init_fxid(&lxdp->fxid, ssink->s_xid.xid_id);
-
-	rcu_read_lock();
-	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
-	BUG_ON(!local_xtbl);
-	rc = fib_add_fxid(local_xtbl, &lxdp->fxid);
-	/* We don't sock_hold(sk) because @lxdp->fxid is always released
-	 * before @lxdp is freed.
-	 */
-	rcu_read_unlock();
-
-	if (!rc)
-		sock_prot_inuse_add(net, sk->sk_prot, 1);
-	return rc;
-}
-
 static long sysctl_xdp_mem[3] __read_mostly;
 static int sysctl_xdp_rmem_min __read_mostly = SK_MEM_QUANTUM;
 static int sysctl_xdp_wmem_min __read_mostly = SK_MEM_QUANTUM;
@@ -943,7 +930,6 @@ static struct proto xdp_prot __read_mostly = {
 	.hash			= xdp_hash_rehash,
 	.unhash			= xdp_unhash,
 	.rehash			= xdp_hash_rehash,
-	.get_port		= xdp_get_port,
 	.memory_allocated	= &xdp_memory_allocated,
 	.sysctl_mem		= sysctl_xdp_mem,
 	.sysctl_wmem		= &sysctl_xdp_wmem_min,
