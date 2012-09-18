@@ -72,6 +72,7 @@ static int check_valid_single_sink(struct sockaddr_xia *addr)
 		__be32 all_edges = addr->sxia_addr.s_row[i].s_edge.i;
 		if (__be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -EINVAL; /* There's more than a sink. */
+		i--;
 	}
 
 	return n;
