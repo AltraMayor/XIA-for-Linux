@@ -358,7 +358,7 @@ static int xdp_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	/* An XDP cannot be a passthrough. */
 	xdst->passthrough_action = XDA_ERROR;
 
-	xdst->sink_action = XDA_METHOD;
+	xdst->sink_action = XDA_METHOD_AND_SELECT_EDGE;
 	xdst->info = &lxdp->xia_sk.sk;
 	BUG_ON(xdst->dst.dev);
 	xdst->dst.dev = net->loopback_dev;
