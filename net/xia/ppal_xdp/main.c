@@ -561,7 +561,7 @@ static int xdp_setsockopt(struct sock *sk, int level, int optname,
 	switch (optname) {
 	case XDP_CORK:
 		lxdp->corkflag = !!val;
-		if (val) {
+		if (!val) {
 			lock_sock(sk);
 			xdp_push_pending_frames(sk);
 			release_sock(sk);
