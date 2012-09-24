@@ -69,7 +69,7 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 	int hh_len, xh_len, rc;
 
 	if (!dev) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIP %s: there is a bug somewhere, tried to senda datagram, but dst.dev is NULL\n"),
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIP %s: there is a bug somewhere, tried to send a datagram, but dst.dev is NULL\n"),
 			__func__);
 		return ERR_PTR(-ENODEV);
 	}

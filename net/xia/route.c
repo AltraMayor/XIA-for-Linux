@@ -326,6 +326,28 @@ static int xip_dst_unreachable_out(struct sk_buff *skb)
 	return xip_dst_unreachable("out", skb);
 }
 
+static void make_xdst_unreachable(struct net *net, struct xip_dst *xdst)
+{
+	struct net_device *dev;
+
+	xdst->dst.input = xip_dst_unreachable_in;
+	xdst->dst.output = xip_dst_unreachable_out;
+	xdst->passthrough_action = XDA_METHOD;
+	xdst->sink_action = XDA_METHOD;
+
+	/* One must assign some device to  dst.dev so packets can still be
+	 * created.
+	 */
+	BUG_ON(xdst->dst.dev);
+	dev = net->loopback_dev;
+	xdst->dst.dev = dev;
+	dev_hold(dev);
+	if (dev->mtu > XIP_MIN_MTU) {
+		/* Shrink MTU to minimize waste. */
+		dst_metric_set(&xdst->dst, RTAX_MTU, XIP_MIN_MTU);
+	}
+}
+
 /* add_xdst_rcu - Add @xdst to a DST table If it is unique in the table,
  *	otherwise call xdst_free (NOT xdst_rcu_free!) on @xtbl, and
  *	return the entry that is already in the table.
@@ -1065,10 +1087,7 @@ tail_call:
 	}
 
 	/* Destination is unreachable. */
-	xdst->dst.input = xip_dst_unreachable_in;
-	xdst->dst.output = xip_dst_unreachable_out;
-	xdst->passthrough_action = XDA_METHOD;
-	xdst->sink_action = XDA_METHOD;
+	make_xdst_unreachable(net, xdst);
 	xdst = add_xdst_rcu(net, xdst, -1);
 	goto tail_call;
 
