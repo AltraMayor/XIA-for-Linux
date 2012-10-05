@@ -55,12 +55,13 @@ static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
-	u32 pid = NETLINK_CB(cb->skb).pid;
+	u32 portid = NETLINK_CB(cb->skb).portid;
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct xia_xid dst;
 
-	nlh = nlmsg_put(skb, pid, seq, RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+		NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -155,13 +156,14 @@ static int main_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
-	u32 pid = NETLINK_CB(cb->skb).pid;
+	u32 portid = NETLINK_CB(cb->skb).portid;
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct fib_xid_ad_main *mad = fxid_mad(fxid);
 	struct xia_xid dst;
 
-	nlh = nlmsg_put(skb, pid, seq, RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+		NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 

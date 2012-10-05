@@ -41,7 +41,7 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 	cfg->xfc_nlflags = nlh->nlmsg_flags;
 	cfg->xfc_nlinfo.nlh = nlh;
 	cfg->xfc_nlinfo.nl_net = net;
-	cfg->xfc_nlinfo.pid = NETLINK_CB(skb).pid;
+	cfg->xfc_nlinfo.portid = NETLINK_CB(skb).portid;
 
 	nlmsg_for_each_attr(attr, nlh, sizeof(struct rtmsg), remaining) {
 		switch (nla_type(attr)) {
