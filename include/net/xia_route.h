@@ -54,7 +54,7 @@ struct xip_dst_anchor {
 	struct hlist_head	heads[XIA_OUTDEGREE_MAX];
 };
 
-/* xdst_free_anchor - release all strunct xip_dst entries that are attached
+/* xdst_free_anchor - release all struct xip_dst entries that are attached
  *			to @anchor.
  * NOTE
  *	IMPORTANT! Caller must RCU synch before calling this function.
@@ -190,14 +190,24 @@ static inline int xip_dst_hoplimit(const struct dst_entry *dst)
 enum XRP_ACTION {
 	/* XID is unknown, this action forces another edge of an address be
 	 * considered, or to discard a packet if there's no more edges.
+	 * IMPORTANT: The callee must add a negative dependency
+	 * at @anchor_index in @xdst before returning.
 	 */
 	XRP_ACT_NEXT_EDGE = 0,
 
 	/* Parameter @next_xid has received a new XID. */
 	XRP_ACT_REDIRECT,
 
-	/* @xdst was filled, the packet is ready to be forwarded. */
+	/* @xdst was filled, the packet is ready to be forwarded.
+	 * Positive dependency must have been added to @xdst.
+	 */
 	XRP_ACT_FORWARD,
+
+	/* The use of this action is discouraged, and should be used only
+	 * when none of the previous actions are possible due to an extreme
+	 * condition, for example lack of memory to conclude an operation.
+	 */
+	XRP_ACT_ABRUPT_FAILURE,
 };
 
 /* Route processing per principal. */
@@ -212,8 +222,8 @@ struct xip_route_proc {
 	 * @xid's anchor (positive dependency), fills @xdst's fields, and
 	 * return zero.
 	 *
-	 * Otherwise, this method returns -ENOENT. This implies a negative
-	 * dependency.
+	 * Otherwise, this method adds @xdst to a negative anchor of @xid
+	 * (negative dependency), and returns -ENOENT.
 	 */
 	int (*local_deliver)(struct xip_route_proc *rproc, struct net *net,
 		const u8 *xid, int anchor_index, struct xip_dst *xdst);
