@@ -299,7 +299,7 @@ static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
 /* XXX An ICMP-like error should be genererated here. */
 static inline int xip_dst_unreachable(char *direction, struct sk_buff *skb)
 {
-	/* XXX The should be a variation of xia_ntop() that receives
+	/* XXX There should be a variation of xia_ntop() that receives
 	 * a struct xia_row instead of a struct xia_addr.
 	 * Once copy_n_and_shade_xia_addr() is removed, remove include to
 	 * <net/xia_socket.h>.
@@ -666,47 +666,8 @@ void xdst_free_anchor(struct xip_dst_anchor *anchor)
 }
 EXPORT_SYMBOL_GPL(xdst_free_anchor);
 
-static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
-	int anchor_index, struct xip_dst *xdst);
-
-/* An RCU read lock is need to call this function in order to avoid
- * anchors to release @xdst before it's freed, and
- * to avoid releasing @anchor's host struct before returning it.
- */
-static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
-	const struct xia_xid *to)
-{
-	struct xip_dst *xdst;
-	struct xip_dst_anchor *anchor;
-
-	xdst = xip_dst_alloc(net, DST_NOCOUNT);
-	if (!xdst)
-		return ERR_PTR(-ENOMEM);
-
-	/* Obtain hash for a single edge. */
-	xdst->key_hash = start_edge_hash(0); /* @input doesn't matter here. */
-	update_edge_hash(&xdst->key_hash, to);
-
-	memmove(&xdst->xids[0], to, sizeof(xdst->xids[0]));
-	/* One doesn't need to zero the other @xdst->xids[]'s because
-	 * @xdst was just allocated.
-	 */
-
-	switch (main_deliver_rcu(net, to, 0, xdst)) {
-	case XRP_ACT_NEXT_EDGE:
-		/* The anchor never existed, or it's already gone. */
-		return NULL;
-	case XRP_ACT_FORWARD:
-		break;
-	default:
-		BUG();
-	}
-
-	anchor = xdst->anchors[0].anchor;
-	BUG_ON(!anchor);
-	xdst_free(xdst);
-	return anchor;
-}
+static int main_deliver_rcu(struct xip_route_proc *rproc, struct net *net,
+	const struct xia_xid *xid, int anchor_index, struct xip_dst *xdst);
 
 struct filter_from_arg {
 	xid_type_t	type;
@@ -721,6 +682,9 @@ static int filter_from(struct xip_dst *xdst, int anchor_index, void *arg)
 		are_xids_equal(xid->xid_id, from->id);
 }
 
+static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
+	const struct xia_xid *to);
+
 void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	const u8 *from_xid, const struct xia_xid *to)
 {
@@ -732,12 +696,14 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	if (IS_ERR_OR_NULL(anchor)) {
 		rcu_read_unlock();
 
+		/* XXX Once negative dependency on XIDs is implemented,
+		 * Remove the following code.
+		 */
 		if (!anchor)
 			return;
 
-		BUG_ON(anchor != ERR_PTR(-ENOMEM));
-		pr_err("%s: XIP positive dependency could not invalidate XIP DST entries because system memory is too low. Clearing XIP DST cache as a last resource...\n",
-			__func__);
+		pr_err("%s: XIP could not invalidate DST entries because of error %li. Clearing XIP DST cache as a last resource...\n",
+			__func__, PTR_ERR(anchor));
 		clear_xdst_table(net);
 		return;
 	}
@@ -785,28 +751,168 @@ static struct xip_route_proc *find_rproc_rcu(xid_type_t ty,
 	return NULL;
 }
 
+/* Implement negative dependency for unknown principals. */
+struct xip_negdep_route_proc {
+	struct xip_route_proc rproc;
+	struct xip_dst_anchor anchor;
+};
+
+static int negdep_local_deliver(struct xip_route_proc *rproc, struct net *net,
+	const u8 *xid, int anchor_index, struct xip_dst *xdst)
+{
+	/* We obviously don't know how to route this principal. */
+	return -ENOENT;
+}
+
+static int negdep_main_deliver(struct xip_route_proc *rproc, struct net *net,
+	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
+	struct xip_dst *xdst);
+
+static struct xip_negdep_route_proc negdep_rproc = {
+	.rproc = {
+		.xrp_ppal_type = XIDTYPE_NAT, /* Dummy value. */
+		.local_deliver = negdep_local_deliver,
+		.main_deliver = negdep_main_deliver,
+	},
+};
+
+static int negdep_main_deliver(struct xip_route_proc *rproc, struct net *net,
+	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
+	struct xip_dst *xdst)
+{
+	BUG_ON(rproc != &negdep_rproc.rproc);
+
+	/* We obviously don't know how to route this principal, so just
+	 * add negative dependency.
+	 */
+	xdst_attach_to_anchor(xdst, anchor_index, &negdep_rproc.anchor);
+	return XRP_ACT_NEXT_EDGE;
+}
+
+/* Return struct xip_route_proc associated to @ty, or NULL otherwise. */
+static inline struct xip_route_proc *get_the_rproc_rcu(const xid_type_t ty)
+{
+	return find_rproc_rcu(ty, ppalhead(ty));
+}
+
+/* Return struct xip_route_proc associated to @ty.
+ *
+ * If it doesn't exist, returns @negdep_rproc.rproc to deal with
+ * negative dependency on unknown principals.
+ *
+ * Notice that this function never fails; this is an important property
+ * assumed by callers.
+ */
+static inline struct xip_route_proc *get_an_rproc_rcu(const xid_type_t ty)
+{
+	struct xip_route_proc *rproc = get_the_rproc_rcu(ty);
+	return rproc ? rproc : &negdep_rproc.rproc;
+}
+
+/* Find the anchor of @to.
+ *
+ * Due to degative dependency, there always is an anchor.
+ *
+ * An RCU read lock is necessary to call this function in order to avoid
+ * anchors to release @xdst before it's freed, and
+ * to avoid releasing @anchor's host struct before returning it.
+ */
+static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
+	const struct xia_xid *to)
+{
+	struct xip_dst *xdst;
+	struct xip_route_proc *rproc;
+	struct xip_dst_anchor *anchor;
+
+	xdst = xip_dst_alloc(net, DST_NOCOUNT);
+	if (!xdst)
+		return ERR_PTR(-ENOMEM);
+
+	/* Obtain hash for a single edge. */
+	xdst->key_hash = start_edge_hash(0); /* @input doesn't matter here. */
+	update_edge_hash(&xdst->key_hash, to);
+
+	memmove(&xdst->xids[0], to, sizeof(xdst->xids[0]));
+	/* One doesn't need to zero the other @xdst->xids[]'s because
+	 * @xdst was just allocated.
+	 */
+
+	rproc = get_an_rproc_rcu(to->xid_type);
+	switch (main_deliver_rcu(rproc, net, to, 0, xdst)) {
+	case XRP_ACT_NEXT_EDGE:
+		/* We have a negative anchor. FALL THROUGH. */
+	case XRP_ACT_FORWARD:
+		/* We have a positive anchor. */
+		anchor = xdst->anchors[0].anchor;
+		/* XXX Once negative dependency on XIDs is implemented,
+		 * uncomment the following test.
+		 * BUG_ON(!anchor);
+		 */
+		break;
+
+	case XRP_ACT_ABRUPT_FAILURE:
+		anchor = ERR_PTR(-EPROTO);
+		break;
+
+	default:
+		BUG();
+	}
+
+	xdst_free(xdst);
+	return anchor;
+}
+
+static int filter_type(struct xip_dst *xdst, int anchor_index, void *arg)
+{
+	return xdst->xids[anchor_index].xid_type == (xid_type_t)(long)arg;
+}
+
 int xip_add_router(struct xip_route_proc *rproc)
 {
 	xid_type_t ty = rproc->xrp_ppal_type;
 	struct hlist_head *head = ppalhead(ty);
-	int rc;
 
 	spin_lock(&ppal_lock);
-
-	rc = -EEXIST;
-	if (find_rproc_locked(ty, head))
-		goto out;
+	if (find_rproc_locked(ty, head)) {
+		spin_unlock(&ppal_lock);
+		return -EEXIST;
+	}
 	hlist_add_head_rcu(&rproc->xrp_list, head);
-	rc = 0;
+	spin_unlock(&ppal_lock);
+
+	/* One has to synchronize RCU here because another thread may have
+	 * a reference to @negdep_rproc obtained from get_an_rproc_rcu() to
+	 * add a negative dependency for the previously unknown principal of
+	 * type @ty, and that reference may be used after we go over
+	 * @negdep_rproc.
+	 */
+	synchronize_rcu();
+
+	spin_lock(&ppal_lock);
+	if (!find_rproc_locked(ty, head)) {
+		/* Another thread removed @rproc before we could add @rproc,
+		 * so we're done.
+		 */
+		goto out;
+	}
+
+	/* From here @rproc cannot be removed before we finish, and no
+	 * dependency to principal of type @ty can be added to @negdep_rproc.
+	 */
+
+	/* Free negative dependencies on @ty. */
+	BUILD_BUG_ON(sizeof(void *) < sizeof(xid_type_t));
+	xdst_free_anchor_f(&negdep_rproc.anchor, filter_type, (void *)(long)ty);
 
 out:
 	spin_unlock(&ppal_lock);
-	return rc;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(xip_add_router);
 
 void xip_del_router(struct xip_route_proc *rproc)
 {
+	BUG_ON(rproc == &negdep_rproc.rproc);
 	spin_lock(&ppal_lock);
 	hlist_del_rcu(&rproc->xrp_list);
 	spin_unlock(&ppal_lock);
@@ -814,24 +920,16 @@ void xip_del_router(struct xip_route_proc *rproc)
 }
 EXPORT_SYMBOL_GPL(xip_del_router);
 
-static int local_deliver_rcu(struct net *net, const struct xia_xid *xid,
-	int anchor_index, struct xip_dst *xdst)
+static inline int local_deliver_rcu(struct xip_route_proc *rproc,
+	struct net *net, const struct xia_xid *xid, int anchor_index,
+	struct xip_dst *xdst)
 {
-	xid_type_t ty = xid->xid_type;
-	struct hlist_head *head = ppalhead(ty);
-	struct xip_route_proc *rproc;
-
-	rproc = find_rproc_rcu(ty, head);
-	if (rproc)
-		return rproc->local_deliver(rproc, net, xid->xid_id,
-			anchor_index, xdst);
-
-	/* We don't know how to route this principal. */
-	return -ENOENT;
+	return rproc->local_deliver(rproc, net, xid->xid_id,
+		anchor_index, xdst);
 }
 
-static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
-	int anchor_index, struct xip_dst *xdst)
+static int main_deliver_rcu(struct xip_route_proc *rproc, struct net *net,
+	const struct xia_xid *xid, int anchor_index, struct xip_dst *xdst)
 {
 	const struct xia_xid *left_xid;
 	struct xia_xid tmp_xids[2], *right_xid;
@@ -842,23 +940,22 @@ static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
 	right_xid = &tmp_xids[0];
 	do {
 		xid_type_t ty = left_xid->xid_type;
-		struct hlist_head *head;
-		struct xip_route_proc *rproc;
 		int rc;
 
+		/* Make sure that @rproc handles type @ty, or
+		 * negative dependency.
+		 */
+		BUG_ON(rproc->xrp_ppal_type != ty &&
+			rproc->xrp_ppal_type != XIDTYPE_NAT);
+
 		/* Consult principal. */
-		head = ppalhead(ty);
-		rproc = find_rproc_rcu(ty, head);
-		if (!rproc) {
-			/* We don't know how to route this principal. */
-			return XRP_ACT_NEXT_EDGE;
-		}
 		rc = rproc->main_deliver(rproc, net, left_xid->xid_id,
 			right_xid, anchor_index, xdst);
 
 		switch (rc) {
 		case XRP_ACT_NEXT_EDGE:
 		case XRP_ACT_FORWARD:
+		case XRP_ACT_ABRUPT_FAILURE:
 			return rc;
 
 		case XRP_ACT_REDIRECT:
@@ -870,11 +967,15 @@ static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
 					XIA_MAX_STRXID_SIZE) < 0);
 				pr_err("BUG: Principal %u is redirecting to itself, %s -> %s, ignoring this route\n",
 					__be32_to_cpu(ty), from, to);
-				return XRP_ACT_NEXT_EDGE;
+				/* One cannot return XRP_ACT_NEXT_EDGE here
+				 * because there would be no dependency.
+				 */
+				return XRP_ACT_ABRUPT_FAILURE;
 			}
 			left_xid = right_xid;
 			right_xid = left_xid == &tmp_xids[0] ? &tmp_xids[1] :
 				&tmp_xids[0];
+			rproc = get_an_rproc_rcu(left_xid->xid_type);
 
 			/* Redirecting to a local XID is wrong because
 			 * it breaks intrinsic security.
@@ -892,7 +993,10 @@ static int main_deliver_rcu(struct net *net, const struct xia_xid *xid,
 	BUG_ON(xia_xidtop(xid, from, XIA_MAX_STRXID_SIZE) < 0);
 	pr_err("BUG: Principal %u is looping too deep, this search started with %s, ignoring this route\n",
 		__be32_to_cpu(xid->xid_type), from);
-	return XRP_ACT_NEXT_EDGE;
+	/* One cannot return XRP_ACT_NEXT_EDGE here
+	 * because there would be no dependency.
+	 */
+	return XRP_ACT_ABRUPT_FAILURE;
 }
 
 static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
@@ -1025,7 +1129,7 @@ static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
 {
 	struct xip_dst *xdst;
 	int drop, i;
-	u32 key_hash;
+	u32 key_hash = 0xDEADBEAF;
 
 	xdst = NULL;
 
@@ -1058,6 +1162,7 @@ tail_call:
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		u8 e = last_row->s_edge.a[i];
 		const struct xia_xid *next_xid;
+		struct xip_route_proc *rproc;
 
 		if (is_empty_edge(e)) {
 			/* An empty edge is supposed to be the last edge.
@@ -1067,20 +1172,30 @@ tail_call:
 		}
 		next_xid = &addr[e].s_xid;
 
+		rproc = get_an_rproc_rcu(next_xid->xid_type);
+
 		/* Is it local? */
-		if (!local_deliver_rcu(net, next_xid, i, xdst)) {
+		if (!local_deliver_rcu(rproc, net, next_xid, i, xdst)) {
 			xdst = add_xdst_rcu(net, xdst, i);
 			goto tail_call;
 		}
 
 		/* Is it forwardable? */
-		switch (main_deliver_rcu(net, next_xid, i, xdst)) {
+		switch (main_deliver_rcu(rproc, net, next_xid, i, xdst)) {
 		case XRP_ACT_NEXT_EDGE:
+			/* XXX Once negative dependency on XIDs is implemented,
+			 * test that there's dependency on @xdst at @i.
+			 * BUG_ON(!xdst->anchors[i].anchor);
+			 */
 			break;
 		case XRP_ACT_FORWARD:
 			/* We found an edge that we can use to forward. */
 			xdst = add_xdst_rcu(net, xdst, i);
 			goto tail_call;
+		case XRP_ACT_ABRUPT_FAILURE:
+			xdst_free(xdst);
+			xdst = NULL;
+			goto out;
 		default:
 			BUG();
 		}
@@ -1280,6 +1395,10 @@ out:
 void xip_route_exit(void)
 {
 	dev_remove_pack(&xip_packet_type);
+
+	synchronize_rcu(); /* Required by xdst_free_anchor(). */
+	xdst_free_anchor(&negdep_rproc.anchor);
+
 	unregister_pernet_subsys(&xip_route_net_ops);
 	kmem_cache_destroy(xip_dst_ops_template.kmem_cachep);
 	xia_lock_table_finish(&anchor_locktbl);
