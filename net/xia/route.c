@@ -415,7 +415,7 @@ static struct xip_dst *add_xdst_rcu(struct net *net,
 	return xdst;
 }
 
-static void clear_xdst_table(struct net *net)
+void clear_xdst_table(struct net *net)
 {
 	struct xip_dst_table *xdst_tbl = &net->xia.xip_dst_table;
 	int i;
@@ -436,6 +436,7 @@ static void clear_xdst_table(struct net *net)
 		}
 	}
 }
+EXPORT_SYMBOL_GPL(clear_xdst_table);
 
 /* XXX This is a barebone implementation, more must be done.
  * See net/ipv4/route.c:rt_garbage_collect and net/ipv6/route.c:ip6_dst_gc

@@ -2,8 +2,11 @@
 #define _NET_XIA_ROUTE_H
 
 #include <net/xia.h>
+
+#ifdef __KERNEL__
 #include <net/dst.h>
 #include <net/xia_dst_table.h>
+#endif
 
 #define XIP_MIN_MTU	1024
 
@@ -22,11 +25,6 @@ struct xiphdr {
 	 * the source address.
 	 */
 };
-
-static inline struct xiphdr *xip_hdr(const struct sk_buff *skb)
-{
-	return (struct xiphdr *)skb_network_header(skb);
-}
 
 static inline int xip_hdr_size(int num_dst, int num_src)
 {
@@ -49,6 +47,47 @@ static inline int xip_hdr_len(const struct xiphdr *xiph)
 #define XIA_MIN_MSS	512
 
 #define XIA_MAX_MSS	(XIP_MAXPLEN - MAX_XIP_HEADER)
+
+enum XDST_ACTION {
+	/* The XDST entry only selects an edge, that is, a new query with
+	 * the new row is necessary.
+	 */
+	XDA_DIG = 0,
+
+	/* An error will be reported to the source informing that
+	 * the address is ill-constructed.
+	 */
+	XDA_ERROR,
+
+	/* Packet will be silently dropped. */
+	XDA_DROP,
+
+	/* The packet will receive the DST entry associated to the XDST entry,
+	 * that is, it's going to use the input and output methods.
+	 */
+	XDA_METHOD,
+
+	/* Same as XDA_METHOD, but before handing the DST entry, select edge
+	 * in the address.
+	 */
+	XDA_METHOD_AND_SELECT_EDGE,
+};
+
+/* For the definition of fields, see struct xip_dst. */
+struct xip_dst_cachinfo {
+	__u32			key_hash;
+	__u8			input;
+	__u8			passthrough_action;
+	__u8			sink_action;
+	__s8			chosen_edge;
+};
+
+#ifdef __KERNEL__
+
+static inline struct xiphdr *xip_hdr(const struct sk_buff *skb)
+{
+	return (struct xiphdr *)skb_network_header(skb);
+}
 
 struct xip_dst_anchor {
 	struct hlist_head	heads[XIA_OUTDEGREE_MAX];
@@ -78,31 +117,6 @@ void xdst_free_anchor(struct xip_dst_anchor *anchor);
  */
 void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	const u8 *from_xid, const struct xia_xid *to);
-
-enum XDST_ACTION {
-	/* The XDST entry only selects an edge, that is, a new query with
-	 * the new row is necessary.
-	 */
-	XDA_DIG = 0,
-
-	/* An error will be reported to the source informing that
-	 * the address is ill-constructed.
-	 */
-	XDA_ERROR,
-
-	/* Packet will be silently dropped. */
-	XDA_DROP,
-
-	/* The packet will receive the DST entry associated to the XDST entry,
-	 * that is, it's going to use the input and output methods.
-	 */
-	XDA_METHOD,
-
-	/* Same as XDA_METHOD, but before handing the DST entry, select edge
-	 * in the address.
-	 */
-	XDA_METHOD_AND_SELECT_EDGE,
-};
 
 struct xip_dst {
 	struct dst_entry	dst;
@@ -186,6 +200,17 @@ static inline int xip_dst_hoplimit(const struct dst_entry *dst)
 	return hoplimit == 0 ? 128 : hoplimit;
 }
 
+/** clear_xdst_table - Clear all entries of XIP's DST table.
+ *
+ * ATTENTION
+ *
+ * The use of this function is discouraged, and should be reserved to only
+ * handle extreme conditions like knowing that the DST table may be
+ * inconsistent, but not being able to fix it due to lack of memory.
+ * See xdst_invalidate_redirect() for an example.
+ */
+void clear_xdst_table(struct net *net);
+
 /* Possible returns for method @main_deliver in struct xip_route_proc. */
 enum XRP_ACTION {
 	/* XID is unknown, this action forces another edge of an address be
@@ -250,4 +275,5 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 
 void skb_pull_xiphdr(struct sk_buff *skb);
 
-#endif /* _NET_XIA_ROUTE_H */
+#endif	/* __KERNEL__ */
+#endif	/* _NET_XIA_ROUTE_H */
