@@ -3,6 +3,7 @@
 #include <linux/export.h>
 #include <net/rtnetlink.h>
 #include <net/xia_fib.h>
+#include <net/xia_route.h>
 
 #define XID_NLATTR	{ .len = sizeof(struct xia_xid) }
 
@@ -100,6 +101,13 @@ static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	return rc;
 }
 
+static inline int is_cloned(const struct nlmsghdr *nlh)
+{
+	return nlmsg_len(nlh) >= sizeof(struct rtmsg) &&
+		((const struct rtmsg *)nlmsg_data(nlh))->rtm_flags &
+			RTM_F_CLONED;
+}
+
 static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 				void *arg)
 {
@@ -108,6 +116,11 @@ static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct fib_xia_rtable *rtbl;
 	struct fib_xid_table *xtbl;
 	int rc;
+
+	if (is_cloned(nlh)) {
+		clear_xdst_table(net);
+		return 0;
+	}
 
 	rc = rtm_to_fib_config(net, skb, nlh, &cfg);
 	if (rc < 0)
@@ -126,6 +139,12 @@ static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 	rc = xtbl->fxt_eops->delroute(xtbl, &cfg);
 	xtbl_put(xtbl);
 	return rc;
+}
+
+static inline void clear_cb_from(struct netlink_callback *cb, int from)
+{
+	memset(&cb->args[from], 0, sizeof(cb->args) -
+		from * sizeof(cb->args[0]));
 }
 
 static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
@@ -152,8 +171,7 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 			if (j < first_j)
 				goto next;
 			if (dumped)
-				memset(&cb->args[5], 0, sizeof(cb->args) -
-						 5 *	sizeof(cb->args[0]));
+				clear_cb_from(cb, 5);
 			if (xtbl->fxt_eops->dump_fxid(fxid, xtbl, rtbl, skb, cb)
 				< 0)
 				goto out;
@@ -186,8 +204,7 @@ static int xia_fib_dump_rtable(struct fib_xia_rtable *rtbl, struct sk_buff *skb,
 			if (j < first_j)
 				goto next;
 			if (dumped)
-				memset(&cb->args[3], 0, sizeof(cb->args) -
-						 3 *	sizeof(cb->args[0]));
+				clear_cb_from(cb, 3);
 			if (xia_fib_dump_ppal(xtbl, rtbl, skb, cb) < 0) {
 				rcu_read_unlock();
 				goto out;
@@ -204,26 +221,106 @@ out:
 	return skb->len;
 }
 
-static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+static int xia_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
+	struct netlink_callback *cb)
+{
+#define SIZE_OF_DEST	(sizeof(struct xia_xid[XIA_OUTDEGREE_MAX]))
+
+	struct nlmsghdr *nlh;
+	u32 portid = NETLINK_CB(cb->skb).portid;
+	u32 seq = cb->nlh->nlmsg_seq;
+	struct rtmsg *rtm;
+	struct xip_dst_cachinfo ci;
+
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+		NLM_F_MULTI);
+	if (nlh == NULL)
+		return -EMSGSIZE;
+
+	rtm = nlmsg_data(nlh);
+	rtm->rtm_family = AF_XIA;
+	rtm->rtm_dst_len = SIZE_OF_DEST;
+	rtm->rtm_src_len = 0;
+	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
+	/* It comes from XIA's DST, not from a routing table. */
+	rtm->rtm_table = -1;
+	/* XXX One may want to vary here. */
+	rtm->rtm_protocol = RTPROT_UNSPEC;
+	/* XXX One may want to vary here. */
+	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+	/* XXX One may want to vary here. */
+	rtm->rtm_type = RTN_LOCAL;
+	rtm->rtm_flags = RTM_F_CLONED;
+
+	if (unlikely(nla_put(skb, RTA_DST, SIZE_OF_DEST, xdst->xids)))
+		goto nla_put_failure;
+
+	ci.key_hash = xdst->key_hash;
+	ci.input = xdst->input;
+	ci.passthrough_action = xdst->passthrough_action;
+	ci.sink_action = xdst->sink_action;
+	ci.chosen_edge =xdst->chosen_edge;
+
+	if (unlikely(nla_put(skb, RTA_PROTOINFO,
+		sizeof(struct xip_dst_cachinfo), &ci)))
+		goto nla_put_failure;
+
+	return nlmsg_end(skb, nlh);
+
+nla_put_failure:
+	nlmsg_cancel(skb, nlh);
+	return -EMSGSIZE;
+}
+
+/* Dump XIA's DST table. */
+static int xia_dst_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct net *net = sock_net(skb->sk);
-	long i;
+	long i, j = 0;
+	long first_j = cb->args[1];
 	int dumped = 0;
 
-	/* XXX Once XIA stack implements DST's interface,
-	 * this lines should implement its dump.
-	 */
-	/*
-	if (nlmsg_len(cb->nlh) >= sizeof(struct rtmsg) &&
-	    ((struct rtmsg *) nlmsg_data(cb->nlh))->rtm_flags & RTM_F_CLONED)
-		return ip_rt_dump(skb, cb);
-	*/
+	for (i = cb->args[0]; i < XIP_DST_TABLE_SIZE; i++, first_j = 0) {
+		struct dst_entry *dsth;
+		j = 0;
+		rcu_read_lock();
+		for (dsth = rcu_dereference(net->xia.xip_dst_table.buckets[i]);
+			dsth; dsth = rcu_dereference(dsth->next)) {
+			if (j < first_j)
+				goto next;
+			if (dumped)
+				clear_cb_from(cb, 2);
+			if (xia_dst_dump_entry(dst_xdst(dsth), skb, cb) < 0) {
+				rcu_read_unlock();
+				goto out;
+			}
+			dumped = 1;
+next:
+			j++;
+		}
+		rcu_read_unlock();
+	}
+out:
+	cb->args[0] = i;
+	cb->args[1] = j;
+	return skb->len;
+}
 
+static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+{
+	struct net *net;
+	long i;
+	int dumped;
+
+	if (is_cloned(cb->nlh))
+		return xia_dst_dump(skb, cb);
+
+	net = sock_net(skb->sk);
+	dumped = 0;
 	for (i = cb->args[0]; i < XRTABLE_MAX_INDEX; i++) {
 		struct fib_xia_rtable *rtbl = xia_fib_get_table(net, i);
 		if (dumped)
-			memset(&cb->args[1], 0, sizeof(cb->args) -
-					 1 *	sizeof(cb->args[0]));
+			clear_cb_from(cb, 1);
 		if (xia_fib_dump_rtable(rtbl, skb, cb) < 0)
 			break;
 		dumped = 1;
