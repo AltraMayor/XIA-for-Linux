@@ -4,7 +4,7 @@
 /*
  * Desired design of maximum size and alignment (see RFC2553)
  */
-#define _K_SS_MAXSIZE	128	/* Implementation specific max size */
+#define _K_SS_MAXSIZE	256	/* Implementation specific max size */
 #define _K_SS_ALIGNSIZE	(__alignof__ (struct sockaddr *))
 				/* Implementation specific desired alignment */
 
