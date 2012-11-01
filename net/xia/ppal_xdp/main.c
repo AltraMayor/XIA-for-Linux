@@ -322,8 +322,6 @@ static struct pernet_operations xdp_net_ops __read_mostly = {
  *	XDP Routing
  */
 
-/* Deliver to socket. */
-
 static int local_input_input(struct sk_buff *skb)
 {
 	struct xip_dst *xdst = skb_xdst(skb);
@@ -380,75 +378,64 @@ static int local_output_output(struct sk_buff *skb)
 	return dev_loopback_xmit(skb);
 }
 
-static int xdp_local_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, int anchor_index, struct xip_dst *xdst)
-{
-	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
-	struct fib_xid_xdp_local *lxdp;
-
-	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
-	BUG_ON(!ctx);
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
-	lxdp = fxid_lxdp(xia_find_xid_rcu(local_xtbl, xid));
-	if (!lxdp) {
-		rcu_read_unlock();
-		return -ENOENT;
-	}
-
-	/* An XDP cannot be a passthrough. */
-	xdst->passthrough_action = XDA_ERROR;
-
-	xdst->sink_action = XDA_METHOD_AND_SELECT_EDGE;
-	xdst->info = &lxdp->xia_sk.sk;
-	BUG_ON(xdst->dst.dev);
-	xdst->dst.dev = net->loopback_dev;
-	dev_hold(xdst->dst.dev);
-	if (xdst->input) {
-		xdst->dst.input = local_input_input;
-		xdst->dst.output = local_input_output;
-	} else {
-		xdst->dst.input = local_output_input;
-		xdst->dst.output = local_output_output;
-	}
-
-	xdst_attach_to_anchor(xdst, anchor_index, &lxdp->anchor);
-
-	rcu_read_unlock();
-	return 0;
-}
-
-/* Redirect. */
-static int xdp_main_deliver(struct xip_route_proc *rproc, struct net *net,
+static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *local_xtbl;
+	struct fib_xid_xdp_local *lxdp;
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_xdp_main *mxdp;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
 	BUG_ON(!ctx);
+
+	/* Is it a local XDP (i.e. a listening socket)?
+	 * If so, deliver to the socket.
+	 */
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
+	BUG_ON(!local_xtbl);
+	lxdp = fxid_lxdp(xia_find_xid_rcu(local_xtbl, xid));
+	if (lxdp) {
+		/* An XDP cannot be a passthrough. */
+		xdst->passthrough_action = XDA_ERROR;
+
+		xdst->sink_action = XDA_METHOD_AND_SELECT_EDGE;
+		xdst->info = &lxdp->xia_sk.sk;
+		BUG_ON(xdst->dst.dev);
+		xdst->dst.dev = net->loopback_dev;
+		dev_hold(xdst->dst.dev);
+		if (xdst->input) {
+			xdst->dst.input = local_input_input;
+			xdst->dst.output = local_input_output;
+		} else {
+			xdst->dst.input = local_output_input;
+			xdst->dst.output = local_output_output;
+		}
+		xdst_attach_to_anchor(xdst, anchor_index, &lxdp->anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+
+	/* Is it a main XDP? If so, redirect it. */
 	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 	BUG_ON(!main_xtbl);
 	mxdp = fxid_mxdp(xia_find_xid_rcu(main_xtbl, xid));
-	if (!mxdp) {
+	if (mxdp) {
+		memmove(next_xid, &mxdp->gw, sizeof(*next_xid));
 		rcu_read_unlock();
-		return XRP_ACT_NEXT_EDGE;
+		return XRP_ACT_REDIRECT;
 	}
 
-	memmove(next_xid, &mxdp->gw, sizeof(*next_xid));
 	rcu_read_unlock();
-	return XRP_ACT_REDIRECT;
+	return XRP_ACT_NEXT_EDGE;
 }
 
 static struct xip_route_proc xdp_rt_proc __read_mostly = {
 	.xrp_ppal_type = XIDTYPE_XDP,
-	.local_deliver = xdp_local_deliver,
-	.main_deliver = xdp_main_deliver,
+	.deliver = xdp_deliver,
 };
 
 /*
