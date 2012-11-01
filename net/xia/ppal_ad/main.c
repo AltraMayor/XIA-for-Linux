@@ -293,60 +293,49 @@ static struct pernet_operations ad_net_ops __read_mostly = {
  *	AD Routing
  */
 
-static int ad_local_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, int anchor_index, struct xip_dst *xdst)
-{
-	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
-	struct fib_xid_ad_local *lad;
-
-	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_AD);
-	BUG_ON(!ctx);
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
-	lad = fxid_lad(xia_find_xid_rcu(local_xtbl, xid));
-	if (!lad) {
-		rcu_read_unlock();
-		return -ENOENT;
-	}
-
-	xdst->passthrough_action = XDA_DIG;
-	xdst->sink_action = XDA_ERROR; /* An AD cannot be a sink. */
-	xdst_attach_to_anchor(xdst, anchor_index, &lad->anchor);
-
-	rcu_read_unlock();
-	return 0;
-}
-
-static int ad_main_deliver(struct xip_route_proc *rproc, struct net *net,
+static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *local_xtbl;
+	struct fib_xid_ad_local *lad;
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_ad_main *mad;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_AD);
 	BUG_ON(!ctx);
+
+	/* Is it a local AD? */
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
+	BUG_ON(!local_xtbl);
+	lad = fxid_lad(xia_find_xid_rcu(local_xtbl, xid));
+	if (lad) {
+		xdst->passthrough_action = XDA_DIG;
+		xdst->sink_action = XDA_ERROR; /* An AD cannot be a sink. */
+		xdst_attach_to_anchor(xdst, anchor_index, &lad->anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+
+	/* Is it a main AD? */
 	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 	BUG_ON(!main_xtbl);
 	mad = fxid_mad(xia_find_xid_rcu(main_xtbl, xid));
-	if (!mad) {
+	if (mad) {
+		memmove(next_xid, &mad->gw, sizeof(*next_xid));
 		rcu_read_unlock();
-		return XRP_ACT_NEXT_EDGE;
+		return XRP_ACT_REDIRECT;
 	}
 
-	memmove(next_xid, &mad->gw, sizeof(*next_xid));
 	rcu_read_unlock();
-	return XRP_ACT_REDIRECT;
+	return XRP_ACT_NEXT_EDGE;
 }
 
 static struct xip_route_proc ad_rt_proc __read_mostly = {
 	.xrp_ppal_type = XIDTYPE_AD,
-	.local_deliver = ad_local_deliver,
-	.main_deliver = ad_main_deliver,
+	.deliver = ad_deliver,
 };
 
 /*
