@@ -321,34 +321,6 @@ static struct pernet_operations hid_net_ops __read_mostly = {
  *	HID Routing
  */
 
-static int hid_local_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, int anchor_index, struct xip_dst *xdst)
-{
-	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
-	struct fib_xid_hid_local *lhid;
-
-	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_HID);
-	BUG_ON(!ctx);
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
-	lhid = fxid_lhid(xia_find_xid_rcu(local_xtbl, xid));
-	if (!lhid) {
-		rcu_read_unlock();
-		return -ENOENT;
-	}
-
-	xdst->passthrough_action = XDA_DIG;
-	xdst->sink_action = XDA_ERROR; /* An HID cannot be a sink. */
-	xdst_attach_to_anchor(xdst, anchor_index, &lhid->xhl_anchor);
-
-	rcu_read_unlock();
-	return 0;
-}
-
-/* Forward packets. */
-
 static inline struct hrdw_addr *xdst_ha(struct xip_dst *xdst)
 {
 	return xdst->info;
@@ -467,19 +439,34 @@ static int main_output_input(struct sk_buff *skb)
 
 #define main_output_output main_input_output
 
-static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
+static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *local_xtbl;
+	struct fib_xid_hid_local *lhid;
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_hid_main *mhid;
 	struct hrdw_addr *ha;
-	int rc = XRP_ACT_NEXT_EDGE;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_HID);
 	BUG_ON(!ctx);
+
+	/* It is a local HID? */
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
+	BUG_ON(!local_xtbl);
+	lhid = fxid_lhid(xia_find_xid_rcu(local_xtbl, xid));
+	if (lhid) {
+		xdst->passthrough_action = XDA_DIG;
+		xdst->sink_action = XDA_ERROR; /* An HID cannot be a sink. */
+		xdst_attach_to_anchor(xdst, anchor_index, &lhid->xhl_anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+
+	/* Is it a main HID (i.e. a neighbor)? */
 	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 	BUG_ON(!main_xtbl);
 	mhid = fxid_mhid(xia_find_xid_rcu(main_xtbl, xid));
@@ -509,17 +496,17 @@ static int hid_main_deliver(struct xip_route_proc *rproc, struct net *net,
 		xdst->dst.output = main_output_output;
 	}
 	xdst_attach_to_anchor(xdst, anchor_index, &ha->anchor);
-	rc = XRP_ACT_FORWARD;
+	rcu_read_unlock();
+	return XRP_ACT_FORWARD;
 
 out:
 	rcu_read_unlock();
-	return rc;
+	return XRP_ACT_NEXT_EDGE;
 }
 
 static struct xip_route_proc hid_rt_proc __read_mostly = {
 	.xrp_ppal_type = XIDTYPE_HID,
-	.local_deliver = hid_local_deliver,
-	.main_deliver = hid_main_deliver,
+	.deliver = hid_deliver,
 };
 
 /*

@@ -213,18 +213,29 @@ void clear_xdst_table(struct net *net);
 
 /* Possible returns for method @main_deliver in struct xip_route_proc. */
 enum XRP_ACTION {
-	/* XID is unknown, this action forces another edge of an address be
-	 * considered, or to discard a packet if there's no more edges.
-	 * IMPORTANT: The callee must add a negative dependency
-	 * at @anchor_index in @xdst before returning.
+	/* If an XID is unknown, this action forces another edge of
+	 * an address to be considered, or to discard a packet if there's no
+	 * more edges.
+	 *
+	 * IMPORTANT
+	 * The callee must add @xdst at @anchor_index to an anchor before
+	 * returning, in other workds, the callee must implement
+	 * negative dependency.
 	 */
 	XRP_ACT_NEXT_EDGE = 0,
 
-	/* Parameter @next_xid has received a new XID. */
+	/* Parameter @next_xid received a new XID which will, in fact, handle
+	 * the edge being routed.
+	 */
 	XRP_ACT_REDIRECT,
 
-	/* @xdst was filled, the packet is ready to be forwarded.
-	 * Positive dependency must have been added to @xdst.
+	/* If an XID is known, fill up @xdst's fields to make it ready
+	 * to forward packets.
+	 *
+	 * IMPORTANT
+	 * The callee must add @xdst at @anchor_index to an anchor before
+	 * returning, in other workds, the callee must implement
+	 * positive dependency.
 	 */
 	XRP_ACT_FORWARD,
 
@@ -243,20 +254,10 @@ struct xip_route_proc {
 	/* Principal type. */
 	xid_type_t		xrp_ppal_type;
 
-	/* If @xid is local for this principal, this method adds @xdst to
-	 * @xid's anchor (positive dependency), fills @xdst's fields, and
-	 * return zero.
-	 *
-	 * Otherwise, this method adds @xdst to a negative anchor of @xid
-	 * (negative dependency), and returns -ENOENT.
-	 */
-	int (*local_deliver)(struct xip_route_proc *rproc, struct net *net,
-		const u8 *xid, int anchor_index, struct xip_dst *xdst);
-
 	/* The return must be enum XRP_ACTION.
 	 * Only non-local XIDs go through this method.
 	 */
-	int (*main_deliver)(struct xip_route_proc *rproc, struct net *net,
+	int (*deliver)(struct xip_route_proc *rproc, struct net *net,
 		const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 		struct xip_dst *xdst);
 };
