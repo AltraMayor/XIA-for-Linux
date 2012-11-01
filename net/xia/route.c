@@ -348,7 +348,7 @@ static void make_xdst_unreachable(struct net *net, struct xip_dst *xdst)
 	}
 }
 
-/* add_xdst_rcu - Add @xdst to a DST table If it is unique in the table,
+/* add_xdst_rcu - Add @xdst to a DST table if it is unique in the table,
  *	otherwise call xdst_free (NOT xdst_rcu_free!) on @xtbl, and
  *	return the entry that is already in the table.
  *
@@ -667,9 +667,6 @@ void xdst_free_anchor(struct xip_dst_anchor *anchor)
 }
 EXPORT_SYMBOL_GPL(xdst_free_anchor);
 
-static int main_deliver_rcu(struct xip_route_proc *rproc, struct net *net,
-	const struct xia_xid *xid, int anchor_index, struct xip_dst *xdst);
-
 struct filter_from_arg {
 	xid_type_t	type;
 	const u8	*id;
@@ -758,26 +755,18 @@ struct xip_negdep_route_proc {
 	struct xip_dst_anchor anchor;
 };
 
-static int negdep_local_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, int anchor_index, struct xip_dst *xdst)
-{
-	/* We obviously don't know how to route this principal. */
-	return -ENOENT;
-}
-
-static int negdep_main_deliver(struct xip_route_proc *rproc, struct net *net,
+static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst);
 
 static struct xip_negdep_route_proc negdep_rproc = {
 	.rproc = {
 		.xrp_ppal_type = XIDTYPE_NAT, /* Dummy value. */
-		.local_deliver = negdep_local_deliver,
-		.main_deliver = negdep_main_deliver,
+		.deliver = negdep_deliver,
 	},
 };
 
-static int negdep_main_deliver(struct xip_route_proc *rproc, struct net *net,
+static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
@@ -810,6 +799,9 @@ static inline struct xip_route_proc *get_an_rproc_rcu(const xid_type_t ty)
 	return rproc ? rproc : &negdep_rproc.rproc;
 }
 
+static int deliver_rcu(struct net *net, const struct xia_xid *xid,
+	int anchor_index, struct xip_dst *xdst);
+
 /* Find the anchor of @to.
  *
  * Due to degative dependency, there always is an anchor.
@@ -822,7 +814,6 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 	const struct xia_xid *to)
 {
 	struct xip_dst *xdst;
-	struct xip_route_proc *rproc;
 	struct xip_dst_anchor *anchor;
 
 	xdst = xip_dst_alloc(net, DST_NOCOUNT);
@@ -838,8 +829,7 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 	 * @xdst was just allocated.
 	 */
 
-	rproc = get_an_rproc_rcu(to->xid_type);
-	switch (main_deliver_rcu(rproc, net, to, 0, xdst)) {
+	switch (deliver_rcu(net, to, 0, xdst)) {
 	case XRP_ACT_NEXT_EDGE:
 		/* We have a negative anchor. FALL THROUGH. */
 	case XRP_ACT_FORWARD:
@@ -921,16 +911,8 @@ void xip_del_router(struct xip_route_proc *rproc)
 }
 EXPORT_SYMBOL_GPL(xip_del_router);
 
-static inline int local_deliver_rcu(struct xip_route_proc *rproc,
-	struct net *net, const struct xia_xid *xid, int anchor_index,
-	struct xip_dst *xdst)
-{
-	return rproc->local_deliver(rproc, net, xid->xid_id,
-		anchor_index, xdst);
-}
-
-static int main_deliver_rcu(struct xip_route_proc *rproc, struct net *net,
-	const struct xia_xid *xid, int anchor_index, struct xip_dst *xdst)
+static int deliver_rcu(struct net *net, const struct xia_xid *xid,
+	int anchor_index, struct xip_dst *xdst)
 {
 	const struct xia_xid *left_xid;
 	struct xia_xid tmp_xids[2], *right_xid;
@@ -941,16 +923,18 @@ static int main_deliver_rcu(struct xip_route_proc *rproc, struct net *net,
 	right_xid = &tmp_xids[0];
 	do {
 		xid_type_t ty = left_xid->xid_type;
+		struct xip_route_proc *rproc;
 		int rc;
 
+		rproc = get_an_rproc_rcu(ty);
 		/* Make sure that @rproc handles type @ty, or
 		 * negative dependency.
 		 */
-		BUG_ON(rproc->xrp_ppal_type != ty &&
-			rproc->xrp_ppal_type != XIDTYPE_NAT);
+		BUG_ON(!rproc || (rproc->xrp_ppal_type != ty &&
+			rproc->xrp_ppal_type != XIDTYPE_NAT));
 
 		/* Consult principal. */
-		rc = rproc->main_deliver(rproc, net, left_xid->xid_id,
+		rc = rproc->deliver(rproc, net, left_xid->xid_id,
 			right_xid, anchor_index, xdst);
 
 		switch (rc) {
@@ -976,14 +960,6 @@ static int main_deliver_rcu(struct xip_route_proc *rproc, struct net *net,
 			left_xid = right_xid;
 			right_xid = left_xid == &tmp_xids[0] ? &tmp_xids[1] :
 				&tmp_xids[0];
-			rproc = get_an_rproc_rcu(left_xid->xid_type);
-
-			/* Redirecting to a local XID is wrong because
-			 * it breaks intrinsic security.
-			 * That's why one keeps looking @left_xid up with
-			 * only function mail_deliver.
-			 */
-
 			break;
 
 		default:
@@ -1163,7 +1139,6 @@ tail_call:
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		u8 e = last_row->s_edge.a[i];
 		const struct xia_xid *next_xid;
-		struct xip_route_proc *rproc;
 
 		if (is_empty_edge(e)) {
 			/* An empty edge is supposed to be the last edge.
@@ -1173,16 +1148,8 @@ tail_call:
 		}
 		next_xid = &addr[e].s_xid;
 
-		rproc = get_an_rproc_rcu(next_xid->xid_type);
-
-		/* Is it local? */
-		if (!local_deliver_rcu(rproc, net, next_xid, i, xdst)) {
-			xdst = add_xdst_rcu(net, xdst, i);
-			goto tail_call;
-		}
-
 		/* Is it forwardable? */
-		switch (main_deliver_rcu(rproc, net, next_xid, i, xdst)) {
+		switch (deliver_rcu(net, next_xid, i, xdst)) {
 		case XRP_ACT_NEXT_EDGE:
 			/* XXX Once negative dependency on XIDs is implemented,
 			 * test that there's dependency on @xdst at @i.
