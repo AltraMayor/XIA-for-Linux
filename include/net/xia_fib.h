@@ -1,13 +1,6 @@
 #ifndef _NET_XIA_FIB_H
 #define _NET_XIA_FIB_H
 
-/* Hash of principals.
- * It has to be power of 2.
- * Until one has a significant number of principals, or a way to instantiate
- * them in user land, this fixed arrary is enough.
- */
-#define NUM_PRINCIPAL_HINT	128
-
 #define XRTABLE_LOCAL_INDEX	0
 #define XRTABLE_MAIN_INDEX	1
 #define XRTABLE_MAX_INDEX	2
@@ -78,11 +71,9 @@ struct fib_xid_table {
 	int				dead;
 	struct work_struct		fxt_death_work;
 
-	/* Principal type. */
-	xid_type_t			fxt_ppal_type;
-
-	/* Context. */
-	struct net			*fxt_net;
+	/* Useful annotation. */
+	xid_type_t			fxt_ppal_type;	/* Principal type. */
+	struct net			*fxt_net;	/* Context. */
 
 	/* Buckets. */
 	struct fib_xid_buckets __rcu	*fxt_active_branch;
@@ -98,9 +89,6 @@ struct fib_xid_table {
 	struct work_struct		fxt_rehash_work;
 	/* Avoid writers while rehashing table. */
 	rwlock_t			fxt_writers_lock;
-
-	/* To be added in fib_xia_rtable. */
-	struct hlist_node		fxt_list;
 
 	const struct xia_ppal_rt_eops	*fxt_eops;
 };
@@ -122,6 +110,16 @@ static inline struct net *xtbl_net(const struct fib_xid_table *xtbl)
 	return xtbl->fxt_net;
 }
 
+struct xip_ppal_ctx {
+	/* To be added in struct fib_xip_ppal_ctx's buckets. */
+	struct hlist_node	xpc_list;
+
+	/* Principal type. */
+	xid_type_t		xpc_ppal_type;
+
+	struct fib_xid_table	*xpc_xid_tables[XRTABLE_MAX_INDEX];
+};
+
 typedef void (*free_fxid_t)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
 /* Operations implemented *e*xternally by the code that instantiates an xtbl. */
@@ -129,10 +127,12 @@ struct xia_ppal_rt_eops {
 	/* RTNetlink support
 	 * All callbacks are required.
 	 */
-	int (*newroute)(struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
-	int (*delroute)(struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
+	int (*newroute)(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+		struct xia_fib_config *cfg);
+	int (*delroute)(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+		struct xia_fib_config *cfg);
 	int (*dump_fxid)(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-		struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+		struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 		struct netlink_callback *cb);
 
 	/* Callback to release dependencies.
@@ -157,35 +157,8 @@ struct xia_ppal_rt_eops {
  * struct xia_ppal_rt_eops when all that is needed is to remove the entry from
  * @xtbl, and free it.
  */
-int fib_default_delroute(struct fib_xid_table *xtbl,
+int fib_default_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg);
-
-/* XIA Routing Table
- *
- * One could use principal type as part of the hash function and have only
- * a big hash table, but this would require a full table scan when a principal
- * were removed from the stack.
- */
-struct fib_xia_rtable {
-	/* Context. */
-	struct net		*tbl_net;
-	int			tbl_id;
-
-	struct hlist_head	ppal[NUM_PRINCIPAL_HINT];
-	struct rcu_head		rcu_head;
-};
-
-static inline struct fib_xia_rtable *xia_fib_get_table(struct net *net, u32 id)
-{
-	switch (id) {
-	case XRTABLE_LOCAL_INDEX:
-		return net->xia.local_rtbl;
-	case XRTABLE_MAIN_INDEX:
-		return net->xia.main_rtbl;
-	default:
-		return NULL;
-	}
-}
 
 /*
  * Exported by fib_frontend.c
@@ -209,51 +182,115 @@ static inline void xia_unregister_pernet_subsys(struct pernet_operations *ops)
  *	Exported by fib.c
  */
 
-/** create_xia_rtable - Create and return a fib_xia_rtable.
+/** init_fib_ppal_ctx - Initilize struct fib_xip_ppal_ctx.
  * RETURN
- *	It returns the struct on success, otherwise NULL.
+ *	It returns 0 on success.
  * NOTE
- *	Caller should use RCU_INIT_POINTER to assign it to the final pointer.
+ *	This function is only meant to be used by XIP core.
  */
-struct fib_xia_rtable *create_xia_rtable(struct net *net, int tbl_id);
+int init_fib_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx);
 
-/** destroy_xia_rtable - destroy @rtbl.
+/** release_fib_ppal_ctx - release all resources associated to @fib_ctx.
  * NOTE
- *	Caller must hold lock to avoid races with init_xid_table and
- *	end_xid_table.
+ *	This function is only meant to be used by XIP core.
+ *
+ *	The memory pointed by @fib_ctx is not released, it's caller's
+ *	resposability to release it.
+ *
+ *	Caller must avoid races with xip_add_ppal_ctx and xip_del_ppal_ctx.
+ *
+ *	If @fib_ctx's xpc_xid_tables is not empty, there's a bug somewhere,
+ *	and it must be fixed. A warning message is issue is case
+ *	xpc_xid_tables is not empty.
  */
-void destroy_xia_rtable(struct fib_xia_rtable **prtbl);
+void release_fib_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx);
 
-/** init_xid_table - create a new XID table for type @ty.
+/** xip_init_ppal_ctx - initialize a struct xip_ppal_ctx.
  * RETURN
- *	-ESRCH in case an XID table for type @ty already exists.
+ *	It returns 0 on success.
+ */
+int xip_init_ppal_ctx(struct xip_ppal_ctx *ctx, xid_type_t ty);
+
+/** xip_release_ppal_ctx - release resources held by @ctx.
+ * NOTE
+ *	@ctx cannot be in a list, and must not be active, that is, the caller
+ *	must hold the only reference available to @ctx.
+ *
+ *	All @ctx's xpc_xid_tables are released (i.e. xtbl_put()) if they exist.
+ */
+void xip_release_ppal_ctx(struct xip_ppal_ctx *ctx);
+
+/** xip_add_ppal_ctx - Add @ctx to @fib_ctx.
+ * RETURN
+ *	-ESRCH in case of another @ctx of same type already exists in @fib_ctx.
  *	0 on success.
  * NOTE
- *	Caller must hold lock to avoid races with end_xid_table and
- *	destroy_xia_rtable.
+ *	This function does not take any lock because it is expected to be only
+ *	called from struct pernet_operations' init method.
  */
-int init_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty,
+int xip_add_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
+	struct xip_ppal_ctx *ctx);
+
+/** xip_del_ppal_ctx - Find a context of type @ty in @fib_ctx, and remove it.
+ * NOTE
+ *	This function does not take any lock because it is expected to be only
+ *	called from struct pernet_operations' methods.
+ *
+ *	This function sleeps.
+ */
+struct xip_ppal_ctx *xip_del_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
+	xid_type_t ty);
+
+/** init_xid_table - create a new XID table of id @tbl_id in @ctx.
+ * RETURN
+ *	-ESRCH in case an XID table of id @tbl_id already exists.
+ *	0 on success.
+ * NOTE
+ *	@ctx should be in no struct fib_xip_ppal_ctx!
+ */
+int init_xid_table(struct xip_ppal_ctx *ctx, u32 tbl_id, struct net *net,
 	struct xia_lock_table *locktbl, const struct xia_ppal_rt_eops *eops);
 
-/** end_xid_table - terminate XID table for type @ty.
- * NOTE
- *	Caller must hold lock to avoid races with init_xid_table and
- *	destroy_xia_rtable.
- */
-void end_xid_table(struct fib_xia_rtable *rtbl, xid_type_t ty);
-
-/** xia_find_xtbl_rcu - Find XID table of type @ty.
+/** xip_find_ppal_ctx_rcu - Find context of principal of type @ty.
  * RETURN
  *	It returns the struct on success, otherwise NULL.
  * NOTE
- *	Caller must hold an RCU read lock to be safe against paralel calls to
- *	init_xid_table, end_xid_table, and destroy_xia_rtable.
+ *	Caller must hold an RCU read lock.
  *
  *	If the caller must keep the reference after an RCU read lock,
  *	it must call xtbl_hold before releasing the RCU lock.
+ *	Perhaps, xia_find_xtbl_hold() is a better choice.
  */
-struct fib_xid_table *xia_find_xtbl_rcu(struct fib_xia_rtable *rtbl,
+struct xip_ppal_ctx *xip_find_ppal_ctx_rcu(struct fib_xip_ppal_ctx *fib_ctx,
 	xid_type_t ty);
+
+/** xip_find_my_ppal_ctx - Find context of principal of type @ty.
+ * RETURN
+ *	It returns the struct on success, otherwise NULL.
+ * NOTE
+ *	Caller must somehow insure that the context doesn't go away
+ *	during the call of this function as well as afterwards.
+ *
+ *	Often, principals have to do nothing to insure it for
+ *	their own context since they only remove their own context
+ *	while they unload themselves.
+ */
+struct xip_ppal_ctx *xip_find_my_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
+	xid_type_t ty);
+
+/** xia_find_xtbl_hold - find XID table @tbl_id for principal @ty.
+ * RETURN
+ *	If the table is found, xtbl_hold() is called on it, and
+ *	the reference returned. Otherwise, it returns NULL.
+ * NOTE
+ *	DO NOT forget to call xtb_put() afterwards!
+ *
+ *	If this function is called two or more times, and/or more fields
+ *	of context are needed, consider to replace those calls with
+ *	a single call to xip_find_ppal_ctx_rcu() or xip_find_my_ppal_ctx().
+ */
+struct fib_xid_table *xia_find_xtbl_hold(struct fib_xip_ppal_ctx *fib_ctx,
+	xid_type_t ty, u32 tbl_id);
 
 /* Don't call this function directly, call xtbl_put() instead. */
 void xtbl_finish_destroy(struct fib_xid_table *xtbl);
@@ -268,10 +305,6 @@ static inline void xtbl_hold(struct fib_xid_table *xtbl)
 {
 	atomic_inc(&xtbl->refcnt);
 }
-
-/* DO NOT forget to call xtb_put() afterwards! */
-struct fib_xid_table *xia_find_xtbl_hold(struct fib_xia_rtable *rtbl,
-	xid_type_t ty);
 
 static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
 {

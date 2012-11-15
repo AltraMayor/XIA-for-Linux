@@ -7,6 +7,21 @@
 #define XIDTYPE_AD (__cpu_to_be32(0x10))
 
 /*
+ *	AD context
+ */
+
+struct xip_ad_ctx {
+	struct xip_ppal_ctx	ctx;
+};
+
+static inline struct xip_ad_ctx *ctx_ad(struct xip_ppal_ctx *ctx)
+{
+	return likely(ctx)
+		? container_of(ctx, struct xip_ad_ctx, ctx)
+		: NULL;
+}
+
+/*
  *	Local AD table
  */
 
@@ -23,7 +38,7 @@ static inline struct fib_xid_ad_local *fxid_lad(struct fib_xid *fxid)
 		: NULL;
 }
 
-static int local_newroute(struct fib_xid_table *xtbl,
+static int local_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
 	struct fib_xid_ad_local *lad;
@@ -51,7 +66,7 @@ out:
  * net/ipv4/fib_trie.c:fn_trie_dump_fa.
  */
 static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
@@ -70,13 +85,12 @@ static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	rtm->rtm_dst_len = sizeof(struct xia_xid);
 	rtm->rtm_src_len = 0;
 	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
-	rtm->rtm_table = rtbl->tbl_id;
+	rtm->rtm_table = XRTABLE_LOCAL_INDEX;
 	/* XXX One may want to vary here. */
 	rtm->rtm_protocol = RTPROT_UNSPEC;
 	/* XXX One may want to vary here. */
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rtm->rtm_type = rtbl->tbl_id == XRTABLE_LOCAL_INDEX
-		? RTN_LOCAL : RTN_UNICAST;
+	rtm->rtm_type = RTN_LOCAL;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
 
@@ -123,7 +137,8 @@ static inline struct fib_xid_ad_main *fxid_mad(struct fib_xid *fxid)
 		: NULL;
 }
 
-static int main_newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg)
 {
 	struct fib_xid_ad_main *mad;
 	int rc;
@@ -152,7 +167,7 @@ out:
 }
 
 static int main_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
@@ -172,13 +187,12 @@ static int main_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	rtm->rtm_dst_len = sizeof(struct xia_xid);
 	rtm->rtm_src_len = 0;
 	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
-	rtm->rtm_table = rtbl->tbl_id;
+	rtm->rtm_table = XRTABLE_MAIN_INDEX;
 	/* XXX One may want to vary here. */
 	rtm->rtm_protocol = RTPROT_UNSPEC;
 	/* XXX One may want to vary here. */
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rtm->rtm_type = rtbl->tbl_id == XRTABLE_LOCAL_INDEX
-		? RTN_LOCAL : RTN_UNICAST;
+	rtm->rtm_type = RTN_UNICAST;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
 
@@ -217,32 +231,57 @@ static const struct xia_ppal_rt_eops ad_rt_eops_main = {
  *	Network namespace
  */
 
+static struct xip_ad_ctx *create_ad_ctx(void)
+{
+	struct xip_ad_ctx *ad_ctx = kmalloc(sizeof(*ad_ctx), GFP_KERNEL);
+	if (!ad_ctx)
+		return NULL;
+	xip_init_ppal_ctx(&ad_ctx->ctx, XIDTYPE_AD);
+	return ad_ctx;
+}
+
+static void free_ad_ctx(struct xip_ad_ctx *ad_ctx)
+{
+	xip_release_ppal_ctx(&ad_ctx->ctx);
+	kfree(ad_ctx);
+}
+
 static int __net_init ad_net_init(struct net *net)
 {
+	struct xip_ad_ctx *ad_ctx;
 	int rc;
 
-	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_AD,
+	ad_ctx = create_ad_ctx();
+	if (!ad_ctx) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	rc = init_xid_table(&ad_ctx->ctx, XRTABLE_LOCAL_INDEX, net,
 		&xia_main_lock_table, &ad_rt_eops_local);
 	if (rc)
-		goto out;
-	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_AD,
+		goto ad_ctx;
+	rc = init_xid_table(&ad_ctx->ctx, XRTABLE_MAIN_INDEX, net,
 		&xia_main_lock_table, &ad_rt_eops_main);
 	if (rc)
-		goto local_rtbl;
+		goto ad_ctx;
+
+	rc = xip_add_ppal_ctx(&net->xia.fib_ctx, &ad_ctx->ctx);
+	if (rc)
+		goto ad_ctx;
 	goto out;
 
-local_rtbl:
-	end_xid_table(net->xia.local_rtbl, XIDTYPE_AD);
+ad_ctx:
+	free_ad_ctx(ad_ctx);
 out:
 	return rc;
 }
 
 static void __net_exit ad_net_exit(struct net *net)
 {
-	rtnl_lock();
-	end_xid_table(net->xia.main_rtbl, XIDTYPE_AD);
-	end_xid_table(net->xia.local_rtbl, XIDTYPE_AD);
-	rtnl_unlock();
+	struct xip_ad_ctx *ad_ctx =
+		ctx_ad(xip_del_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_AD));
+	free_ad_ctx(ad_ctx);
 }
 
 static struct pernet_operations ad_net_ops __read_mostly = {
@@ -257,11 +296,14 @@ static struct pernet_operations ad_net_ops __read_mostly = {
 static int ad_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, int anchor_index, struct xip_dst *xdst)
 {
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *local_xtbl;
 	struct fib_xid_ad_local *lad;
 
 	rcu_read_lock();
-	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_AD);
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_AD);
+	BUG_ON(!ctx);
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	BUG_ON(!local_xtbl);
 	lad = fxid_lad(xia_find_xid_rcu(local_xtbl, xid));
 	if (!lad) {
@@ -281,25 +323,24 @@ static int ad_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_ad_main *mad;
-	int rc;
 
 	rcu_read_lock();
-	main_xtbl = xia_find_xtbl_rcu(net->xia.main_rtbl, XIDTYPE_AD);
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_AD);
+	BUG_ON(!ctx);
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 	BUG_ON(!main_xtbl);
 	mad = fxid_mad(xia_find_xid_rcu(main_xtbl, xid));
-
-	rc = XRP_ACT_NEXT_EDGE;
-	if (!mad)
-		goto out;
+	if (!mad) {
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
 
 	memmove(next_xid, &mad->gw, sizeof(*next_xid));
-	rc = XRP_ACT_REDIRECT;
-
-out:
 	rcu_read_unlock();
-	return rc;
+	return XRP_ACT_REDIRECT;
 }
 
 static struct xip_route_proc ad_rt_proc __read_mostly = {

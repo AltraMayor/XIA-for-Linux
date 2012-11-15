@@ -10,6 +10,20 @@
 #include <net/xia_xdp.h>
 
 /*
+ *	XDP context
+ */
+struct xip_xdp_ctx {
+	struct xip_ppal_ctx	ctx;
+};
+
+static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
+{
+	return likely(ctx)
+		? container_of(ctx, struct xip_xdp_ctx, ctx)
+		: NULL;
+}
+
+/*
  *	Local XDP table
  */
 
@@ -51,14 +65,14 @@ static inline struct fib_xid_xdp_local *sk_lxdp(struct sock *sk)
 	return xiask_lxdp(xia_sk(sk));
 }
 
-static int local_newroute_delroute(struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
+static int local_newroute_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
 	return -EOPNOTSUPP;
 }
 
 static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
@@ -78,13 +92,12 @@ static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	rtm->rtm_dst_len = sizeof(struct xia_xid);
 	rtm->rtm_src_len = 0;
 	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
-	rtm->rtm_table = rtbl->tbl_id;
+	rtm->rtm_table = XRTABLE_LOCAL_INDEX;
 	/* XXX One may want to vary here. */
 	rtm->rtm_protocol = RTPROT_UNSPEC;
 	/* XXX One may want to vary here. */
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rtm->rtm_type = rtbl->tbl_id == XRTABLE_LOCAL_INDEX
-		? RTN_LOCAL : RTN_UNICAST;
+	rtm->rtm_type = RTN_LOCAL;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
 
@@ -153,7 +166,8 @@ static inline struct fib_xid_xdp_main *fxid_mxdp(struct fib_xid *fxid)
 		: NULL;
 }
 
-static int main_newroute(struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg)
 {
 	struct fib_xid_xdp_main *mxdp;
 	int rc;
@@ -182,7 +196,7 @@ out:
 }
 
 static int main_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
@@ -202,13 +216,12 @@ static int main_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	rtm->rtm_dst_len = sizeof(struct xia_xid);
 	rtm->rtm_src_len = 0;
 	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
-	rtm->rtm_table = rtbl->tbl_id;
+	rtm->rtm_table = XRTABLE_MAIN_INDEX;
 	/* XXX One may want to vary here. */
 	rtm->rtm_protocol = RTPROT_UNSPEC;
 	/* XXX One may want to vary here. */
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rtm->rtm_type = rtbl->tbl_id == XRTABLE_LOCAL_INDEX
-		? RTN_LOCAL : RTN_UNICAST;
+	rtm->rtm_type = RTN_UNICAST;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
 
@@ -247,32 +260,57 @@ static const struct xia_ppal_rt_eops xdp_rt_eops_main = {
  *	Network namespace
  */
 
+static struct xip_xdp_ctx *create_xdp_ctx(void)
+{
+	struct xip_xdp_ctx *xdp_ctx = kmalloc(sizeof(*xdp_ctx), GFP_KERNEL);
+	if (!xdp_ctx)
+		return NULL;
+	xip_init_ppal_ctx(&xdp_ctx->ctx, XIDTYPE_XDP);
+	return xdp_ctx;
+}
+
+static void free_xdp_ctx(struct xip_xdp_ctx *xdp_ctx)
+{
+	xip_release_ppal_ctx(&xdp_ctx->ctx);
+	kfree(xdp_ctx);
+}
+
 static int __net_init xdp_net_init(struct net *net)
 {
+	struct xip_xdp_ctx *xdp_ctx;
 	int rc;
 
-	rc = init_xid_table(net->xia.local_rtbl, XIDTYPE_XDP,
+	xdp_ctx = create_xdp_ctx();
+	if (!xdp_ctx) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	rc = init_xid_table(&xdp_ctx->ctx, XRTABLE_LOCAL_INDEX, net,
 		&xia_main_lock_table, &xdp_rt_eops_local);
 	if (rc)
-		goto out;
-	rc = init_xid_table(net->xia.main_rtbl, XIDTYPE_XDP,
+		goto xdp_ctx;
+	rc = init_xid_table(&xdp_ctx->ctx, XRTABLE_MAIN_INDEX, net,
 		&xia_main_lock_table, &xdp_rt_eops_main);
 	if (rc)
-		goto local_rtbl;
+		goto xdp_ctx;
+
+	rc = xip_add_ppal_ctx(&net->xia.fib_ctx, &xdp_ctx->ctx);
+	if (rc)
+		goto xdp_ctx;
 	goto out;
 
-local_rtbl:
-	end_xid_table(net->xia.local_rtbl, XIDTYPE_XDP);
+xdp_ctx:
+	free_xdp_ctx(xdp_ctx);
 out:
 	return rc;
 }
 
 static void __net_exit xdp_net_exit(struct net *net)
 {
-	rtnl_lock();
-	end_xid_table(net->xia.main_rtbl, XIDTYPE_XDP);
-	end_xid_table(net->xia.local_rtbl, XIDTYPE_XDP);
-	rtnl_unlock();
+	struct xip_xdp_ctx *xdp_ctx =
+		ctx_xdp(xip_del_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_XDP));
+	free_xdp_ctx(xdp_ctx);
 }
 
 static struct pernet_operations xdp_net_ops __read_mostly = {
@@ -345,11 +383,14 @@ static int local_output_output(struct sk_buff *skb)
 static int xdp_local_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, int anchor_index, struct xip_dst *xdst)
 {
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *local_xtbl;
 	struct fib_xid_xdp_local *lxdp;
 
 	rcu_read_lock();
-	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
+	BUG_ON(!ctx);
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	BUG_ON(!local_xtbl);
 	lxdp = fxid_lxdp(xia_find_xid_rcu(local_xtbl, xid));
 	if (!lxdp) {
@@ -384,25 +425,24 @@ static int xdp_main_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_xdp_main *mxdp;
-	int rc;
 
 	rcu_read_lock();
-	main_xtbl = xia_find_xtbl_rcu(net->xia.main_rtbl, XIDTYPE_XDP);
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
+	BUG_ON(!ctx);
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 	BUG_ON(!main_xtbl);
 	mxdp = fxid_mxdp(xia_find_xid_rcu(main_xtbl, xid));
-
-	rc = XRP_ACT_NEXT_EDGE;
-	if (!mxdp)
-		goto out;
+	if (!mxdp) {
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
 
 	memmove(next_xid, &mxdp->gw, sizeof(*next_xid));
-	rc = XRP_ACT_REDIRECT;
-
-out:
 	rcu_read_unlock();
-	return rc;
+	return XRP_ACT_REDIRECT;
 }
 
 static struct xip_route_proc xdp_rt_proc __read_mostly = {
@@ -834,6 +874,7 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
 	struct xia_row *ssink = &addr->sxia_addr.s_row[node_n - 1];
 	struct fib_xid_xdp_local *lxdp;
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *local_xtbl;
 	struct net *net;
 	int rc;
@@ -847,7 +888,9 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 
 	net = sock_net(sk);
 	rcu_read_lock();
-	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_XDP);
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
+	BUG_ON(!ctx);
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	BUG_ON(!local_xtbl);
 	rc = fib_add_fxid(local_xtbl, &lxdp->fxid);
 	/* We don't sock_hold(sk) because @lxdp->fxid is always released
@@ -897,7 +940,8 @@ static void xdp_unhash(struct sock *sk)
 	sock_prot_inuse_add(net, sk->sk_prot, -1);
 
 	/* Remove from routing table. */
-	local_xtbl = xia_find_xtbl_hold(net->xia.local_rtbl, XIDTYPE_XDP);
+	local_xtbl = xia_find_xtbl_hold(&net->xia.fib_ctx, XIDTYPE_XDP,
+		XRTABLE_LOCAL_INDEX);
 	BUG_ON(!local_xtbl);
 	lxdp = xiask_lxdp(xia);
 	fib_rm_fxid(local_xtbl, &lxdp->fxid);
