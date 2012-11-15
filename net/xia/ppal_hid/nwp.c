@@ -172,12 +172,13 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 {
 	struct net_device *dev = hdev->dev;
 	struct net *net = dev_net(dev);
-	struct fib_xid_table *xtbl;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *main_xtbl;
 
 	ASSERT_RTNL();
 
-	xtbl = xia_find_xtbl_hold(net->xia.main_rtbl, XIDTYPE_HID);
-	BUG_ON(!xtbl);
+	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 
 	while (1) {
 		struct hrdw_addr *ha;
@@ -201,29 +202,26 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 		rcu_read_unlock();
 
 		/* We don't lock hdev->neigh_lock to avoid deadlock. */
-		mhid = fxid_mhid(xia_find_xid_lock(&bucket, xtbl, xid));
+		mhid = fxid_mhid(xia_find_xid_lock(&bucket, main_xtbl, xid));
 		if (mhid) {
 			/* We must test mhid != NULL because
 			 * we didn't hold a lock before the find.
 			 */
 			del_has_by_dev(&mhid->xhm_haddrs, dev);
 			if (list_empty(&mhid->xhm_haddrs)) {
-				fib_rm_fxid_locked(bucket, xtbl,
+				fib_rm_fxid_locked(bucket, main_xtbl,
 					&mhid->xhm_common);
-				free_fxid(xtbl, &mhid->xhm_common);
+				free_fxid(main_xtbl, &mhid->xhm_common);
 			}
 		}
-		fib_unlock_bucket(xtbl, bucket);
+		fib_unlock_bucket(main_xtbl, bucket);
 	}
-
-	xtbl_put(xtbl);
 }
 
-int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
+int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *xid,
 	struct net_device *dev, const u8 *lladdr)
 {
-	struct net *net;
-	struct fib_xid_table *local_xtbl;
+	struct fib_xid_table *local_xtbl, *main_xtbl;
 	struct fib_xid_hid_main *mhid;
 	struct hrdw_addr *ha;
 	u32 local_bucket, main_bucket;
@@ -239,40 +237,40 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 
 	/* Test if @xid is already inserted in the local xtbl. */
 	rc = -EINVAL;
-	net = xtbl_net(xtbl);
-	local_xtbl = xia_find_xtbl_hold(net->xia.local_rtbl, XIDTYPE_HID);
-	BUG_ON(xtbl == local_xtbl);
-	BUG_ON(!net_eq(net, xtbl_net(local_xtbl)));
+	local_xtbl = hid_ctx->ctx.xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	/* Notice that having xia_find_xid_lock on @local_xtbl requires
 	 * @local_xtbl to support multiple writers.
 	 */
 	if (xia_find_xid_lock(&local_bucket, local_xtbl, xid)) {
-		/* We don't issue a warning here because if this host has two
-		 * interfaces connected to the same medium, it would lead to
-		 * a false positive.
+		/* We don't issue a warning about trying inserting an entry
+		 * already in @local_xtb into @main_xtbl because if this host
+		 * has two interfaces connected to the same medium, it would
+		 * lead to a false problem.
 		 */
 		goto out;
 	}
 
-	rc = -ENOMEM;
 	ha = new_ha(dev, lladdr, GFP_ATOMIC);
-	if (!ha)
+	if (!ha) {
+		rc = -ENOMEM;
 		goto out;
+	}
 
-	mhid = fxid_mhid(xia_find_xid_lock(&main_bucket, xtbl, xid));
+	main_xtbl = hid_ctx->ctx.xpc_xid_tables[XRTABLE_MAIN_INDEX];
+	mhid = fxid_mhid(xia_find_xid_lock(&main_bucket, main_xtbl, xid));
 	if (mhid) {
 		rc = add_ha(mhid, ha);
-		fib_unlock_bucket(xtbl, main_bucket);
+		fib_unlock_bucket(main_xtbl, main_bucket);
 		if (rc)
 			goto ha;
 		goto out;
 	}
 
 	/* Add new @mhid. */
-	rc = -ENOMEM;
 	mhid = kzalloc(sizeof(*mhid), GFP_ATOMIC);
 	if (!mhid) {
-		fib_unlock_bucket(xtbl, main_bucket);
+		rc = -ENOMEM;
+		fib_unlock_bucket(main_xtbl, main_bucket);
 		goto ha;
 	}
 	init_fxid(&mhid->xhm_common, xid);
@@ -280,17 +278,16 @@ int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
 	atomic_set(&mhid->xhm_refcnt, 1);
 	rc = add_ha(mhid, ha);
 	BUG_ON(rc);
-	rc = fib_add_fxid_locked(main_bucket, xtbl, &mhid->xhm_common);
-	fib_unlock_bucket(xtbl, main_bucket);
+	rc = fib_add_fxid_locked(main_bucket, main_xtbl, &mhid->xhm_common);
+	fib_unlock_bucket(main_xtbl, main_bucket);
 	if (rc)
-		free_fxid(xtbl, &mhid->xhm_common);
+		free_fxid(main_xtbl, &mhid->xhm_common);
 	goto out;
 
 ha:
 	free_ha_norcu(ha);
 out:
 	fib_unlock_bucket(local_xtbl, local_bucket);
-	xtbl_put(local_xtbl);
 	return rc;
 }
 
@@ -514,23 +511,21 @@ static int my_turn(int me, struct hid_dev *hdev)
 
 static void announce_event(unsigned long data)
 {
-	struct net *net = (struct net *)data;
-	struct xia_hid_state *state = net->xia.hid_state;
+	struct xip_hid_ctx *hid_ctx = (struct xip_hid_ctx *)data;
 	struct fib_xid_table *local_xtbl =
-		xia_find_xtbl_hold(net->xia.local_rtbl, XIDTYPE_HID);
+		hid_ctx->ctx.xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	struct net_device *dev;
 	int me, last_announced, next_to_announce, force;
-	BUG_ON(!local_xtbl);
 
-	next_to_announce = atomic_read(&state->to_announce);
+	next_to_announce = atomic_read(&hid_ctx->to_announce);
 	me = xia_get_fxid_count(local_xtbl);
 	if (me <= 0)
 		goto out;
 
-	last_announced = atomic_read(&state->announced);
+	last_announced = atomic_read(&hid_ctx->announced);
 	force = next_to_announce != last_announced;
 
-	for_each_netdev(net, dev) {
+	for_each_netdev(hid_ctx->net, dev) {
 		struct hid_dev *hdev;
 		/* No NWP on this interface. */
 		if (dev->flags & (IFF_LOOPBACK | IFF_NOARP))
@@ -543,42 +538,32 @@ static void announce_event(unsigned long data)
 	}
 
 out:
-	atomic_set(&state->announced, next_to_announce);
-	xtbl_put(local_xtbl);
-	mod_timer(&net->xia.hid_state->announce_timer, jiffies + 5*HZ);
+	atomic_set(&hid_ctx->announced, next_to_announce);
+	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
 }
 
 /*
  *	State associated to net
  */
 
-int hid_new_hid_state(struct net *net)
+int hid_init_hid_state(struct xip_hid_ctx *hid_ctx)
 {
-	struct xia_hid_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
-	if (!state)
-		return -ENOMEM;
+	atomic_set(&hid_ctx->to_announce, 0);
+	atomic_set(&hid_ctx->announced, 0);
 
-	init_timer(&state->announce_timer);
-	state->announce_timer.function = announce_event;
-	state->announce_timer.data = (unsigned long)net;
-	hold_net(net);
-	net->xia.hid_state = state;
+	init_timer(&hid_ctx->announce_timer);
+	hid_ctx->announce_timer.function = announce_event;
+	hid_ctx->announce_timer.data = (unsigned long)hid_ctx;
 	/* XXX Having a random delay should help to avoid synchronization. */
 	/* XXX Not starting timer if there's nothing to announce. */
-	mod_timer(&state->announce_timer, jiffies + 5*HZ);
+	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
 
 	return 0;
 }
 
-void hid_free_hid_state(struct net *net)
+void hid_release_hid_state(struct xip_hid_ctx *hid_ctx)
 {
-	struct xia_hid_state *state = net->xia.hid_state;
-	struct net *netx = (struct net *)state->announce_timer.data;
-	BUG_ON(!net_eq(net, netx));
-	del_timer_sync(&state->announce_timer);
-	net->xia.hid_state = NULL;
-	release_net(net);
-	kfree(state);
+	del_timer_sync(&hid_ctx->announce_timer);
 }
 
 /*
@@ -711,12 +696,12 @@ static void read_announcement(struct sk_buff *skb)
 {
 	struct net *net = skb_net(skb);
 	struct announcement_hdr *nwp;
-	struct fib_xid_table *main_xtbl;
+	struct xip_hid_ctx *hid_ctx;
 	int count;
 	u8 *xid;
 
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
-	main_xtbl = xia_find_xtbl_hold(net->xia.main_rtbl, XIDTYPE_HID);
+	hid_ctx = ctx_hid(xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
 	count = nwp->hid_count;
 	xid = skb->data;
 	while (count > 0) {
@@ -728,11 +713,10 @@ static void read_announcement(struct sk_buff *skb)
 			break;
 		}
 		/* Ignore errors. */
-		insert_neigh(main_xtbl, xid, skb->dev, nwp->haddr);
+		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr);
 		xid = next_xid;
 		count--;
 	}
-	xtbl_put(main_xtbl);
 }
 
 static int process_announcement(struct sk_buff *skb)
@@ -742,7 +726,7 @@ static int process_announcement(struct sk_buff *skb)
 	int hdr_len = announcement_hdr_len(dev);
 	int min_annoucement = hdr_len + XIA_XID_MAX;
 	struct announcement_hdr *nwp;
-	struct fib_xid_table *local_xtbl;
+	struct xip_ppal_ctx *ctx;
 	struct hid_dev *hdev;
 	int me;
 
@@ -758,10 +742,8 @@ static int process_announcement(struct sk_buff *skb)
 	 */
 
 	/* Obtain @me. */
-	rcu_read_lock();
-	local_xtbl = xia_find_xtbl_rcu(net->xia.local_rtbl, XIDTYPE_HID);
-	me = xia_get_fxid_count(local_xtbl);
-	rcu_read_unlock();
+	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	me = xia_get_fxid_count(ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX]);
 
 	hdev = hid_dev_get(dev);
 	if (my_turn(me, hdev))
@@ -781,7 +763,7 @@ static int process_neigh_list(struct sk_buff *skb)
 	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
 	struct neighs_hdr *nwp;
 	u8 *xid;
-	struct fib_xid_table *main_xtbl;
+	struct xip_hid_ctx *hid_ctx;
 	int hid_count;
 
 	if (!pskb_may_pull(skb, min_list))
@@ -790,7 +772,7 @@ static int process_neigh_list(struct sk_buff *skb)
 	nwp = (struct neighs_hdr *)skb_network_header(skb);
 	xid = skb_pull(skb, hdr_len);
 
-	main_xtbl = xia_find_xtbl_hold(net->xia.main_rtbl, XIDTYPE_HID);
+	hid_ctx = ctx_hid(xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
 	hid_count = nwp->hid_count;
 	while (hid_count > 0) {
 		u8 *haddr_or_xid = skb_pull(skb, XIA_XID_MAX + 1);
@@ -816,7 +798,7 @@ static int process_neigh_list(struct sk_buff *skb)
 				goto out_loop;
 			}
 
-			insert_neigh(main_xtbl, xid, dev, haddr_or_xid);
+			insert_neigh(hid_ctx, xid, dev, haddr_or_xid);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
@@ -825,7 +807,6 @@ static int process_neigh_list(struct sk_buff *skb)
 		hid_count--;
 	}
 out_loop:
-	xtbl_put(main_xtbl);
 out:
 	consume_skb(skb);
 	return 0;
