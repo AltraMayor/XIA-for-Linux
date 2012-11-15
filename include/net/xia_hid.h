@@ -35,6 +35,29 @@ static inline struct rtnl_xia_hid_hdw_addrs *RTHA_NEXT(
 #include <net/xia_route.h>
 
 /*
+ *	HID context
+ */
+
+struct xip_hid_ctx {
+	struct xip_ppal_ctx	ctx;
+
+	/* Simplify scanning network devices. */
+	struct net		*net;
+
+ 	/* NWP's state per struct net. */
+	atomic_t	to_announce;
+	atomic_t	announced;
+	struct timer_list announce_timer;
+};
+
+static inline struct xip_hid_ctx *ctx_hid(struct xip_ppal_ctx *ctx)
+{
+	return likely(ctx)
+		? container_of(ctx, struct xip_hid_ctx, ctx)
+		: NULL;
+}
+
+/*
  *	Neighborhood Watch Protocol (NWP)
  *
  *	Exported by nwp.c
@@ -88,7 +111,7 @@ static inline void mhid_put(struct fib_xid_hid_main *mhid)
 		mhid_finish_destroy(mhid);
 }
 
-int insert_neigh(struct fib_xid_table *xtbl, const char *xid,
+int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *xid,
 	struct net_device *dev, const u8 *lladdr);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
@@ -148,24 +171,14 @@ static inline void hid_dev_hold(struct hid_dev *hdev)
 }
 
 /*
- *	NWP state per struct net
+ *	Loading/unloading
  */
-
-/* XXX This struct should have pointers to local and main HID tables to
- * simplify the code that often looks up those table.
- */
-/* struct xia_hid_state keeps the state of NWP per struct net. */
-struct xia_hid_state {
-	atomic_t	to_announce;
-	atomic_t	announced;
-	struct timer_list announce_timer;
-};
 
 int hid_nwp_init(void);
 void hid_nwp_exit(void);
 
-int hid_new_hid_state(struct net *net);
-void hid_free_hid_state(struct net *net);
+int hid_init_hid_state(struct xip_hid_ctx *hid_ctx);
+void hid_release_hid_state(struct xip_hid_ctx *hid_ctx);
 
 #endif /* __KERNEL__ */
 

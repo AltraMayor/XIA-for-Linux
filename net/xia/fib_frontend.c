@@ -28,6 +28,8 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 	rtm = nlmsg_data(nlh);
 	if (rtm->rtm_type > RTN_MAX)
 		return -EINVAL;
+	if (rtm->rtm_table >= XRTABLE_MAX_INDEX)
+		return -EINVAL;
 
 	memset(cfg, 0, sizeof(*cfg));
 
@@ -73,12 +75,12 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 	return 0;
 }
 
-static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
-				void *arg)
+static int xip_rtm_froute(int to_add, struct sk_buff *skb,
+	struct nlmsghdr *nlh, void *arg)
 {
 	struct net *net = sock_net(skb->sk);
 	struct xia_fib_config cfg;
-	struct fib_xia_rtable *rtbl;
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *xtbl;
 	int rc;
 
@@ -88,17 +90,30 @@ static int xia_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	if (!cfg.xfc_dst)
 		return -EINVAL;
-	rtbl = xia_fib_get_table(net, cfg.xfc_table);
-	if (rtbl == NULL)
-		return -EINVAL;
 
-	xtbl = xia_find_xtbl_hold(rtbl, cfg.xfc_dst->xid_type);
-	if (!xtbl)
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, cfg.xfc_dst->xid_type);
+	if (!ctx) {
+		rcu_read_unlock();
 		return -EXTYNOSUPPORT;
+	}
+	xtbl = ctx->xpc_xid_tables[cfg.xfc_table];
+	if (!xtbl) {
+		rcu_read_unlock();
+		return -EINVAL;
+	}
 
-	rc = xtbl->fxt_eops->newroute(xtbl, &cfg);
-	xtbl_put(xtbl);
+	rc = to_add
+		? xtbl->fxt_eops->newroute(ctx, xtbl, &cfg)
+		: xtbl->fxt_eops->delroute(ctx, xtbl, &cfg);
+	rcu_read_unlock();
 	return rc;
+}
+
+static int xip_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
+	void *arg)
+{
+	return xip_rtm_froute(1, skb, nlh, arg);
 }
 
 static inline int is_cloned(const struct nlmsghdr *nlh)
@@ -108,37 +123,16 @@ static inline int is_cloned(const struct nlmsghdr *nlh)
 			RTM_F_CLONED;
 }
 
-static int xia_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
-				void *arg)
+static int xip_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
+	void *arg)
 {
-	struct net *net = sock_net(skb->sk);
-	struct xia_fib_config cfg;
-	struct fib_xia_rtable *rtbl;
-	struct fib_xid_table *xtbl;
-	int rc;
-
 	if (is_cloned(nlh)) {
+		struct net *net = sock_net(skb->sk);
 		clear_xdst_table(net);
 		return 0;
 	}
 
-	rc = rtm_to_fib_config(net, skb, nlh, &cfg);
-	if (rc < 0)
-		return rc;
-
-	if (!cfg.xfc_dst)
-		return -EINVAL;
-	rtbl = xia_fib_get_table(net, cfg.xfc_table);
-	if (rtbl == NULL)
-		return -EINVAL;
-
-	xtbl = xia_find_xtbl_hold(rtbl, cfg.xfc_dst->xid_type);
-	if (!xtbl)
-		return -EXTYNOSUPPORT;
-
-	rc = xtbl->fxt_eops->delroute(xtbl, &cfg);
-	xtbl_put(xtbl);
-	return rc;
+	return xip_rtm_froute(0, skb, nlh, arg);
 }
 
 static inline void clear_cb_from(struct netlink_callback *cb, int from)
@@ -147,8 +141,8 @@ static inline void clear_cb_from(struct netlink_callback *cb, int from)
 		from * sizeof(cb->args[0]));
 }
 
-static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
-	struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
 	struct fib_xid_buckets *abranch;
@@ -157,7 +151,6 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 	int dumped = 0;
 	int divisor, aindex;
 
-	rcu_read_lock();
 	abranch = rcu_dereference(xtbl->fxt_active_branch);
 	divisor = abranch->divisor;
 	aindex = xtbl_branch_index(xtbl, abranch);
@@ -172,7 +165,7 @@ static int xia_fib_dump_ppal(struct fib_xid_table *xtbl,
 				goto next;
 			if (dumped)
 				clear_cb_from(cb, 5);
-			if (xtbl->fxt_eops->dump_fxid(fxid, xtbl, rtbl, skb, cb)
+			if (xtbl->fxt_eops->dump_fxid(fxid, xtbl, ctx, skb, cb)
 				< 0)
 				goto out;
 			dumped = 1;
@@ -181,31 +174,51 @@ next:
 		}
 	}
 out:
-	rcu_read_unlock();
 	cb->args[3] = i;
 	cb->args[4] = j;
 	return skb->len;
 }
 
-static int xia_fib_dump_rtable(struct fib_xia_rtable *rtbl, struct sk_buff *skb,
+static int xip_fib_dump_tbls_rcu(struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
-	long i, j = 0;
-	long first_j = cb->args[2];
+	long i;
 	int dumped = 0;
 
-	for (i = cb->args[1]; i < NUM_PRINCIPAL_HINT; i++, first_j = 0) {
-		struct fib_xid_table *xtbl;
+	for (i = cb->args[2]; i < XRTABLE_MAX_INDEX; i++) {
+		struct fib_xid_table *xtbl = ctx->xpc_xid_tables[i];
+		if (!xtbl)
+			continue;
+		if (dumped)
+			clear_cb_from(cb, 3);
+		if (xia_fib_dump_xtbl_rcu(xtbl, ctx, skb, cb) < 0)
+			break;
+		dumped = 1;
+	}
+	cb->args[2] = i;
+	return skb->len;
+}
+
+static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
+{
+	struct net *net = sock_net(skb->sk);
+	long i, j = 0;
+	long first_j = cb->args[1];
+	int dumped = 0;
+
+
+	for (i = cb->args[0]; i < NUM_PRINCIPAL_HINT; i++, first_j = 0) {
+		struct xip_ppal_ctx *ctx;
 		struct hlist_node *p;
-		struct hlist_head *head = &rtbl->ppal[i];
+		struct hlist_head *head = &net->xia.fib_ctx.ppal[i];
 		j = 0;
 		rcu_read_lock();
-		hlist_for_each_entry_rcu(xtbl, p, head, fxt_list) {
+		hlist_for_each_entry_rcu(ctx, p, head, xpc_list) {
 			if (j < first_j)
 				goto next;
 			if (dumped)
-				clear_cb_from(cb, 3);
-			if (xia_fib_dump_ppal(xtbl, rtbl, skb, cb) < 0) {
+				clear_cb_from(cb, 2);
+			if (xip_fib_dump_tbls_rcu(ctx, skb, cb) < 0) {
 				rcu_read_unlock();
 				goto out;
 			}
@@ -216,12 +229,12 @@ next:
 		rcu_read_unlock();
 	}
 out:
-	cb->args[1] = i;
-	cb->args[2] = j;
+	cb->args[0] = i;
+	cb->args[1] = j;
 	return skb->len;
 }
 
-static int xia_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
+static int xip_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
 #define SIZE_OF_DEST	(sizeof(struct xia_xid[XIA_OUTDEGREE_MAX]))
@@ -272,8 +285,8 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-/* Dump XIA's DST table. */
-static int xia_dst_dump(struct sk_buff *skb, struct netlink_callback *cb)
+/* Dump XIP's DST table. */
+static int xip_dst_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct net *net = sock_net(skb->sk);
 	long i, j = 0;
@@ -290,7 +303,7 @@ static int xia_dst_dump(struct sk_buff *skb, struct netlink_callback *cb)
 				goto next;
 			if (dumped)
 				clear_cb_from(cb, 2);
-			if (xia_dst_dump_entry(dst_xdst(dsth), skb, cb) < 0) {
+			if (xip_dst_dump_entry(dst_xdst(dsth), skb, cb) < 0) {
 				rcu_read_unlock();
 				goto out;
 			}
@@ -306,27 +319,11 @@ out:
 	return skb->len;
 }
 
-static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
+static int xip_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct net *net;
-	long i;
-	int dumped;
-
 	if (is_cloned(cb->nlh))
-		return xia_dst_dump(skb, cb);
-
-	net = sock_net(skb->sk);
-	dumped = 0;
-	for (i = cb->args[0]; i < XRTABLE_MAX_INDEX; i++) {
-		struct fib_xia_rtable *rtbl = xia_fib_get_table(net, i);
-		if (dumped)
-			clear_cb_from(cb, 1);
-		if (xia_fib_dump_rtable(rtbl, skb, cb) < 0)
-			break;
-		dumped = 1;
-	}
-	cb->args[0] = i;
-	return skb->len;
+		return xip_dst_dump(skb, cb);
+	return xip_fib_dump_ppals(skb, cb);
 }
 
 /*
@@ -335,28 +332,12 @@ static int xia_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 
 static int __net_init fib_net_init(struct net *net)
 {
-	RCU_INIT_POINTER(net->xia.local_rtbl,
-		create_xia_rtable(net, XRTABLE_LOCAL_INDEX));
-	if (!net->xia.local_rtbl)
-		goto error;
-	RCU_INIT_POINTER(net->xia.main_rtbl,
-		create_xia_rtable(net, XRTABLE_MAIN_INDEX));
-	if (!net->xia.main_rtbl)
-		goto local;
-	return 0;
-
-local:
-	destroy_xia_rtable(&net->xia.local_rtbl);
-error:
-	return -ENOMEM;
+	return init_fib_ppal_ctx(&net->xia.fib_ctx);
 }
 
 static void __net_exit fib_net_exit(struct net *net)
 {
-	rtnl_lock();
-	destroy_xia_rtable(&net->xia.main_rtbl);
-	destroy_xia_rtable(&net->xia.local_rtbl);
-	rtnl_unlock();
+	release_fib_ppal_ctx(&net->xia.fib_ctx);
 }
 
 static struct pernet_operations fib_net_ops __read_mostly = {
@@ -378,9 +359,9 @@ int __init xia_fib_init(void)
 	if (rc)
 		goto out;
 
-	rtnl_register(PF_XIA, RTM_NEWROUTE, xia_rtm_newroute, NULL, NULL);
-	rtnl_register(PF_XIA, RTM_DELROUTE, xia_rtm_delroute, NULL, NULL);
-	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xia_dump_fib, NULL);
+	rtnl_register(PF_XIA, RTM_NEWROUTE, xip_rtm_newroute, NULL, NULL);
+	rtnl_register(PF_XIA, RTM_DELROUTE, xip_rtm_delroute, NULL, NULL);
+	rtnl_register(PF_XIA, RTM_GETROUTE, NULL, xip_dump_fib, NULL);
 
 	goto out;
 

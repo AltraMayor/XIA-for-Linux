@@ -5,7 +5,7 @@
 
 #ifdef __KERNEL__
 #include <net/dst.h>
-#include <net/xia_dst_table.h>
+#include <net/netns/xia.h>
 #endif
 
 #define XIP_MIN_MTU	1024
