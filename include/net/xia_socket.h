@@ -90,14 +90,14 @@ ssize_t xia_sendpage(struct socket *sock, struct page *page,
 static inline int xip_setsockopt(struct sock *sk, int level, int optname,
 	char __user *optval, unsigned int optlen)
 {
-	/* TODO Implement some options that make sense to XIA. */
+	/* XXX Implement some options that make sense to XIA. */
 	return -ENOPROTOOPT;
 }
 
 static inline int xip_getsockopt(struct sock *sk, int level, int optname,
 	char __user *optval, int __user *optlen)
 {
-	/* TODO Implement some options that make sense to XIA.
+	/* XXX Implement some options that make sense to XIA.
 	 * See net/ipv4/ip_sockglue.c:do_ip_getsockopt and
 	 * net/ipv4/ip_sockglue.c:ip_getsockopt.
 	 */
