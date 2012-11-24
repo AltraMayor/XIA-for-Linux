@@ -595,6 +595,14 @@ static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
 	return NULL;
 }
 
+void xdst_init_anchor(struct xip_dst_anchor *anchor)
+{
+	int i;
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
+		INIT_HLIST_HEAD(&anchor->heads[i]);
+}
+EXPORT_SYMBOL_GPL(xdst_init_anchor);
+
 static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 	int (*filter)(struct xip_dst *xdst, int anchor_index, void *arg),
 	void *arg)
@@ -764,6 +772,7 @@ static struct xip_negdep_route_proc negdep_rproc = {
 		.xrp_ppal_type = XIDTYPE_NAT, /* Dummy value. */
 		.deliver = negdep_deliver,
 	},
+	.anchor = XDST_ANCHOR_INIT,
 };
 
 static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
