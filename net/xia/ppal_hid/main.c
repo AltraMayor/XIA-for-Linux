@@ -45,11 +45,12 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	/* Allocating @lhid before aquiring locks to be able to sleep if
 	 * necessary.
 	 */
-	lhid = kzalloc(sizeof(*lhid), GFP_KERNEL);
+	lhid = kmalloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		return -ENOMEM;
 	xid = cfg->xfc_dst->xid_id;
 	init_fxid(&lhid->xhl_common, xid);
+	xdst_init_anchor(&lhid->xhl_anchor);
 
 	if (xia_find_xid_lock(&local_bucket, local_xtbl, xid)) {
 		rc = -EEXIST;

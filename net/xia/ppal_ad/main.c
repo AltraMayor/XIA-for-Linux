@@ -45,11 +45,12 @@ static int local_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	int rc;
 
 	rc = -ENOMEM;
-	lad = kzalloc(sizeof(*lad), GFP_KERNEL);
+	lad = kmalloc(sizeof(*lad), GFP_KERNEL);
 	if (!lad)
 		goto out;
 
 	init_fxid(&lad->common, cfg->xfc_dst->xid_id);
+	xdst_init_anchor(&lad->anchor);
 
 	rc = fib_add_fxid(xtbl, &lad->common);
 	if (rc)
