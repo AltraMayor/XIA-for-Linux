@@ -18,8 +18,10 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	if (!ha)
 		return NULL;
 	INIT_LIST_HEAD(&ha->ha_list);
+	INIT_LIST_HEAD(&ha->hdev_list);	
 	ha->dev = dev;
 	dev_hold(dev);
+	xdst_init_anchor(&ha->anchor);
 	memmove(ha->ha, lladdr, dev->addr_len);
 	return ha;
 }
