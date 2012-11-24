@@ -177,7 +177,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		goto out;
 
 	rc = -ENOMEM;
-	mxdp = kzalloc(sizeof(*mxdp), GFP_KERNEL);
+	mxdp = kmalloc(sizeof(*mxdp), GFP_KERNEL);
 	if (!mxdp)
 		goto out;
 
@@ -535,6 +535,13 @@ static int xdp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 		return -ENOIOCTLCMD;
 
 	}
+}
+
+static int xdp_init(struct sock *sk)
+{
+	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
+	xdst_init_anchor(&lxdp->anchor);
+	return 0;
 }
 
 static void xdp_flush_pending_frames(struct sock *sk)
@@ -953,6 +960,7 @@ static struct proto xdp_prot __read_mostly = {
 	.connect		= xdp_connect,
 	.disconnect		= xdp_disconnect,
 	.ioctl			= xdp_ioctl,
+	.init			= xdp_init,
 	.destroy		= xdp_destroy_sock,
 	.setsockopt		= xdp_setsockopt,
 	.getsockopt		= xdp_getsockopt,

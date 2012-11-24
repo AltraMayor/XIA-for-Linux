@@ -93,10 +93,22 @@ struct xip_dst_anchor {
 	struct hlist_head	heads[XIA_OUTDEGREE_MAX];
 };
 
+#define XDST_ANCHOR_INIT { \
+	.heads[BUILD_BUG_ON_ZERO(XIA_OUTDEGREE_MAX != 4)] = HLIST_HEAD_INIT, \
+	.heads[1] = HLIST_HEAD_INIT, \
+	.heads[2] = HLIST_HEAD_INIT, \
+	.heads[3] = HLIST_HEAD_INIT, }
+
+/** xdst_init_anchor - initialize @anchor. */
+void xdst_init_anchor(struct xip_dst_anchor *anchor);
+
 /* xdst_free_anchor - release all struct xip_dst entries that are attached
  *			to @anchor.
  * NOTE
  *	IMPORTANT! Caller must RCU synch before calling this function.
+ *
+ *	This function does NOT free @anchor's memory itself, but
+ *	attached structs to @anchor.
  *
  *	This function is meant to be called by the host of
  *	struct xip_dst_anchor, NOT by the code that manipulates
