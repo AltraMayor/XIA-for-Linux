@@ -102,7 +102,7 @@ struct xip_dst_anchor {
 /** xdst_init_anchor - initialize @anchor. */
 void xdst_init_anchor(struct xip_dst_anchor *anchor);
 
-/* xdst_free_anchor - release all struct xip_dst entries that are attached
+/** xdst_free_anchor - release all struct xip_dst entries that are attached
  *			to @anchor.
  * NOTE
  *	IMPORTANT! Caller must RCU synch before calling this function.
@@ -116,7 +116,16 @@ void xdst_init_anchor(struct xip_dst_anchor *anchor);
  */
 void xdst_free_anchor(struct xip_dst_anchor *anchor);
 
-/* xdst_invalidate_redirect - invalidate DST entries that rely on the redirect
+/** xdst_clean_anchor - release all struct xip_dst entries that are attached
+ *			to @anchor and have XID <@type, @xid> at one of their
+ *			edges.
+ * NOTE
+ *	IMPORTANT! Caller must RCU synch before calling this function.
+ */
+void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
+	const u8 *id);
+
+/** xdst_invalidate_redirect - invalidate DST entries that rely on the redirect
  *	from <@from_type, @from_xid> to @to.
  *
  * NOTE

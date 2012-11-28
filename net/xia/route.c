@@ -695,32 +695,34 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	const u8 *from_xid, const struct xia_xid *to)
 {
 	struct xip_dst_anchor *anchor;
-	struct filter_from_arg arg;
 
 	rcu_read_lock();
+
 	anchor = find_anchor_of_rcu(net, to);
-	if (IS_ERR_OR_NULL(anchor)) {
+	if (IS_ERR(anchor)) {
 		rcu_read_unlock();
-
-		/* XXX Once negative dependency on XIDs is implemented,
-		 * Remove the following code.
-		 */
-		if (!anchor)
-			return;
-
-		pr_err("%s: XIP could not invalidate DST entries because of error %li. Clearing XIP DST cache as a last resource...\n",
+		LIMIT_NETDEBUG(KERN_ERR pr_fmt("%s: XIP could not invalidate DST entries because of error %li. Clearing XIP DST cache as a last resource...\n"),
 			__func__, PTR_ERR(anchor));
 		clear_xdst_table(net);
 		return;
 	}
 
-	arg.type = from_type;
-	arg.id = from_xid;
-	xdst_free_anchor_f(anchor, filter_from, &arg);
+	BUG_ON(!anchor);
+	xdst_clean_anchor(anchor, from_type, from_xid);
 
 	rcu_read_unlock();
 }
 EXPORT_SYMBOL_GPL(xdst_invalidate_redirect);
+
+void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
+	const u8 *id)
+{
+	struct filter_from_arg arg;
+	arg.type = type;
+	arg.id = id;
+	xdst_free_anchor_f(anchor, filter_from, &arg);
+}
+EXPORT_SYMBOL_GPL(xdst_clean_anchor);
 
 /*
  *	Principal routing
@@ -844,10 +846,7 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 	case XRP_ACT_FORWARD:
 		/* We have a positive anchor. */
 		anchor = xdst->anchors[0].anchor;
-		/* XXX Once negative dependency on XIDs is implemented,
-		 * uncomment the following test.
-		 * BUG_ON(!anchor);
-		 */
+		BUG_ON(!anchor);
 		break;
 
 	case XRP_ACT_ABRUPT_FAILURE:
@@ -1160,13 +1159,15 @@ tail_call:
 		/* Is it forwardable? */
 		switch (deliver_rcu(net, next_xid, i, xdst)) {
 		case XRP_ACT_NEXT_EDGE:
-			/* XXX Once negative dependency on XIDs is implemented,
-			 * test that there's dependency on @xdst at @i.
-			 * BUG_ON(!xdst->anchors[i].anchor);
-			 */
+			/* Check negative dependency. */
+			BUG_ON(!xdst->anchors[i].anchor);
 			break;
 		case XRP_ACT_FORWARD:
 			/* We found an edge that we can use to forward. */
+
+			/* Check positive dependency. */
+			BUG_ON(!xdst->anchors[i].anchor);
+
 			xdst = add_xdst_rcu(net, xdst, i);
 			goto tail_call;
 		case XRP_ACT_ABRUPT_FAILURE:
