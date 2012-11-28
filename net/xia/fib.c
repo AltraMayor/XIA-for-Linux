@@ -628,3 +628,38 @@ int fib_default_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(fib_default_delroute);
+
+struct deferred_xip_update {
+	struct rcu_head		rcu_head;
+	fib_deferred_xid_upd_t	f;
+	struct net		*net;
+	struct xia_xid		xid;
+};
+
+struct deferred_xip_update *fib_alloc_xip_upd(gfp_t flags)
+{
+	return kmalloc(sizeof(struct deferred_xip_update), flags);
+}
+EXPORT_SYMBOL_GPL(fib_alloc_xip_upd);
+
+static void do_deferred_update(struct rcu_head *head)
+{
+	struct deferred_xip_update *def_upd =
+		container_of(head, struct deferred_xip_update, rcu_head);
+	def_upd->f(def_upd->net, &def_upd->xid);
+	release_net(def_upd->net);
+	fib_free_xip_upd(def_upd);
+}
+
+void fib_defer_xip_upd(struct deferred_xip_update *def_upd,
+	fib_deferred_xid_upd_t f, struct net *net,
+	xid_type_t type, const u8 *id)
+{
+	def_upd->f = f;
+	def_upd->net = net;
+	hold_net(net);
+	def_upd->xid.xid_type = type;
+	memmove(def_upd->xid.xid_id, id, sizeof(def_upd->xid.xid_id));
+	call_rcu(&def_upd->rcu_head, do_deferred_update);
+}
+EXPORT_SYMBOL_GPL(fib_defer_xip_upd);

@@ -412,5 +412,36 @@ struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
 void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 	__releases(xip_bucket_lock);
 
+/** fib_alloc_xip_upd - allocate an struct deferred_xip_update.
+ * RETURN
+ *	Return the struct on success; otherwise NULL.
+ * NOTE
+ *	The returned struct must be consumed by a call to either
+ *	fib_free_xip_upd(), or fib_defer_xip_upd().
+ */
+struct deferred_xip_update;
+struct deferred_xip_update *fib_alloc_xip_upd(gfp_t flags);
+
+static inline void fib_free_xip_upd(struct deferred_xip_update *def_upd)
+{
+	kfree(def_upd);
+}
+
+/** xip_defer_update - Defer the execution of
+ *			@f(@net, &{copy(@type), copy(@id)}) for
+ *			an RCU synchronization.
+ * NODE
+ *	@f may (likely) be called from an atomic context.
+ *
+ *	If caller of this function resides in a kernel module,
+ *	it should consider to call rcu_barrier() while unloading its module.
+ *
+ *	@def_upd is consumed once this function returns.
+ */
+typedef void (*fib_deferred_xid_upd_t)(struct net *net, struct xia_xid *xid);
+void fib_defer_xip_upd(struct deferred_xip_update *def_upd,
+	fib_deferred_xid_upd_t f, struct net *net,
+	xid_type_t type, const u8 *id);
+
 #endif /* __KERNEL__ */
 #endif /* _NET_XIA_FIB_H */
