@@ -14,6 +14,7 @@
  */
 struct xip_xdp_ctx {
 	struct xip_ppal_ctx	ctx;
+	struct xip_dst_anchor	negdep;
 };
 
 static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
@@ -166,32 +167,59 @@ static inline struct fib_xid_xdp_main *fxid_mxdp(struct fib_xid *fxid)
 		: NULL;
 }
 
+static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
+{
+	struct xip_xdp_ctx *xdp_ctx;
+
+	rcu_read_lock();
+	xdp_ctx = ctx_xdp(xip_find_ppal_ctx_rcu(&net->xia.fib_ctx,
+		xid->xid_type));
+	if (likely(xdp_ctx))
+		xdst_clean_anchor(&xdp_ctx->negdep, xid->xid_type, xid->xid_id);
+	rcu_read_unlock();
+}
+
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
+	struct deferred_xip_update *def_upd;
+	const u8 *id;
 	struct fib_xid_xdp_main *mxdp;
 	int rc;
 
-	rc = -EINVAL;
 	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_XDP)
-		goto out;
+		return -EINVAL;
 
-	rc = -ENOMEM;
+	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
+	if (!def_upd)
+		return -ENOMEM;
+
 	mxdp = kmalloc(sizeof(*mxdp), GFP_KERNEL);
-	if (!mxdp)
-		goto out;
+	if (!mxdp) {
+		rc = -ENOMEM;
+		goto def_upd;
+	}
 
-	init_fxid(&mxdp->common, cfg->xfc_dst->xid_id);
+	id = cfg->xfc_dst->xid_id;
+	init_fxid(&mxdp->common, id);
 	mxdp->gw = *cfg->xfc_gw;
 
 	rc = fib_add_fxid(xtbl, &mxdp->common);
 	if (rc)
 		goto mxdp;
-	goto out;
+
+	/* Before invalidating old anchors to force dependencies to
+	 * migrate to @mxdp, wait an RCU synchronization to make sure that
+	 * every thread see @mxdp.
+	 */
+	fib_defer_xip_upd(def_upd, main_deferred_negdep,
+		xtbl_net(xtbl), XIDTYPE_XDP, id);
+	return 0;
 
 mxdp:
 	free_fxid(xtbl, &mxdp->common);
-out:
+def_upd:
+	fib_free_xip_upd(def_upd);
 	return rc;
 }
 
@@ -266,11 +294,16 @@ static struct xip_xdp_ctx *create_xdp_ctx(void)
 	if (!xdp_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&xdp_ctx->ctx, XIDTYPE_XDP);
+	xdst_init_anchor(&xdp_ctx->negdep);
 	return xdp_ctx;
 }
 
+/* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_xdp_ctx(struct xip_xdp_ctx *xdp_ctx)
 {
+	/* It's assumed that synchronize_rcu() has been called before. */
+	xdst_free_anchor(&xdp_ctx->negdep);
+
 	xip_release_ppal_ctx(&xdp_ctx->ctx);
 	kfree(xdp_ctx);
 }
@@ -429,6 +462,7 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_REDIRECT;
 	}
 
+	xdst_attach_to_anchor(xdst, anchor_index, &ctx_xdp(ctx)->negdep);
 	rcu_read_unlock();
 	return XRP_ACT_NEXT_EDGE;
 }
@@ -863,11 +897,37 @@ out_free:
 	return rc;
 }
 
+static void local_deferred_negdep(struct net *net, struct xia_xid *xid)
+{
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *main_xtbl;
+	struct fib_xid_xdp_main *mxdp;
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type);
+	if (unlikely(!ctx)) {
+		/* Principal is unloading. */
+		goto out;
+	}
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
+	mxdp = fxid_mxdp(xia_find_xid_rcu(main_xtbl, xid->xid_id));
+	if (mxdp)
+		xdst_invalidate_redirect(net, xid->xid_type, xid->xid_id,
+			&mxdp->gw);
+	else
+		xdst_clean_anchor(&ctx_xdp(ctx)->negdep, xid->xid_type,
+			xid->xid_id);
+out:
+	rcu_read_unlock();
+}
+
 static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
 	struct xia_row *ssink = &addr->sxia_addr.s_row[node_n - 1];
+	struct deferred_xip_update *def_upd;
 	struct fib_xid_xdp_local *lxdp;
+	const u8 *id;
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *local_xtbl;
 	struct net *net;
@@ -877,8 +937,13 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	if (ssink->s_xid.xid_type != XIDTYPE_XDP)
 		return -EXTYNOSUPPORT;
 
+	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
+	if (!def_upd)
+		return -ENOMEM;
+
 	lxdp = sk_lxdp(sk);
-	init_fxid(&lxdp->fxid, ssink->s_xid.xid_id);
+	id = ssink->s_xid.xid_id;
+	init_fxid(&lxdp->fxid, id);
 
 	net = sock_net(sk);
 	rcu_read_lock();
@@ -886,15 +951,22 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	BUG_ON(!ctx);
 	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	BUG_ON(!local_xtbl);
+
 	rc = fib_add_fxid(local_xtbl, &lxdp->fxid);
 	/* We don't sock_hold(sk) because @lxdp->fxid is always released
 	 * before @lxdp is freed.
 	 */
-	rcu_read_unlock();
+	if (rc) {
+		free_fxid_norcu(local_xtbl, &lxdp->fxid);
+		rcu_read_unlock();
+		fib_free_xip_upd(def_upd);
+		return rc == -EEXIST ? -EADDRINUSE : rc;
+	}
 
-	if (!rc)
-		sock_prot_inuse_add(net, sk->sk_prot, 1);
-	return rc == -EEXIST ? -EADDRINUSE : rc;
+	rcu_read_unlock();
+	fib_defer_xip_upd(def_upd, local_deferred_negdep, net, XIDTYPE_XDP, id);
+	sock_prot_inuse_add(net, sk->sk_prot, 1);
+	return 0;
 }
 
 static int xdp_backlog_rcv(struct sock *sk, struct sk_buff *skb)
@@ -1069,6 +1141,9 @@ static void __exit xia_xdp_exit(void)
 	xip_del_router(&xdp_rt_proc);
 	xia_unregister_pernet_subsys(&xdp_net_ops);
 	xia_del_socket_end(&xdp_sock_proc);
+
+	rcu_barrier();
+
 	pr_alert("XIA Principal XDP UNloaded\n");
 }
 

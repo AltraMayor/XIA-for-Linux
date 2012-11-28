@@ -28,11 +28,17 @@ static inline struct fib_xid_hid_local *fxid_lhid(struct fib_xid *fxid)
 static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *local_xtbl, struct xia_fib_config *cfg)
 {
+	struct deferred_xip_update *def_upd;
 	struct fib_xid_hid_local *lhid;
-	u8 *xid;
+	const u8 *id;
 	struct fib_xid_table *main_xtbl;
 	u32 local_bucket, main_bucket;
+	struct xip_hid_ctx *hid_ctx;
 	int rc;
+
+	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
+	if (!def_upd)
+		return -ENOMEM;
 
 	/*
 	 * The sequence of locks in this function must be careful to avoid
@@ -46,19 +52,21 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	 * necessary.
 	 */
 	lhid = kmalloc(sizeof(*lhid), GFP_KERNEL);
-	if (!lhid)
-		return -ENOMEM;
-	xid = cfg->xfc_dst->xid_id;
-	init_fxid(&lhid->xhl_common, xid);
+	if (!lhid) {
+		rc = -ENOMEM;
+		goto def_upd;
+	}
+	id = cfg->xfc_dst->xid_id;
+	init_fxid(&lhid->xhl_common, id);
 	xdst_init_anchor(&lhid->xhl_anchor);
 
-	if (xia_find_xid_lock(&local_bucket, local_xtbl, xid)) {
+	if (xia_find_xid_lock(&local_bucket, local_xtbl, id)) {
 		rc = -EEXIST;
 		goto unlock_local;
 	}
 
 	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	if (xia_find_xid_lock(&main_bucket, main_xtbl, xid)) {
+	if (xia_find_xid_lock(&main_bucket, main_xtbl, id)) {
 		rc = -EINVAL;
 		goto unlock_main;
 	}
@@ -69,7 +77,15 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 
 	fib_unlock_bucket(main_xtbl, main_bucket);
 	fib_unlock_bucket(local_xtbl, local_bucket);
-	atomic_inc(&ctx_hid(ctx)->to_announce);
+	hid_ctx = ctx_hid(ctx);
+	atomic_inc(&hid_ctx->to_announce);
+
+	/* Before invalidating old anchors to force dependencies to
+	 * migrate to @lhid, wait an RCU synchronization to make sure that
+	 * every thread see @lhid.
+	 */
+	fib_defer_xip_upd(def_upd, hid_deferred_negdep, hid_ctx->net,
+		XIDTYPE_HID, id);
 	return 0;
 
 unlock_main:
@@ -77,6 +93,8 @@ unlock_main:
 unlock_local:
 	fib_unlock_bucket(local_xtbl, local_bucket);
 	free_fxid(local_xtbl, &lhid->xhl_common);
+def_upd:
+	fib_free_xip_upd(def_upd);
 	return rc;
 }
 
@@ -252,11 +270,16 @@ static struct xip_hid_ctx *create_hid_ctx(struct net *net)
 	xip_init_ppal_ctx(&hid_ctx->ctx, XIDTYPE_HID);
 	hid_ctx->net = net;
 	hold_net(net);
+	xdst_init_anchor(&hid_ctx->negdep);
 	return hid_ctx;
 }
 
+/* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_hid_ctx(struct xip_hid_ctx *hid_ctx)
 {
+	/* It's assumed that synchronize_rcu() has been called before. */
+	xdst_free_anchor(&hid_ctx->negdep);
+
 	release_net(hid_ctx->net);
 	hid_ctx->net = NULL;
 	xip_release_ppal_ctx(&hid_ctx->ctx);
@@ -501,6 +524,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	return XRP_ACT_FORWARD;
 
 out:
+	xdst_attach_to_anchor(xdst, anchor_index, &ctx_hid(ctx)->negdep);
 	rcu_read_unlock();
 	return XRP_ACT_NEXT_EDGE;
 }

@@ -220,13 +220,27 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 	}
 }
 
-int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *xid,
+void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
+{
+	struct xip_hid_ctx *hid_ctx;
+
+	rcu_read_lock();
+	hid_ctx = ctx_hid(
+		xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type));
+	if (likely(hid_ctx))
+		xdst_clean_anchor(&hid_ctx->negdep, xid->xid_type,
+			xid->xid_id);
+	rcu_read_unlock();
+}
+
+int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	struct net_device *dev, const u8 *lladdr)
 {
 	struct fib_xid_table *local_xtbl, *main_xtbl;
 	struct fib_xid_hid_main *mhid;
 	struct hrdw_addr *ha;
 	u32 local_bucket, main_bucket;
+	struct deferred_xip_update *def_upd;
 	int rc;
 
 	if (!(dev->flags & IFF_UP) || (dev->flags & IFF_LOOPBACK))
@@ -237,70 +251,92 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *xid,
 	 * deadlock with main.c:local_newroute.
 	 */
 
-	/* Test if @xid is already inserted in the local xtbl. */
-	rc = -EINVAL;
+	/* Test if @id is already inserted in the local xtbl. */
 	local_xtbl = hid_ctx->ctx.xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	/* Notice that having xia_find_xid_lock on @local_xtbl requires
 	 * @local_xtbl to support multiple writers.
 	 */
-	if (xia_find_xid_lock(&local_bucket, local_xtbl, xid)) {
+	if (xia_find_xid_lock(&local_bucket, local_xtbl, id)) {
 		/* We don't issue a warning about trying inserting an entry
 		 * already in @local_xtb into @main_xtbl because if this host
 		 * has two interfaces connected to the same medium, it would
 		 * lead to a false problem.
 		 */
-		goto out;
+		rc = -EINVAL;
+		goto local_xtbl;
 	}
 
 	ha = new_ha(dev, lladdr, GFP_ATOMIC);
 	if (!ha) {
 		rc = -ENOMEM;
-		goto out;
+		goto local_xtbl;
 	}
 
 	main_xtbl = hid_ctx->ctx.xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	mhid = fxid_mhid(xia_find_xid_lock(&main_bucket, main_xtbl, xid));
+	mhid = fxid_mhid(xia_find_xid_lock(&main_bucket, main_xtbl, id));
 	if (mhid) {
 		rc = add_ha(mhid, ha);
 		fib_unlock_bucket(main_xtbl, main_bucket);
 		if (rc)
 			goto ha;
-		goto out;
+		goto local_xtbl;
+	}
+
+	def_upd = fib_alloc_xip_upd(GFP_ATOMIC);
+	if (!def_upd) {
+		rc = -ENOMEM;
+		goto main_xtbl;
 	}
 
 	/* Add new @mhid. */
 	mhid = kzalloc(sizeof(*mhid), GFP_ATOMIC);
 	if (!mhid) {
 		rc = -ENOMEM;
-		fib_unlock_bucket(main_xtbl, main_bucket);
-		goto ha;
+		goto def_upd;
 	}
-	init_fxid(&mhid->xhm_common, xid);
+	init_fxid(&mhid->xhm_common, id);
 	INIT_LIST_HEAD(&mhid->xhm_haddrs);
 	atomic_set(&mhid->xhm_refcnt, 1);
 	rc = add_ha(mhid, ha);
 	BUG_ON(rc);
-	rc = fib_add_fxid_locked(main_bucket, main_xtbl, &mhid->xhm_common);
-	fib_unlock_bucket(main_xtbl, main_bucket);
-	if (rc)
-		free_fxid(main_xtbl, &mhid->xhm_common);
-	goto out;
 
+	rc = fib_add_fxid_locked(main_bucket, main_xtbl, &mhid->xhm_common);
+	if (rc) {
+		free_fxid(main_xtbl, &mhid->xhm_common);
+		fib_free_xip_upd(def_upd);
+		fib_unlock_bucket(main_xtbl, main_bucket);
+		goto local_xtbl;
+	}
+	fib_unlock_bucket(main_xtbl, main_bucket);
+	fib_unlock_bucket(local_xtbl, local_bucket);
+
+	/* Before invalidating old anchors to force dependencies to
+	 * migrate to @mhid, wait an RCU synchronization to make sure that
+	 * every thread see @mhid.
+	 */
+	fib_defer_xip_upd(def_upd, hid_deferred_negdep, hid_ctx->net,
+		XIDTYPE_HID, id);
+	return 0;
+
+def_upd:
+	fib_free_xip_upd(def_upd);
+main_xtbl:
+	fib_unlock_bucket(main_xtbl, main_bucket);
 ha:
 	free_ha_norcu(ha);
-out:
+local_xtbl:
 	fib_unlock_bucket(local_xtbl, local_bucket);
 	return rc;
 }
 
-int remove_neigh(struct fib_xid_table *xtbl, const char *xid,
+int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	struct net_device *dev, const u8 *lladdr)
 {
 	u32 bucket;
 	struct fib_xid_hid_main *mhid;
 	int rc;
 
-	mhid = fxid_mhid(xia_find_xid_lock(&bucket, xtbl, xid));
+	mhid = fxid_mhid(xia_find_xid_lock(&bucket, xtbl, id));
 	if (!mhid) {
 		fib_unlock_bucket(xtbl, bucket);
 		return -ENOENT;
