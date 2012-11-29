@@ -688,6 +688,21 @@ static int filter_from(struct xip_dst *xdst, int anchor_index, void *arg)
 		are_xids_equal(xid->xid_id, from->id);
 }
 
+/** xdst_clean_anchor - release all struct xip_dst entries that are attached
+ *			to @anchor and have XID <@type, @xid> at one of their
+ *			edges.
+ * NOTE
+ *	IMPORTANT! Caller must RCU synch before calling this function.
+ */
+static void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
+	const u8 *id)
+{
+	struct filter_from_arg arg;
+	arg.type = type;
+	arg.id = id;
+	xdst_free_anchor_f(anchor, filter_from, &arg);
+}
+
 static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 	const struct xia_xid *to);
 
@@ -713,16 +728,6 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	rcu_read_unlock();
 }
 EXPORT_SYMBOL_GPL(xdst_invalidate_redirect);
-
-void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
-	const u8 *id)
-{
-	struct filter_from_arg arg;
-	arg.type = type;
-	arg.id = id;
-	xdst_free_anchor_f(anchor, filter_from, &arg);
-}
-EXPORT_SYMBOL_GPL(xdst_clean_anchor);
 
 /*
  *	Principal routing
@@ -861,11 +866,6 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 	return anchor;
 }
 
-static int filter_type(struct xip_dst *xdst, int anchor_index, void *arg)
-{
-	return xdst->xids[anchor_index].xid_type == (xid_type_t)(long)arg;
-}
-
 int xip_add_router(struct xip_route_proc *rproc)
 {
 	xid_type_t ty = rproc->xrp_ppal_type;
@@ -899,9 +899,12 @@ int xip_add_router(struct xip_route_proc *rproc)
 	 * dependency to principal of type @ty can be added to @negdep_rproc.
 	 */
 
-	/* Free negative dependencies on @ty. */
-	BUILD_BUG_ON(sizeof(void *) < sizeof(xid_type_t));
-	xdst_free_anchor_f(&negdep_rproc.anchor, filter_type, (void *)(long)ty);
+	/* Free all negative dependencies on unknown principals.
+	 * One can't just filter XDST entries whose type is @ty because
+	 * those entries may have come from redirects, that is,
+	 * their types are known and different of @ty.
+	 */
+	xdst_free_anchor(&negdep_rproc.anchor);
 
 out:
 	spin_unlock(&ppal_lock);
