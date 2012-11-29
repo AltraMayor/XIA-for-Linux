@@ -174,8 +174,10 @@ static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
 	rcu_read_lock();
 	xdp_ctx = ctx_xdp(xip_find_ppal_ctx_rcu(&net->xia.fib_ctx,
 		xid->xid_type));
-	if (likely(xdp_ctx))
-		xdst_clean_anchor(&xdp_ctx->negdep, xid->xid_type, xid->xid_id);
+	if (likely(xdp_ctx)) {
+		/* Flush all @negdep due to XID redirects. */
+		xdst_free_anchor(&xdp_ctx->negdep);
+	}
 	rcu_read_unlock();
 }
 
@@ -911,12 +913,13 @@ static void local_deferred_negdep(struct net *net, struct xia_xid *xid)
 	}
 	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 	mxdp = fxid_mxdp(xia_find_xid_rcu(main_xtbl, xid->xid_id));
-	if (mxdp)
+	if (mxdp) {
 		xdst_invalidate_redirect(net, xid->xid_type, xid->xid_id,
 			&mxdp->gw);
-	else
-		xdst_clean_anchor(&ctx_xdp(ctx)->negdep, xid->xid_type,
-			xid->xid_id);
+	} else {
+		/* Flush all @negdep due to XID redirects. */
+		xdst_free_anchor(&ctx_xdp(ctx)->negdep);
+	}
 out:
 	rcu_read_unlock();
 }

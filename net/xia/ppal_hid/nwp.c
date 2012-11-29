@@ -227,9 +227,10 @@ void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
 	rcu_read_lock();
 	hid_ctx = ctx_hid(
 		xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type));
-	if (likely(hid_ctx))
-		xdst_clean_anchor(&hid_ctx->negdep, xid->xid_type,
-			xid->xid_id);
+	if (likely(hid_ctx)) {
+		/* Flush all @negdep due to XID redirects. */
+		xdst_free_anchor(&hid_ctx->negdep);
+	}
 	rcu_read_unlock();
 }
 
