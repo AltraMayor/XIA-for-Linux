@@ -580,6 +580,7 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	struct sk_buff *skb;
 	struct announcement_hdr *nwp;
 	struct announcement_state state;
+	struct timeval t;
 
 	if (mtu < min_annoucement) {
 		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
@@ -602,6 +603,8 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	nwp->type	= NWP_TYPE_ANNOUCEMENT;
 	nwp->hid_count	= 0;
 	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->status	= htonl(ALIVE | (u32)t.tv_sec);
 	memcpy(nwp->haddr, dev->dev_addr, dev->addr_len);
 
 	/* Fill out the body. */
@@ -710,6 +713,65 @@ static inline int monitoring_hdr_len(struct net_device *dev, u8 type)
 		: 2 * dev->addr_len;
 }
 
+static void send_monitoring(struct net_device *dev, const u8 *src,
+	const u8 *dst, const u8 *inv, u8 type)
+{
+	unsigned int mtu = dev->mtu;
+	int hdr_len = offsetof(struct monitoring_hdr, haddrs_begin);
+	int ll_hlen = LL_RESERVED_SPACE(dev);
+	int ll_tlen = dev->needed_tailroom;
+	int ll_space = ll_hlen + ll_tlen;
+	int min_monitoring = ll_space + hdr_len + 2 * dev->addr_len;
+	struct sk_buff *skb;
+	struct monitoring_hdr *nwp;
+	struct timeval t;
+
+	if (unlikely(mtu < min_monitoring)) {
+		pr_err("XIA HID NWP: Can't send a monitoring packet because dev %s has MTU (%u) smaller than the smallest monitoring frame (%i)\n",
+		dev->name, mtu, min_monitoring);
+		dump_stack();
+		return;
+	}
+
+	skb = alloc_skb(mtu, GFP_ATOMIC);
+	if (unlikely(!skb))
+		return;
+	skb_reserve(skb, ll_hlen);
+	skb_reset_network_header(skb);
+	nwp = (struct monitoring_hdr *)skb_put(skb, hdr_len);
+	skb->dev = dev;
+	skb->protocol = __cpu_to_be16(ETH_P_NWP);
+
+	nwp->version	= NWP_VERSION;
+	nwp->type	= type;
+	nwp->reserved	= 1;
+	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->clock	= htonl(ALIVE | (u32)t.tv_sec);
+	memcpy(skb_put(skb, dev->addr_len), src, dev->addr_len);
+	memcpy(skb_put(skb, dev->addr_len), dst, dev->addr_len);
+	if (inv)
+		memcpy(skb_put(skb, dev->addr_len), inv, dev->addr_len);
+
+	switch (type) {
+	case NWP_TYPE_PING:
+		send_nwp_frame(skb, src, dst);
+		break;
+	case NWP_TYPE_ACK:
+		send_nwp_frame(skb, dst, src);
+		break;
+	case NWP_TYPE_REQ_PING:
+		send_nwp_frame(skb, src, inv);
+		break;
+	case NWP_TYPE_REQ_ACK:
+		send_nwp_frame(skb, inv, src);
+		break;
+	case NWP_TYPE_INV_PING:
+		send_nwp_frame(skb, inv, dst);
+		break;
+	}
+}
+
 static void clean_neigh_list(unsigned long data)
 {
 	struct net_device *dev = (struct net_device *)data;
@@ -767,7 +829,8 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	int ll_tlen = dev->needed_tailroom;
 	int ll_space = ll_hlen + ll_tlen;
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = ll_space + hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int entry_len = XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
+	int min_list = ll_space + hdr_len + entry_len;
 	struct sk_buff *skb;
 	struct neighs_hdr *nwp;
 
@@ -816,7 +879,8 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	int min_entry, data_len;
 	struct hrdw_addr *ha;
 	int addr_len = dev->addr_len;
-
+	struct timeval t;
+	
 	skb = alloc_neigh_list_skb(dev, mtu, &phid_counter);
 	if (!skb)
 		return;
@@ -829,14 +893,18 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	prv_mhid = NULL;
 	dummy = 0;
 	pcounter = &dummy;
-	min_entry = XIA_XID_MAX + 1 + addr_len;
+	min_entry = XIA_XID_MAX + 1 + addr_len + STAT_LEN;
 	data_len = mtu - LL_RESERVED_SPACE(dev) - dev->needed_tailroom;
+	do_gettimeofday(&t);
+
 	rcu_read_lock();
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
 		int is_new_hid, need_new_skb;
 		struct fib_xid_hid_main *mhid = ha->mhid;
+		u32 status;
 		BUG_ON(ha->dev != dev);
 
+		status = htonl(get_remote_status(ha) + get_remote_clock(ha));
 		is_new_hid = prv_mhid != mhid;
 		need_new_skb = (*phid_counter == 0xff) ||
 			(*pcounter == 0xff) ||
@@ -866,6 +934,8 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 
 		/* Add new hardware address. */
 		memcpy(skb_put(skb, addr_len), ha->ha, addr_len);
+		/* Add status of hardware address. */
+		memcpy(skb_put(skb, STAT_LEN), &status, STAT_LEN);
 		(*pcounter)++;
 
 		prv_mhid = mhid;
