@@ -7,6 +7,8 @@
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
 
+#define NWP_VERSION	1
+
 /*
  *	Neighbor Status
  */
@@ -875,7 +877,6 @@ static void monitor(struct net_device *dev, bool need_new_target)
 	struct hid_dev *hdev = hid_dev_get(dev);
 	u8 *lladdr = dev->dev_addr;
 
-	print_neigh_list(hdev);
 	if (need_new_target)
 		if (!pick_random_neigh(hdev)) {
 			hdev->monitoring = false;
@@ -1327,7 +1328,7 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto out_of_mem;
 
 	switch (ghdr->type) {
-	case NWP_TYPE_ANNOUCEMENT:
+	case NWP_TYPE_ANNOUNCEMENT:
 		return process_announcement(skb);
 	case NWP_TYPE_NEIGH_LIST:
 		return process_neigh_list(skb);
