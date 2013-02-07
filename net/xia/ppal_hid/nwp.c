@@ -8,6 +8,92 @@
 #include <net/xia_hid.h>
 
 /*
+ *	Neighbor Status
+ */
+
+#define ALIVE		0x80000000
+#define FAILED		0x00000000
+
+#define STATUS_MASK	0x80000000
+#define CLOCK_MASK	0x7FFFFFFF
+
+#define STAT_LEN	sizeof(u32)
+
+static inline u32 get_remote_status(struct hrdw_addr *neigh)
+{
+	return neigh->remote_s & STATUS_MASK;
+}
+
+static inline u32 get_remote_clock(struct hrdw_addr *neigh)
+{
+	return neigh->remote_s & CLOCK_MASK;
+}
+
+static inline void set_remote_status(struct hrdw_addr *neigh, u32 status)
+{
+	neigh->remote_s = (STATUS_MASK & status) | get_remote_clock(neigh);
+}
+
+static inline void set_remote_clock(struct hrdw_addr *neigh, u32 clock)
+{
+	neigh->remote_s = get_remote_status(neigh) | (CLOCK_MASK & clock);
+}
+
+static inline void set_local_clock(struct hrdw_addr *neigh, u32 clock)
+{
+	neigh->local_s = clock;
+}
+
+static inline u32 get_local_clock(struct hrdw_addr *neigh)
+{
+	return neigh->local_s;
+}
+
+static void resolve_neigh(struct hrdw_addr *h1, struct hrdw_addr *h2)
+{
+	u32 h1_clock, h2_clock, diff;
+	h1_clock = get_remote_clock(h1);
+	h2_clock = get_remote_clock(h2);
+
+	if (h2_clock > h1_clock)
+		return;
+
+	if (h2_clock == h1_clock) {
+		if (get_remote_status(h1) != get_remote_status(h2))
+			set_remote_status(h2, ALIVE);
+		return;
+	}
+
+	/* If we know a neighbor has failed, no need to update. */
+	if (get_remote_status(h1) == FAILED && get_remote_status(h2) == FAILED)
+		return;
+
+	diff = h1_clock - get_remote_clock(h2);
+	set_local_clock(h2, get_local_clock(h2) + diff);
+	set_remote_status(h2, get_remote_status(h1));
+	set_remote_clock(h2, h1_clock);
+}
+
+static void update_neigh(struct net_device *dev, const u8 *lladdr, u32 status)
+{
+	struct hid_dev *hdev;
+	struct hrdw_addr *ha;
+	struct timeval t;
+
+	hdev = hid_dev_get(dev);
+	spin_lock(&hdev->neigh_lock);
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
+		if (memcmp(ha->ha, lladdr, dev->addr_len) == 0) {
+			do_gettimeofday(&t);
+			set_local_clock(ha, (u32)t.tv_sec);
+			set_remote_status(ha, STATUS_MASK & status);
+			set_remote_clock(ha, CLOCK_MASK & status);
+		}
+	spin_unlock(&hdev->neigh_lock);
+	hid_dev_put(hdev);
+}
+
+/*
  *	Neighbor Table
  */
 
