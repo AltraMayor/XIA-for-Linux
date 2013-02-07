@@ -98,17 +98,25 @@ static void update_neigh(struct net_device *dev, const u8 *lladdr, u32 status)
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	gfp_t flags)
+	u32 status, gfp_t flags)
 {
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
+	struct timeval t;
 	if (!ha)
 		return NULL;
+
 	INIT_LIST_HEAD(&ha->ha_list);
 	INIT_LIST_HEAD(&ha->hdev_list);	
 	ha->dev = dev;
 	dev_hold(dev);
 	xdst_init_anchor(&ha->anchor);
 	memmove(ha->ha, lladdr, dev->addr_len);
+
+	do_gettimeofday(&t);
+	set_local_clock(ha, (u32)t.tv_sec);
+	set_remote_status(ha, STATUS_MASK & status);
+	set_remote_clock(ha, CLOCK_MASK & status);
+
 	return ha;
 }
 
@@ -153,8 +161,10 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;
-		if (unlikely(!c1 && c2))
-			return -EEXIST;	/* It's a duplicate. */
+		if (!c1 && c2) {
+			resolve_neigh(ha, pos_ha);
+			return -EEXIST; /* It's a duplicate. */
+		}
 
 		/* Keep listed sorted, but look at all ha's that have
 		 * the same ha->ha.
@@ -321,7 +331,7 @@ void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
 }
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr)
+	struct net_device *dev, const u8 *lladdr, u32 status)
 {
 	struct fib_xid_table *local_xtbl, *main_xtbl;
 	struct fib_xid_hid_main *mhid;
@@ -345,7 +355,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	 */
 	if (xia_find_xid_lock(&local_bucket, local_xtbl, id)) {
 		/* We don't issue a warning about trying inserting an entry
-		 * already in @local_xtb into @main_xtbl because if this host
+		 * already in @local_xtbl into @main_xtbl because if this host
 		 * has two interfaces connected to the same medium, it would
 		 * lead to a false problem.
 		 */
@@ -353,7 +363,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		goto local_xtbl;
 	}
 
-	ha = new_ha(dev, lladdr, GFP_ATOMIC);
+	ha = new_ha(dev, lladdr, status, GFP_ATOMIC);
 	if (!ha) {
 		rc = -ENOMEM;
 		goto local_xtbl;
@@ -955,12 +965,14 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 static void read_announcement(struct sk_buff *skb)
 {
 	struct net *net = skb_net(skb);
+	struct net_device *dev = skb->dev;
 	struct announcement_hdr *nwp;
 	struct xip_hid_ctx *hid_ctx;
 	int count;
 	u8 *xid;
 
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
+	nwp->status = ntohl(nwp->status);
 	hid_ctx = ctx_hid(xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
 	count = nwp->hid_count;
 	xid = skb->data;
@@ -973,10 +985,12 @@ static void read_announcement(struct sk_buff *skb)
 			break;
 		}
 		/* Ignore errors. */
-		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr);
+		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr, nwp->status);
 		xid = next_xid;
 		count--;
 	}
+
+	update_neigh(dev, nwp->haddr, ALIVE | (CLOCK_MASK & nwp->status));
 }
 
 static int process_announcement(struct sk_buff *skb)
@@ -1020,7 +1034,7 @@ static int process_neigh_list(struct sk_buff *skb)
 	struct net_device *dev = skb->dev;
 	struct net *net = dev_net(dev);
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
 	struct neighs_hdr *nwp;
 	u8 *xid;
 	struct xip_hid_ctx *hid_ctx;
@@ -1046,7 +1060,10 @@ static int process_neigh_list(struct sk_buff *skb)
 		original_ha_count = xid[XIA_XID_MAX];
 		ha_count = original_ha_count;
 		while (ha_count > 0) {
-			u8 *next_haddr_or_xid = skb_pull(skb, dev->addr_len);
+			u32 *status = (u32 *)skb_pull(skb, dev->addr_len);
+			u8 *next_haddr_or_xid = skb_pull(skb, STAT_LEN);
+			*status = ntohl(*status);
+
 			if (!next_haddr_or_xid) {
 				if (net_ratelimit()) {
 					char str[XIA_MAX_STRXID_SIZE];
@@ -1058,7 +1075,9 @@ static int process_neigh_list(struct sk_buff *skb)
 				goto out_loop;
 			}
 
-			insert_neigh(hid_ctx, xid, dev, haddr_or_xid);
+			if ((STATUS_MASK & *status) == ALIVE)
+				insert_neigh(hid_ctx, xid, dev,
+					haddr_or_xid, *status);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
@@ -1066,6 +1085,7 @@ static int process_neigh_list(struct sk_buff *skb)
 		xid = haddr_or_xid;
 		hid_count--;
 	}
+
 out_loop:
 out:
 	consume_skb(skb);

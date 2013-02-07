@@ -169,7 +169,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		return -EINVAL;
 
 	return insert_neigh(ctx_hid(ctx), cfg->xfc_dst->xid_id, cfg->xfc_odev,
-		cfg->xfc_lladdr);
+		cfg->xfc_lladdr, 0);
 }
 
 static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
