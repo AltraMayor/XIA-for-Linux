@@ -921,6 +921,68 @@ out:
 	monitor(dev, need_new_target);
 }
 
+static void end_interval_success(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+	hid_dev_put(hdev);
+	monitor(dev, true);
+}
+
+static int process_monitoring(struct sk_buff *skb, u8 type)
+{
+        struct net_device *dev = skb->dev;
+	struct hid_dev *hdev = hid_dev_get(dev);
+        struct monitoring_hdr *nwp;
+        u8 *src, *dst, *inv, *sender;
+        int hdr_len = monitoring_hdr_len(dev, type);
+
+        if (!pskb_may_pull(skb, hdr_len))
+                goto out;
+
+        skb_reset_network_header(skb);
+        nwp = (struct monitoring_hdr *)skb_network_header(skb);
+	nwp->clock = ntohl(nwp->clock);
+	skb_pull(skb, offsetof(struct monitoring_hdr, haddrs_begin));
+
+        src = skb->data;
+        dst = skb_pull(skb, nwp->haddr_len);
+
+	switch (type) {
+	case NWP_TYPE_PING:
+	case NWP_TYPE_INV_PING:
+		send_monitoring(dev, src, dst, NULL, NWP_TYPE_ACK);
+		sender = NWP_TYPE_PING ? src : skb_pull(skb, nwp->haddr_len);
+		break;
+	case NWP_TYPE_ACK:
+		if (memcmp(dst, hdev->target->ha, nwp->haddr_len) == 0)
+			hdev->monitor_timer.function = end_interval_success;
+		sender = dst;
+		break;
+	case NWP_TYPE_REQ_PING:
+		inv = skb_pull(skb, nwp->haddr_len);
+		send_monitoring(dev, src, dst, inv, NWP_TYPE_REQ_ACK);
+		send_monitoring(dev, src, dst, inv, NWP_TYPE_INV_PING);
+		sender = src;
+		break;
+	case NWP_TYPE_REQ_ACK:
+		hdev->any_neighs_replied = true;
+		sender = skb_pull(skb, nwp->haddr_len);
+		break;
+	default:
+		goto out;		
+	}
+
+	update_neigh(dev, sender, ALIVE | (CLOCK_MASK & nwp->clock));
+
+out:
+	hid_dev_put(hdev);
+	consume_skb(skb);
+	return 0;
+}
+
 static void clean_neigh_list(unsigned long data)
 {
 	struct net_device *dev = (struct net_device *)data;
@@ -1250,9 +1312,10 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto freeskb;
 
 	ghdr = (struct general_hdr *)skb_network_header(skb);
+
 	if (ghdr->version != NWP_VERSION		||
 		ghdr->type >= NWP_TYPE_MAX		||
-		ghdr->hid_count == 0			||
+		ghdr->hid_count_or_res == 0		||
 		ghdr->haddr_len != dev->addr_len	||
 		dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
 		skb->pkt_type == PACKET_OTHERHOST	||
@@ -1264,10 +1327,16 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto out_of_mem;
 
 	switch (ghdr->type) {
-	case NWP_TYPE_ANNOUNCEMENT:
+	case NWP_TYPE_ANNOUCEMENT:
 		return process_announcement(skb);
 	case NWP_TYPE_NEIGH_LIST:
 		return process_neigh_list(skb);
+	case NWP_TYPE_PING:
+	case NWP_TYPE_ACK:
+	case NWP_TYPE_REQ_PING:
+	case NWP_TYPE_REQ_ACK:
+	case NWP_TYPE_INV_PING:
+		return process_monitoring(skb, ghdr->type);
 	default:
 		goto freeskb;
 	}
