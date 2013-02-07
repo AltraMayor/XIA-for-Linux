@@ -7,22 +7,118 @@
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
 
+#define NWP_VERSION	1
+
+/*
+ *	Neighbor Status
+ */
+
+#define ALIVE		0x80000000
+#define FAILED		0x00000000
+
+#define STATUS_MASK	0x80000000
+#define CLOCK_MASK	0x7FFFFFFF
+
+#define STAT_LEN	sizeof(u32)
+
+static inline u32 get_remote_status(struct hrdw_addr *neigh)
+{
+	return neigh->remote_s & STATUS_MASK;
+}
+
+static inline u32 get_remote_clock(struct hrdw_addr *neigh)
+{
+	return neigh->remote_s & CLOCK_MASK;
+}
+
+static inline void set_remote_status(struct hrdw_addr *neigh, u32 status)
+{
+	neigh->remote_s = (STATUS_MASK & status) | get_remote_clock(neigh);
+}
+
+static inline void set_remote_clock(struct hrdw_addr *neigh, u32 clock)
+{
+	neigh->remote_s = get_remote_status(neigh) | (CLOCK_MASK & clock);
+}
+
+static inline void set_local_clock(struct hrdw_addr *neigh, u32 clock)
+{
+	neigh->local_s = clock;
+}
+
+static inline u32 get_local_clock(struct hrdw_addr *neigh)
+{
+	return neigh->local_s;
+}
+
+static void resolve_neigh(struct hrdw_addr *h1, struct hrdw_addr *h2)
+{
+	u32 h1_clock, h2_clock, diff;
+	h1_clock = get_remote_clock(h1);
+	h2_clock = get_remote_clock(h2);
+
+	if (h2_clock > h1_clock)
+		return;
+
+	if (h2_clock == h1_clock) {
+		if (get_remote_status(h1) != get_remote_status(h2))
+			set_remote_status(h2, ALIVE);
+		return;
+	}
+
+	/* If we know a neighbor has failed, no need to update. */
+	if (get_remote_status(h1) == FAILED && get_remote_status(h2) == FAILED)
+		return;
+
+	diff = h1_clock - get_remote_clock(h2);
+	set_local_clock(h2, get_local_clock(h2) + diff);
+	set_remote_status(h2, get_remote_status(h1));
+	set_remote_clock(h2, h1_clock);
+}
+
+static void update_neigh(struct net_device *dev, const u8 *lladdr, u32 status)
+{
+	struct hid_dev *hdev;
+	struct hrdw_addr *ha;
+	struct timeval t;
+
+	hdev = hid_dev_get(dev);
+	spin_lock(&hdev->neigh_lock);
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
+		if (memcmp(ha->ha, lladdr, dev->addr_len) == 0) {
+			do_gettimeofday(&t);
+			set_local_clock(ha, (u32)t.tv_sec);
+			set_remote_status(ha, STATUS_MASK & status);
+			set_remote_clock(ha, CLOCK_MASK & status);
+		}
+	spin_unlock(&hdev->neigh_lock);
+	hid_dev_put(hdev);
+}
+
 /*
  *	Neighbor Table
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	gfp_t flags)
+	u32 status, gfp_t flags)
 {
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
+	struct timeval t;
 	if (!ha)
 		return NULL;
+
 	INIT_LIST_HEAD(&ha->ha_list);
 	INIT_LIST_HEAD(&ha->hdev_list);	
 	ha->dev = dev;
 	dev_hold(dev);
 	xdst_init_anchor(&ha->anchor);
 	memmove(ha->ha, lladdr, dev->addr_len);
+
+	do_gettimeofday(&t);
+	set_local_clock(ha, (u32)t.tv_sec);
+	set_remote_status(ha, STATUS_MASK & status);
+	set_remote_clock(ha, CLOCK_MASK & status);
+
 	return ha;
 }
 
@@ -67,8 +163,10 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;
-		if (unlikely(!c1 && c2))
-			return -EEXIST;	/* It's a duplicate. */
+		if (!c1 && c2) {
+			resolve_neigh(ha, pos_ha);
+			return -EEXIST; /* It's a duplicate. */
+		}
 
 		/* Keep listed sorted, but look at all ha's that have
 		 * the same ha->ha.
@@ -235,7 +333,7 @@ void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
 }
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr)
+	struct net_device *dev, const u8 *lladdr, u32 status)
 {
 	struct fib_xid_table *local_xtbl, *main_xtbl;
 	struct fib_xid_hid_main *mhid;
@@ -259,7 +357,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	 */
 	if (xia_find_xid_lock(&local_bucket, local_xtbl, id)) {
 		/* We don't issue a warning about trying inserting an entry
-		 * already in @local_xtb into @main_xtbl because if this host
+		 * already in @local_xtbl into @main_xtbl because if this host
 		 * has two interfaces connected to the same medium, it would
 		 * lead to a false problem.
 		 */
@@ -267,7 +365,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		goto local_xtbl;
 	}
 
-	ha = new_ha(dev, lladdr, GFP_ATOMIC);
+	ha = new_ha(dev, lladdr, status, GFP_ATOMIC);
 	if (!ha) {
 		rc = -ENOMEM;
 		goto local_xtbl;
@@ -392,16 +490,14 @@ struct announcement_state {
 	unsigned int	mtu;
 };
 
-#define NWP_VERSION		0x01
-
-#define NWP_TYPE_ANNOUCEMENT	0x01
+#define NWP_TYPE_ANNOUNCEMENT	0x01
 #define NWP_TYPE_NEIGH_LIST	0x02
-#define NWP_TYPE_MAX		0x03
+#define NWP_TYPE_MAX		0x08
 
 struct general_hdr {
 	u8	version;
 	u8	type;
-	u8	hid_count;
+	u8	hid_count_or_res;
 	u8	haddr_len;
 } __packed;
 
@@ -410,6 +506,8 @@ struct announcement_hdr {
 	u8	type;
 	u8	hid_count;
 	u8	haddr_len;
+
+	u32	status;
 
 	u8	haddr_begin[0];
 	u8	haddr[MAX_ADDR_LEN];
@@ -422,12 +520,13 @@ struct neighs_hdr {
 	u8	haddr_len;
 
 	u8	neighs_begin[0];
-/*	XID_1 NUM_1 HA_11 HA_12 ... HA_1NUM_1
- *	XID_2 NUM_2 HA_21 HA_22 ... HA_2NUM_2
+/*	XID_1 NUM_1 HA_11 S_11 HA_12 S_12 ... HA_1NUM_1 S_1NUM_1
+ *	XID_2 NUM_2 HA_21 S_21 HA_22 S_22 ... HA_2NUM_2 S_2NUM_2
  *	...
- *	XID_count NUM_count HA_count1 HA_count2 ... HA_countNUM_count
+ *	XID_C NUM_C HA_C1 S_C1 HA_C2 S_C2 ... HA_CNUM_C S_CNUMC
  *
- *	count == hid_count.
+ *	C == hid_count.
+ *	S == status.
  */
 } __packed;
 
@@ -489,14 +588,15 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	int ll_hlen = LL_RESERVED_SPACE(dev);
 	int ll_tlen = dev->needed_tailroom;
 	int ll_space = ll_hlen + ll_tlen;
-	int min_annoucement = ll_space + hdr_len + XIA_XID_MAX;
+	int min_announcement = ll_space + hdr_len + XIA_XID_MAX;
 	struct sk_buff *skb;
 	struct announcement_hdr *nwp;
 	struct announcement_state state;
+	struct timeval t;
 
-	if (mtu < min_annoucement) {
-		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
-			dev->name, mtu, min_annoucement);
+	if (mtu < min_announcement) {
+		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest announcement frame (%i)\n",
+			dev->name, mtu, min_announcement);
 		dump_stack();
 		return;
 	}
@@ -512,9 +612,11 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 
 	/* Fill out the NWP header. */
 	nwp->version	= NWP_VERSION;
-	nwp->type	= NWP_TYPE_ANNOUCEMENT;
+	nwp->type	= NWP_TYPE_ANNOUNCEMENT;
 	nwp->hid_count	= 0;
 	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->status	= htonl(ALIVE | (u32)t.tv_sec);
 	memcpy(nwp->haddr, dev->dev_addr, dev->addr_len);
 
 	/* Fill out the body. */
@@ -582,6 +684,329 @@ out:
 }
 
 /*
+ *	NWP Monitoring
+ */
+
+#define MONITORING_ENABLED 	true
+
+#define NWP_NUM_INVESTIGATORS	3
+
+#define NWP_INTERVAL		8*HZ
+#define NWP_PING_TIME		4*HZ
+#define NWP_INV_TIME		(NWP_INTERVAL - NWP_PING_TIME)
+#define NWP_FAIL_TTL		10*HZ
+
+#define NWP_TYPE_PING		0x03
+#define NWP_TYPE_ACK		0x04
+#define NWP_TYPE_REQ_PING	0x05
+#define NWP_TYPE_REQ_ACK	0x06
+#define NWP_TYPE_INV_PING	0x07
+
+static void end_interval_failure(unsigned long);
+
+struct monitoring_hdr {
+	u8	version;
+	u8	type;
+	u8	reserved;
+	u8	haddr_len;
+
+	u32	clock;
+	u8	haddrs_begin[0];
+} __packed;
+
+static inline bool monitoring_pkt(u8 type)
+{
+	return type >= NWP_TYPE_PING && type <= NWP_TYPE_INV_PING;
+}
+
+static inline int monitoring_hdr_len(struct net_device *dev, u8 type)
+{
+	return offsetof(struct monitoring_hdr, haddrs_begin) +
+		(type == NWP_TYPE_PING || type == NWP_TYPE_ACK)
+		? 3 * dev->addr_len
+		: 2 * dev->addr_len;
+}
+
+static void send_monitoring(struct net_device *dev, const u8 *src,
+	const u8 *dst, const u8 *inv, u8 type)
+{
+	unsigned int mtu = dev->mtu;
+	int hdr_len = offsetof(struct monitoring_hdr, haddrs_begin);
+	int ll_hlen = LL_RESERVED_SPACE(dev);
+	int ll_tlen = dev->needed_tailroom;
+	int ll_space = ll_hlen + ll_tlen;
+	int min_monitoring = ll_space + hdr_len + 2 * dev->addr_len;
+	struct sk_buff *skb;
+	struct monitoring_hdr *nwp;
+	struct timeval t;
+
+	if (unlikely(mtu < min_monitoring)) {
+		pr_err("XIA HID NWP: Can't send a monitoring packet because dev %s has MTU (%u) smaller than the smallest monitoring frame (%i)\n",
+		dev->name, mtu, min_monitoring);
+		dump_stack();
+		return;
+	}
+
+	skb = alloc_skb(mtu, GFP_ATOMIC);
+	if (unlikely(!skb))
+		return;
+	skb_reserve(skb, ll_hlen);
+	skb_reset_network_header(skb);
+	nwp = (struct monitoring_hdr *)skb_put(skb, hdr_len);
+	skb->dev = dev;
+	skb->protocol = __cpu_to_be16(ETH_P_NWP);
+
+	nwp->version	= NWP_VERSION;
+	nwp->type	= type;
+	nwp->reserved	= 1;
+	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->clock	= htonl(ALIVE | (u32)t.tv_sec);
+	memcpy(skb_put(skb, dev->addr_len), src, dev->addr_len);
+	memcpy(skb_put(skb, dev->addr_len), dst, dev->addr_len);
+	if (inv)
+		memcpy(skb_put(skb, dev->addr_len), inv, dev->addr_len);
+
+	switch (type) {
+	case NWP_TYPE_PING:
+		send_nwp_frame(skb, src, dst);
+		break;
+	case NWP_TYPE_ACK:
+		send_nwp_frame(skb, dst, src);
+		break;
+	case NWP_TYPE_REQ_PING:
+		send_nwp_frame(skb, src, inv);
+		break;
+	case NWP_TYPE_REQ_ACK:
+		send_nwp_frame(skb, inv, src);
+		break;
+	case NWP_TYPE_INV_PING:
+		send_nwp_frame(skb, inv, dst);
+		break;
+	}
+}
+
+static void end_ping_failure(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	struct hrdw_addr *target = hdev->target, *trav;
+	u8 *lladdr = dev->dev_addr;
+	u32 start, end, i, num_neighs, neigh_cnt;
+	bool need_to_loop;
+
+	neigh_cnt = atomic_read(&hdev->neigh_cnt);
+	if (neigh_cnt == 1) {
+		/* Not enough neighbors to investigate; ping target again. */
+		hdev->remonitored = true;
+		send_monitoring(dev, lladdr, target->ha, NULL, NWP_TYPE_PING);
+		goto out;
+	}
+
+	num_neighs = NWP_NUM_INVESTIGATORS > neigh_cnt - 1
+			? neigh_cnt - 1
+			: NWP_NUM_INVESTIGATORS;
+
+	/* XXX: Here we need a random subset of neighbors. However,
+	 * the selection of these neighbors need not be mutually 
+	 * independent; instead, we can simulate randomness by
+	 * choosing a random position to start from in the neighbor
+	 * list. One of the chosen investigators may be the target
+	 * in question.
+	 */
+	get_random_bytes(&start, sizeof(start));
+	start %= neigh_cnt;
+	end = start + num_neighs;
+
+	do {
+		need_to_loop = end > neigh_cnt;
+		i = 0;
+
+		rcu_read_lock();
+		list_for_each_entry_rcu(trav, &hdev->neighs, hdev_list) {
+			if (i >= start)
+				send_monitoring(dev, lladdr, target->ha,
+						trav->ha, NWP_TYPE_REQ_PING);
+			if (++i >= end)
+				break;
+		}
+		rcu_read_unlock();
+
+		if (need_to_loop) {
+			start = 0;
+			end %= neigh_cnt;
+		}
+
+	} while (need_to_loop);
+
+out:
+	mod_timer(&hdev->monitor_timer, jiffies + NWP_INV_TIME);
+	hdev->monitor_timer.function = end_interval_failure;
+	hid_dev_put(hdev);
+}
+
+static bool pick_random_neigh(struct hid_dev *hdev)
+{
+	struct hrdw_addr *ha;
+	u32 target_num, num_neighs, i = 0;
+	bool found = false;
+
+	get_random_bytes(&target_num, sizeof(target_num));
+	num_neighs = atomic_read(&hdev->neigh_cnt);
+	if (!num_neighs)
+		goto out;
+	target_num %= num_neighs;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
+		if (i++ == target_num) {
+			if (get_remote_status(ha) == ALIVE) {
+				*hdev->target = *ha;
+				found = true;
+			}
+			break;
+		}
+	rcu_read_unlock();
+
+out:
+	return found;
+}
+
+static void monitor(struct net_device *dev, bool need_new_target)
+{
+	struct hid_dev *hdev = hid_dev_get(dev);
+	u8 *lladdr = dev->dev_addr;
+
+	if (need_new_target)
+		if (!pick_random_neigh(hdev)) {
+			hdev->monitoring = false;
+			goto out;
+		}
+
+	hdev->monitor_timer.function = end_ping_failure;
+	send_monitoring(dev, lladdr, hdev->target->ha, NULL, NWP_TYPE_PING);
+	mod_timer(&hdev->monitor_timer, jiffies + NWP_PING_TIME);
+
+out:
+	hid_dev_put(hdev);
+}
+
+static void end_interval_failure(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	struct hrdw_addr *neigh = hdev->target;
+	struct timeval t;
+	u32 diff, new_local_t, new_remote_t;
+	bool need_new_target = true;
+
+	/* No investigative neighbors replied; possible network partition. */
+	if (!hdev->any_neighs_replied && !hdev->remonitored) {
+		hdev->remonitored = true;
+		need_new_target = false;
+		goto out;
+	}
+
+	do_gettimeofday(&t);
+	new_local_t = (u32)t.tv_sec;
+	diff = CLOCK_MASK & (new_local_t - get_local_clock(neigh)); 
+	new_remote_t = CLOCK_MASK & (diff + get_remote_clock(neigh));
+	set_local_clock(neigh, new_local_t);
+	update_neigh(dev, neigh->ha, FAILED | new_remote_t);
+
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+
+out:
+	hid_dev_put(hdev);
+	monitor(dev, need_new_target);
+}
+
+static void end_interval_success(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+	hid_dev_put(hdev);
+	monitor(dev, true);
+}
+
+static int process_monitoring(struct sk_buff *skb, u8 type)
+{
+        struct net_device *dev = skb->dev;
+	struct hid_dev *hdev = hid_dev_get(dev);
+        struct monitoring_hdr *nwp;
+        u8 *src, *dst, *inv, *sender;
+        int hdr_len = monitoring_hdr_len(dev, type);
+
+        if (!pskb_may_pull(skb, hdr_len))
+                goto out;
+
+        skb_reset_network_header(skb);
+        nwp = (struct monitoring_hdr *)skb_network_header(skb);
+	nwp->clock = ntohl(nwp->clock);
+	skb_pull(skb, offsetof(struct monitoring_hdr, haddrs_begin));
+
+        src = skb->data;
+        dst = skb_pull(skb, nwp->haddr_len);
+
+	switch (type) {
+	case NWP_TYPE_PING:
+	case NWP_TYPE_INV_PING:
+		send_monitoring(dev, src, dst, NULL, NWP_TYPE_ACK);
+		sender = NWP_TYPE_PING ? src : skb_pull(skb, nwp->haddr_len);
+		break;
+	case NWP_TYPE_ACK:
+		if (memcmp(dst, hdev->target->ha, nwp->haddr_len) == 0)
+			hdev->monitor_timer.function = end_interval_success;
+		sender = dst;
+		break;
+	case NWP_TYPE_REQ_PING:
+		inv = skb_pull(skb, nwp->haddr_len);
+		send_monitoring(dev, src, dst, inv, NWP_TYPE_REQ_ACK);
+		send_monitoring(dev, src, dst, inv, NWP_TYPE_INV_PING);
+		sender = src;
+		break;
+	case NWP_TYPE_REQ_ACK:
+		hdev->any_neighs_replied = true;
+		sender = skb_pull(skb, nwp->haddr_len);
+		break;
+	default:
+		goto out;		
+	}
+
+	update_neigh(dev, sender, ALIVE | (CLOCK_MASK & nwp->clock));
+
+out:
+	hid_dev_put(hdev);
+	consume_skb(skb);
+	return 0;
+}
+
+static void clean_neigh_list(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct net *net = dev_net(dev);
+	struct hrdw_addr *ha;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *main_xtbl;
+	struct hid_dev *hdev = hid_dev_get(dev);
+
+	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
+
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
+		if (get_remote_status(ha) == FAILED) {
+			char *xid = ha->mhid->xhm_common.fx_xid;
+			remove_neigh(main_xtbl, xid, dev, ha->ha);
+		}
+
+	mod_timer(&hdev->failure_timer, jiffies + NWP_FAIL_TTL);
+	hid_dev_put(hdev);
+}
+
+/*
  *	State associated to net
  */
 
@@ -616,7 +1041,8 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	int ll_tlen = dev->needed_tailroom;
 	int ll_space = ll_hlen + ll_tlen;
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = ll_space + hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int entry_len = XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
+	int min_list = ll_space + hdr_len + entry_len;
 	struct sk_buff *skb;
 	struct neighs_hdr *nwp;
 
@@ -665,7 +1091,8 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	int min_entry, data_len;
 	struct hrdw_addr *ha;
 	int addr_len = dev->addr_len;
-
+	struct timeval t;
+	
 	skb = alloc_neigh_list_skb(dev, mtu, &phid_counter);
 	if (!skb)
 		return;
@@ -678,14 +1105,18 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	prv_mhid = NULL;
 	dummy = 0;
 	pcounter = &dummy;
-	min_entry = XIA_XID_MAX + 1 + addr_len;
+	min_entry = XIA_XID_MAX + 1 + addr_len + STAT_LEN;
 	data_len = mtu - LL_RESERVED_SPACE(dev) - dev->needed_tailroom;
+	do_gettimeofday(&t);
+
 	rcu_read_lock();
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
 		int is_new_hid, need_new_skb;
 		struct fib_xid_hid_main *mhid = ha->mhid;
+		u32 status;
 		BUG_ON(ha->dev != dev);
 
+		status = htonl(get_remote_status(ha) + get_remote_clock(ha));
 		is_new_hid = prv_mhid != mhid;
 		need_new_skb = (*phid_counter == 0xff) ||
 			(*pcounter == 0xff) ||
@@ -715,6 +1146,8 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 
 		/* Add new hardware address. */
 		memcpy(skb_put(skb, addr_len), ha->ha, addr_len);
+		/* Add status of hardware address. */
+		memcpy(skb_put(skb, STAT_LEN), &status, STAT_LEN);
 		(*pcounter)++;
 
 		prv_mhid = mhid;
@@ -734,12 +1167,14 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 static void read_announcement(struct sk_buff *skb)
 {
 	struct net *net = skb_net(skb);
+	struct net_device *dev = skb->dev;
 	struct announcement_hdr *nwp;
 	struct xip_hid_ctx *hid_ctx;
 	int count;
 	u8 *xid;
 
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
+	nwp->status = ntohl(nwp->status);
 	hid_ctx = ctx_hid(xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
 	count = nwp->hid_count;
 	xid = skb->data;
@@ -752,10 +1187,12 @@ static void read_announcement(struct sk_buff *skb)
 			break;
 		}
 		/* Ignore errors. */
-		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr);
+		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr, nwp->status);
 		xid = next_xid;
 		count--;
 	}
+
+	update_neigh(dev, nwp->haddr, ALIVE | (CLOCK_MASK & nwp->status));
 }
 
 static int process_announcement(struct sk_buff *skb)
@@ -763,13 +1200,13 @@ static int process_announcement(struct sk_buff *skb)
 	struct net_device *dev = skb->dev;
 	struct net *net = dev_net(dev);
 	int hdr_len = announcement_hdr_len(dev);
-	int min_annoucement = hdr_len + XIA_XID_MAX;
+	int min_announcement = hdr_len + XIA_XID_MAX;
 	struct announcement_hdr *nwp;
 	struct xip_ppal_ctx *ctx;
 	struct hid_dev *hdev;
 	int me;
 
-	if (!pskb_may_pull(skb, min_annoucement))
+	if (!pskb_may_pull(skb, min_announcement))
 		goto out;
 	skb_reset_network_header(skb);
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
@@ -797,9 +1234,10 @@ out:
 static int process_neigh_list(struct sk_buff *skb)
 {
 	struct net_device *dev = skb->dev;
+	struct hid_dev *hdev = hid_dev_get(dev);
 	struct net *net = dev_net(dev);
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
 	struct neighs_hdr *nwp;
 	u8 *xid;
 	struct xip_hid_ctx *hid_ctx;
@@ -825,7 +1263,10 @@ static int process_neigh_list(struct sk_buff *skb)
 		original_ha_count = xid[XIA_XID_MAX];
 		ha_count = original_ha_count;
 		while (ha_count > 0) {
-			u8 *next_haddr_or_xid = skb_pull(skb, dev->addr_len);
+			u32 *status = (u32 *)skb_pull(skb, dev->addr_len);
+			u8 *next_haddr_or_xid = skb_pull(skb, STAT_LEN);
+			*status = ntohl(*status);
+
 			if (!next_haddr_or_xid) {
 				if (net_ratelimit()) {
 					char str[XIA_MAX_STRXID_SIZE];
@@ -837,7 +1278,9 @@ static int process_neigh_list(struct sk_buff *skb)
 				goto out_loop;
 			}
 
-			insert_neigh(hid_ctx, xid, dev, haddr_or_xid);
+			if ((STATUS_MASK & *status) == ALIVE)
+				insert_neigh(hid_ctx, xid, dev,
+					haddr_or_xid, *status);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
@@ -845,8 +1288,17 @@ static int process_neigh_list(struct sk_buff *skb)
 		xid = haddr_or_xid;
 		hid_count--;
 	}
+
+	if (!hdev->monitoring && MONITORING_ENABLED) {
+		hdev->monitoring = true;
+		if (!timer_pending(&hdev->failure_timer))
+			mod_timer(&hdev->failure_timer, jiffies + NWP_FAIL_TTL);
+		monitor(dev, true);
+	}
+
 out_loop:
 out:
+	hid_dev_put(hdev);
 	consume_skb(skb);
 	return 0;
 }
@@ -861,9 +1313,10 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto freeskb;
 
 	ghdr = (struct general_hdr *)skb_network_header(skb);
+
 	if (ghdr->version != NWP_VERSION		||
 		ghdr->type >= NWP_TYPE_MAX		||
-		ghdr->hid_count == 0			||
+		ghdr->hid_count_or_res == 0		||
 		ghdr->haddr_len != dev->addr_len	||
 		dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
 		skb->pkt_type == PACKET_OTHERHOST	||
@@ -875,10 +1328,16 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto out_of_mem;
 
 	switch (ghdr->type) {
-	case NWP_TYPE_ANNOUCEMENT:
+	case NWP_TYPE_ANNOUNCEMENT:
 		return process_announcement(skb);
 	case NWP_TYPE_NEIGH_LIST:
 		return process_neigh_list(skb);
+	case NWP_TYPE_PING:
+	case NWP_TYPE_ACK:
+	case NWP_TYPE_REQ_PING:
+	case NWP_TYPE_REQ_ACK:
+	case NWP_TYPE_INV_PING:
+		return process_monitoring(skb, ghdr->type);
 	default:
 		goto freeskb;
 	}
@@ -911,6 +1370,10 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 		dump_stack();
 	}
 
+	del_timer_sync(&hdev->monitor_timer);
+	del_timer_sync(&hdev->failure_timer);
+	kfree(hdev->target);
+
 	dev_put(dev);
 	kfree(hdev);
 }
@@ -930,6 +1393,19 @@ static struct hid_dev *hdev_init(struct net_device *dev)
 
 	spin_lock_init(&hdev->neigh_lock);
 	INIT_LIST_HEAD(&hdev->neighs);
+
+	init_timer(&hdev->monitor_timer);
+	hdev->monitor_timer.data = (unsigned long)dev;
+
+	init_timer(&hdev->failure_timer);
+	hdev->failure_timer.data = (unsigned long)dev;
+	hdev->failure_timer.function = clean_neigh_list;
+
+	hdev->monitoring = false;
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+
+	hdev->target = kmalloc(sizeof(*hdev->target), GFP_ATOMIC);
 
 	hid_dev_hold(hdev);
 	RCU_INIT_POINTER(dev->hid_ptr, hdev);

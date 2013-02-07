@@ -78,6 +78,13 @@ struct hrdw_addr {
 	struct xip_dst_anchor	anchor;
 	struct rcu_head		rcu_head;
 
+	/* Bits 0-30: remote clock time.
+	 * Bit 31: 1 for alive, 0 for failed. */
+	u32			remote_s;
+
+	/* Bits 0-31: local clock time. */
+	u32			local_s;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
@@ -137,6 +144,14 @@ struct hid_dev {
 	atomic_t		neigh_cnt;
 	spinlock_t		neigh_lock; /* Lock for the neighs list. */
 	struct list_head	neighs;
+
+	/* NWP's monitoring state. */
+	struct timer_list	monitor_timer;
+	struct timer_list	failure_timer;
+	struct hrdw_addr	*target;
+	bool			monitoring;
+	bool			any_neighs_replied;
+	bool			remonitored;
 };
 
 static inline struct hid_dev *__hid_dev_get_rcu(const struct net_device *dev)
