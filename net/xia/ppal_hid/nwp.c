@@ -478,16 +478,14 @@ struct announcement_state {
 	unsigned int	mtu;
 };
 
-#define NWP_VERSION		0x01
-
 #define NWP_TYPE_ANNOUCEMENT	0x01
 #define NWP_TYPE_NEIGH_LIST	0x02
-#define NWP_TYPE_MAX		0x03
+#define NWP_TYPE_MAX		0x08
 
 struct general_hdr {
 	u8	version;
 	u8	type;
-	u8	hid_count;
+	u8	hid_count_or_res;
 	u8	haddr_len;
 } __packed;
 
@@ -496,6 +494,8 @@ struct announcement_hdr {
 	u8	type;
 	u8	hid_count;
 	u8	haddr_len;
+
+	u32	status;
 
 	u8	haddr_begin[0];
 	u8	haddr[MAX_ADDR_LEN];
@@ -508,12 +508,13 @@ struct neighs_hdr {
 	u8	haddr_len;
 
 	u8	neighs_begin[0];
-/*	XID_1 NUM_1 HA_11 HA_12 ... HA_1NUM_1
- *	XID_2 NUM_2 HA_21 HA_22 ... HA_2NUM_2
+/*	XID_1 NUM_1 HA_11 S_11 HA_12 S_12 ... HA_1NUM_1 S_1NUM_1
+ *	XID_2 NUM_2 HA_21 S_21 HA_22 S_22 ... HA_2NUM_2 S_2NUM_2
  *	...
- *	XID_count NUM_count HA_count1 HA_count2 ... HA_countNUM_count
+ *	XID_C NUM_C HA_C1 S_C1 HA_C2 S_C2 ... HA_CNUM_C S_CNUMC
  *
- *	count == hid_count.
+ *	C == hid_count.
+ *	S == status.
  */
 } __packed;
 
@@ -665,6 +666,48 @@ static void announce_event(unsigned long data)
 out:
 	atomic_set(&hid_ctx->announced, next_to_announce);
 	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
+}
+
+/*
+ *	NWP Monitoring
+ */
+
+#define MONITORING_ENABLED 	true
+
+#define NWP_NUM_INVESTIGATORS	3
+
+#define NWP_INTERVAL		8*HZ
+#define NWP_PING_TIME		4*HZ
+#define NWP_INV_TIME		(NWP_INTERVAL - NWP_PING_TIME)
+#define NWP_FAIL_TTL		10*HZ
+
+#define NWP_TYPE_PING		0x03
+#define NWP_TYPE_ACK		0x04
+#define NWP_TYPE_REQ_PING	0x05
+#define NWP_TYPE_REQ_ACK	0x06
+#define NWP_TYPE_INV_PING	0x07
+
+struct monitoring_hdr {
+	u8	version;
+	u8	type;
+	u8	reserved;
+	u8	haddr_len;
+
+	u32	clock;
+	u8	haddrs_begin[0];
+} __packed;
+
+static inline bool monitoring_pkt(u8 type)
+{
+	return type >= NWP_TYPE_PING && type <= NWP_TYPE_INV_PING;
+}
+
+static inline int monitoring_hdr_len(struct net_device *dev, u8 type)
+{
+	return offsetof(struct monitoring_hdr, haddrs_begin) +
+		(type == NWP_TYPE_PING || type == NWP_TYPE_ACK)
+		? 3 * dev->addr_len
+		: 2 * dev->addr_len;
 }
 
 /*
