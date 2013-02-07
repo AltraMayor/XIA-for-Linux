@@ -710,6 +710,28 @@ static inline int monitoring_hdr_len(struct net_device *dev, u8 type)
 		: 2 * dev->addr_len;
 }
 
+static void clean_neigh_list(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct net *net = dev_net(dev);
+	struct hrdw_addr *ha;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *main_xtbl;
+	struct hid_dev *hdev = hid_dev_get(dev);
+
+	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
+
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
+		if (get_remote_status(ha) == FAILED) {
+			char *xid = ha->mhid->xhm_common.fx_xid;
+			remove_neigh(main_xtbl, xid, dev, ha->ha);
+		}
+
+	mod_timer(&hdev->failure_timer, jiffies + NWP_FAIL_TTL);
+	hid_dev_put(hdev);
+}
+
 /*
  *	State associated to net
  */
@@ -1069,6 +1091,7 @@ static struct hid_dev *hdev_init(struct net_device *dev)
 
 	init_timer(&hdev->failure_timer);
 	hdev->failure_timer.data = (unsigned long)dev;
+	hdev->failure_timer.function = clean_neigh_list;
 
 	hdev->monitoring = false;
 	hdev->any_neighs_replied = false;
