@@ -1040,6 +1040,10 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 		dump_stack();
 	}
 
+	del_timer_sync(&hdev->monitor_timer);
+	del_timer_sync(&hdev->failure_timer);
+	kfree(hdev->target);
+
 	dev_put(dev);
 	kfree(hdev);
 }
@@ -1059,6 +1063,18 @@ static struct hid_dev *hdev_init(struct net_device *dev)
 
 	spin_lock_init(&hdev->neigh_lock);
 	INIT_LIST_HEAD(&hdev->neighs);
+
+	init_timer(&hdev->monitor_timer);
+	hdev->monitor_timer.data = (unsigned long)dev;
+
+	init_timer(&hdev->failure_timer);
+	hdev->failure_timer.data = (unsigned long)dev;
+
+	hdev->monitoring = false;
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+
+	hdev->target = kmalloc(sizeof(*hdev->target), GFP_ATOMIC);
 
 	hid_dev_hold(hdev);
 	RCU_INIT_POINTER(dev->hid_ptr, hdev);
