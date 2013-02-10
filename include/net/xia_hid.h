@@ -78,6 +78,15 @@ struct hrdw_addr {
 	struct xip_dst_anchor	anchor;
 	struct rcu_head		rcu_head;
 
+	/* Remote status and clock.
+	 * Bits 0-30: remote wall time (seconds).
+	 * Bit 31: 1 for alive, 0 for failed. */
+	u32			remote_sc;
+
+	/* Local clock.
+	 * All bits: local wall time (seconds). */
+	u32			local_c;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
@@ -116,7 +125,7 @@ static inline void mhid_put(struct fib_xid_hid_main *mhid)
 void hid_deferred_negdep(struct net *net, struct xia_xid *xid);
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr);
+	struct net_device *dev, const u8 *lladdr, u32 status_clock);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	struct net_device *dev, const u8 *lladdr);

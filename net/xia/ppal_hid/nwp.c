@@ -8,13 +8,51 @@
 #include <net/xia_hid.h>
 
 /*
+ *	Neighbor Status
+ */
+
+#define ALIVE			0x80000000
+#define FAILED			0x00000000
+
+#define STATUS_MASK		0x80000000
+#define CLOCK_MASK		0x7FFFFFFF
+
+#define REMOTE_CLOCK_MAX	0x7FFFFFFF
+
+#define STAT_LEN		(sizeof(((struct hrdw_addr *)0)->remote_sc))
+
+/* Returns:
+ * -1 if @c1 < @c2
+ *  0 if @c1 = @c2
+ *  1 if @c1 > @c2
+ */
+static int clockcmp32(u32 c1, u32 c2)
+{
+	if (c1 == c2)
+		return 0;
+
+	/* Check for clock overflow. */
+	return ((s32)(c2) - (s32)(c1) > 0) ? -1 : 1;
+}
+
+static inline int clockcmp31(u32 c1, u32 c2)
+{
+	/* The overflow check at the bottom of @clockcmp32 depends on the most
+	 * significant (31st) bit representing signedness. Since NWP remote
+	 * clocks only use bits 0-30, we need to shift all bits to the left.
+	 */
+	return clockcmp32(c1 << 1, c2 << 1);
+}
+
+/*
  *	Neighbor Table
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	gfp_t flags)
+	u32 status_clock, gfp_t flags)
 {
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
+	struct timeval t;
 	if (!ha)
 		return NULL;
 	INIT_LIST_HEAD(&ha->ha_list);
@@ -23,6 +61,10 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	dev_hold(dev);
 	xdst_init_anchor(&ha->anchor);
 	memmove(ha->ha, lladdr, dev->addr_len);
+
+	do_gettimeofday(&t);
+	ha->local_c = (u32)t.tv_sec;
+	ha->remote_sc = status_clock;
 	return ha;
 }
 
@@ -56,6 +98,47 @@ static inline void free_ha(struct hrdw_addr *ha)
 	call_rcu(&ha->rcu_head, __free_ha);
 }
 
+/* @h1 is a duplicate neighbor; @h2 is already in the neighbor list. */
+static void update_ha_sc(struct hrdw_addr *h1, struct hrdw_addr *h2)
+{
+	u32 h1_clock = CLOCK_MASK & h1->remote_sc;
+	u32 h2_clock = CLOCK_MASK & h2->remote_sc;
+
+	switch (clockcmp31(h2_clock, h1_clock)) {
+	case (1):
+		break;
+	case (0):
+		/* If clocks are the same but statuses are different, assume
+		 * status that has neigh as alive is correct.
+		 */
+		if ((STATUS_MASK & h1->remote_sc) !=
+			(STATUS_MASK & h2->remote_sc))
+			h2->remote_sc = ALIVE | h2_clock;
+		break;
+	case (-1):
+		/* Here we are estimating the local time at which this update
+		 * took place. The relative time difference between @local_c
+		 * and @remote_sc should remain the same.
+		 *
+		 * At this point we know that @h1_clock is logically greater
+		 * than @h2_clock, but it will not be numerically greater if
+		 * overflow has occurred. Therefore, the else case handles
+		 * overflow of @h1_clock. We need to add 1 to account for
+		 * overflow; consider the case where @h2_clock =
+		 * REMOTE_CLOCK_MAX and @h1_clock = 0. There is still a step
+		 * between REMOTE_CLOCK_MAX and 0, so we need to account for
+		 * that step.
+		 */
+		h2->local_c += (h1_clock >= h2_clock)
+				? h1_clock - h2_clock
+				: h1_clock + (REMOTE_CLOCK_MAX - h2_clock) + 1;
+		h2->remote_sc = h1->remote_sc;
+		break;
+	default:
+		BUG();
+	}
+}
+
 static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 {
 	struct hrdw_addr *pos_ha, *insert_here, *same_dev;
@@ -67,8 +150,10 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;
-		if (unlikely(!c1 && c2))
-			return -EEXIST;	/* It's a duplicate. */
+		if (!c1 && c2) {
+			update_ha_sc(ha, pos_ha);
+			return -EEXIST; /* It's a duplicate. */
+		}
 
 		/* Keep listed sorted, but look at all ha's that have
 		 * the same ha->ha.
@@ -235,7 +320,7 @@ void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
 }
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr)
+	struct net_device *dev, const u8 *lladdr, u32 status_clock)
 {
 	struct fib_xid_table *local_xtbl, *main_xtbl;
 	struct fib_xid_hid_main *mhid;
@@ -259,7 +344,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	 */
 	if (xia_find_xid_lock(&local_bucket, local_xtbl, id)) {
 		/* We don't issue a warning about trying inserting an entry
-		 * already in @local_xtb into @main_xtbl because if this host
+		 * already in @local_xtbl into @main_xtbl because if this host
 		 * has two interfaces connected to the same medium, it would
 		 * lead to a false problem.
 		 */
@@ -267,7 +352,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		goto local_xtbl;
 	}
 
-	ha = new_ha(dev, lladdr, GFP_ATOMIC);
+	ha = new_ha(dev, lladdr, status_clock, GFP_ATOMIC);
 	if (!ha) {
 		rc = -ENOMEM;
 		goto local_xtbl;
@@ -398,6 +483,12 @@ struct announcement_state {
 #define NWP_TYPE_NEIGH_LIST	0x02
 #define NWP_TYPE_MAX		0x03
 
+/* If a failed node has been failed for more than NWP_LIST_TIME_MAX,
+ * it should not be put in neighbor lists to prevent neighboring nodes from
+ * cyclically adding and deleting failed nodes.
+ */
+#define NWP_LIST_TIME_MAX	(10*HZ)
+
 struct general_hdr {
 	u8	version;
 	u8	type;
@@ -411,6 +502,8 @@ struct announcement_hdr {
 	u8	hid_count;
 	u8	haddr_len;
 
+	__be32	clock; /* Lower 32 bits of announcer's wall time (seconds). */
+
 	u8	haddr_begin[0];
 	u8	haddr[MAX_ADDR_LEN];
 } __packed;
@@ -422,12 +515,13 @@ struct neighs_hdr {
 	u8	haddr_len;
 
 	u8	neighs_begin[0];
-/*	XID_1 NUM_1 HA_11 HA_12 ... HA_1NUM_1
- *	XID_2 NUM_2 HA_21 HA_22 ... HA_2NUM_2
+/*	XID_1 NUM_1 (HA_11 S_11) (HA_12 S_12) ... (HA_1NUM_1 S_1NUM_1)
+ *	XID_2 NUM_2 (HA_21 S_21) (HA_22 S_22) ... (HA_2NUM_2 S_2NUM_2)
  *	...
- *	XID_count NUM_count HA_count1 HA_count2 ... HA_countNUM_count
+ *	XID_C NUM_C (HA_C1 S_C1) (HA_C2 S_C2) ... (HA_CNUM_C S_CNUM_C)
  *
- *	count == hid_count.
+ *	C == hid_count.
+ *	S == bits 0-31: wall time (seconds); bit 31: 0 for failed, 1 for alive.
  */
 } __packed;
 
@@ -493,6 +587,7 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	struct sk_buff *skb;
 	struct announcement_hdr *nwp;
 	struct announcement_state state;
+	struct timeval t;
 
 	if (mtu < min_annoucement) {
 		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
@@ -515,6 +610,8 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	nwp->type	= NWP_TYPE_ANNOUCEMENT;
 	nwp->hid_count	= 0;
 	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->clock	= __cpu_to_be32((u32)t.tv_sec);
 	memcpy(nwp->haddr, dev->dev_addr, dev->addr_len);
 
 	/* Fill out the body. */
@@ -616,7 +713,8 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	int ll_tlen = dev->needed_tailroom;
 	int ll_space = ll_hlen + ll_tlen;
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = ll_space + hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int entry_len = XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
+	int min_list = ll_space + hdr_len + entry_len;
 	struct sk_buff *skb;
 	struct neighs_hdr *nwp;
 
@@ -665,6 +763,8 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	int min_entry, data_len;
 	struct hrdw_addr *ha;
 	int addr_len = dev->addr_len;
+	struct timeval t;
+	do_gettimeofday(&t);
 
 	skb = alloc_neigh_list_skb(dev, mtu, &phid_counter);
 	if (!skb)
@@ -678,13 +778,20 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	prv_mhid = NULL;
 	dummy = 0;
 	pcounter = &dummy;
-	min_entry = XIA_XID_MAX + 1 + addr_len;
+	min_entry = XIA_XID_MAX + 1 + addr_len + STAT_LEN;
 	data_len = mtu - LL_RESERVED_SPACE(dev) - dev->needed_tailroom;
+
 	rcu_read_lock();
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
 		int is_new_hid, need_new_skb;
 		struct fib_xid_hid_main *mhid = ha->mhid;
+		__be32 be_status_clock = __cpu_to_be32(ha->remote_sc);
 		BUG_ON(ha->dev != dev);
+
+		if (((STATUS_MASK & ha->remote_sc) == FAILED) &&
+			(clockcmp32((u32)t.tv_sec,
+			ha->local_c + NWP_LIST_TIME_MAX) > 0))
+			continue;
 
 		is_new_hid = prv_mhid != mhid;
 		need_new_skb = (*phid_counter == 0xff) ||
@@ -715,6 +822,8 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 
 		/* Add new hardware address. */
 		memcpy(skb_put(skb, addr_len), ha->ha, addr_len);
+		/* Add status of hardware address. */
+		memcpy(skb_put(skb, STAT_LEN), &be_status_clock, STAT_LEN);
 		(*pcounter)++;
 
 		prv_mhid = mhid;
@@ -752,7 +861,8 @@ static void read_announcement(struct sk_buff *skb)
 			break;
 		}
 		/* Ignore errors. */
-		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr);
+		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr,
+			ALIVE | (CLOCK_MASK & __be32_to_cpu(nwp->clock)));
 		xid = next_xid;
 		count--;
 	}
@@ -799,7 +909,7 @@ static int process_neigh_list(struct sk_buff *skb)
 	struct net_device *dev = skb->dev;
 	struct net *net = dev_net(dev);
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
 	struct neighs_hdr *nwp;
 	u8 *xid;
 	struct xip_hid_ctx *hid_ctx;
@@ -825,7 +935,11 @@ static int process_neigh_list(struct sk_buff *skb)
 		original_ha_count = xid[XIA_XID_MAX];
 		ha_count = original_ha_count;
 		while (ha_count > 0) {
-			u8 *next_haddr_or_xid = skb_pull(skb, dev->addr_len);
+			u32 status_clock =
+				__be32_to_cpu(*((__be32 *)skb_pull(skb,
+					dev->addr_len)));
+			u8 *next_haddr_or_xid = skb_pull(skb, STAT_LEN);
+
 			if (!next_haddr_or_xid) {
 				if (net_ratelimit()) {
 					char str[XIA_MAX_STRXID_SIZE];
@@ -837,7 +951,8 @@ static int process_neigh_list(struct sk_buff *skb)
 				goto out_loop;
 			}
 
-			insert_neigh(hid_ctx, xid, dev, haddr_or_xid);
+			insert_neigh(hid_ctx, xid, dev, haddr_or_xid,
+				status_clock);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
@@ -845,6 +960,7 @@ static int process_neigh_list(struct sk_buff *skb)
 		xid = haddr_or_xid;
 		hid_count--;
 	}
+
 out_loop:
 out:
 	consume_skb(skb);
