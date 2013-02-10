@@ -525,7 +525,7 @@ struct announcement_state {
 
 #define NWP_VERSION		0x01
 
-#define NWP_TYPE_ANNOUCEMENT	0x01
+#define NWP_TYPE_ANNOUNCEMENT	0x01
 #define NWP_TYPE_NEIGH_LIST	0x02
 #define NWP_TYPE_PING		0x03
 #define NWP_TYPE_ACK		0x04
@@ -632,15 +632,15 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 	int ll_hlen = LL_RESERVED_SPACE(dev);
 	int ll_tlen = dev->needed_tailroom;
 	int ll_space = ll_hlen + ll_tlen;
-	int min_annoucement = ll_space + hdr_len + XIA_XID_MAX;
+	int min_announcement = ll_space + hdr_len + XIA_XID_MAX;
 	struct sk_buff *skb;
 	struct announcement_hdr *nwp;
 	struct announcement_state state;
 	struct timeval t;
 
-	if (mtu < min_annoucement) {
-		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
-			dev->name, mtu, min_annoucement);
+	if (mtu < min_announcement) {
+		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest announcement frame (%i)\n",
+			dev->name, mtu, min_announcement);
 		dump_stack();
 		return;
 	}
@@ -656,7 +656,7 @@ static void announce_on_dev(struct fib_xid_table *local_xtbl,
 
 	/* Fill out the NWP header. */
 	nwp->version	= NWP_VERSION;
-	nwp->type	= NWP_TYPE_ANNOUCEMENT;
+	nwp->type	= NWP_TYPE_ANNOUNCEMENT;
 	nwp->hid_count	= 0;
 	nwp->haddr_len	= dev->addr_len;
 	do_gettimeofday(&t);
@@ -1253,13 +1253,13 @@ static int process_announcement(struct sk_buff *skb)
 	struct net_device *dev = skb->dev;
 	struct net *net = dev_net(dev);
 	int hdr_len = announcement_hdr_len(dev);
-	int min_annoucement = hdr_len + XIA_XID_MAX;
+	int min_announcement = hdr_len + XIA_XID_MAX;
 	struct announcement_hdr *nwp;
 	struct xip_ppal_ctx *ctx;
 	struct hid_dev *hdev;
 	int me;
 
-	if (!pskb_may_pull(skb, min_annoucement))
+	if (!pskb_may_pull(skb, min_announcement))
 		goto out;
 	skb_reset_network_header(skb);
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
@@ -1382,7 +1382,7 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto out_of_mem;
 
 	switch (ghdr->type) {
-	case NWP_TYPE_ANNOUCEMENT:
+	case NWP_TYPE_ANNOUNCEMENT:
 		return process_announcement(skb);
 	case NWP_TYPE_NEIGH_LIST:
 		return process_neigh_list(skb);
