@@ -17,6 +17,7 @@
 #define STATUS_MASK		0x80000000
 #define CLOCK_MASK		0x7FFFFFFF
 
+#define LOCAL_CLOCK_MAX		0xFFFFFFFF
 #define REMOTE_CLOCK_MAX	0x7FFFFFFF
 
 #define STAT_LEN		(sizeof(((struct hrdw_addr *)0)->remote_sc))
@@ -42,6 +43,51 @@ static inline int clockcmp31(u32 c1, u32 c2)
 	 * clocks only use bits 0-30, we need to shift all bits to the left.
 	 */
 	return clockcmp32(c1 << 1, c2 << 1);
+}
+
+static void find_update_neigh_sc(struct net_device *dev, const u8 *lladdr,
+	u32 status_clock)
+{
+	struct hid_dev *hdev;
+	struct hrdw_addr *ha;
+	struct timeval t;
+
+	hdev = hid_dev_get(dev);
+	spin_lock(&hdev->neigh_lock);
+	list_for_each_entry(ha, &hdev->neighs, hdev_list) {
+
+		if (memcmp(ha->ha, lladdr, dev->addr_len) != 0)
+			continue;
+
+		if (clockcmp31(CLOCK_MASK & status_clock,
+				CLOCK_MASK & ha->remote_sc) < 0)
+			break;
+
+		do_gettimeofday(&t);
+		if ((STATUS_MASK & status_clock) == FAILED) {
+			/* If a neigh has failed, we can not know the remote
+			 * time of the failed neighbor, and thus @status_clock
+			 * does not hold a valid clock. In the false case of
+			 * the ternary operator, overflow has occurred. If this
+			 * happens, we need to add one. Consider the case where
+			 * @new_c = 0 and @ha->local_c = LOCAL_CLOCK_MAX. Then,
+			 * it is clear we need to account for the step between
+			 * LOCAL_CLOCK_MAX and 0.
+			 */
+			u32 loc_c = (u32)t.tv_sec;
+			ha->remote_sc += loc_c >= ha->local_c
+				? loc_c - ha->local_c
+				: loc_c + (LOCAL_CLOCK_MAX - ha->local_c) + 1;
+			ha->remote_sc = FAILED | (CLOCK_MASK & ha->remote_sc);
+			ha->local_c = loc_c;
+		} else {
+			ha->remote_sc = status_clock;
+			ha->local_c = (u32)t.tv_sec;
+		}
+		break;
+	}
+	spin_unlock(&hdev->neigh_lock);
+	hid_dev_put(hdev);
 }
 
 /*
@@ -481,7 +527,12 @@ struct announcement_state {
 
 #define NWP_TYPE_ANNOUCEMENT	0x01
 #define NWP_TYPE_NEIGH_LIST	0x02
-#define NWP_TYPE_MAX		0x03
+#define NWP_TYPE_PING		0x03
+#define NWP_TYPE_ACK		0x04
+#define NWP_TYPE_REQ_PING	0x05
+#define NWP_TYPE_REQ_ACK	0x06
+#define NWP_TYPE_INV_PING	0x07
+#define NWP_TYPE_MAX		0x08
 
 /* If a failed node has been failed for more than NWP_LIST_TIME_MAX,
  * it should not be put in neighbor lists to prevent neighboring nodes from
@@ -674,6 +725,337 @@ static void announce_event(unsigned long data)
 out:
 	atomic_set(&hid_ctx->announced, next_to_announce);
 	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
+}
+
+/*
+ *	NWP Monitoring
+ */
+
+/* Maximum number of investigators asked to try to reach a failed node. */
+#define NWP_NUM_INVESTIGATORS	3
+
+#define NWP_INTERVAL	(8*HZ) /* Period of one monitoring interval. */
+#define NWP_PING_TIME	(4*HZ) /* Worst case RTT for a monitoring ping. */
+#define NWP_INV_TIME	(NWP_INTERVAL - NWP_PING_TIME) /* Investigating time. */
+
+#define NWP_FAILED_TTL	(10*HZ) /* Minimum lifetime of neigh after failure. */
+#define NWP_CLEAN_TIME	(20*HZ) /* Period between cleaning of neigh list. */
+
+static void end_interval_failure(unsigned long);
+
+struct monitoring_hdr {
+	u8	version;
+	u8	type;
+	u8	reserved;
+	u8	haddr_len;
+
+	u32	clock;
+	u8	haddrs_begin[0];
+} __packed;
+
+static inline int monitoring_hdr_len(struct net_device *dev, u8 type)
+{
+	return offsetof(struct monitoring_hdr, haddrs_begin) +
+		(type == NWP_TYPE_PING || type == NWP_TYPE_ACK)
+			? 2 * dev->addr_len
+			: 3 * dev->addr_len;
+}
+
+static void send_monitoring(struct net_device *dev, const u8 *src,
+	const u8 *dst, const u8 *inv, u8 type)
+{
+	unsigned int mtu = dev->mtu;
+	int hdr_len = offsetof(struct monitoring_hdr, haddrs_begin);
+	int ll_hlen = LL_RESERVED_SPACE(dev);
+	int ll_tlen = dev->needed_tailroom;
+	int ll_space = ll_hlen + ll_tlen;
+	int min_monitoring = ll_space + hdr_len + 2 * dev->addr_len;
+	struct sk_buff *skb;
+	struct monitoring_hdr *nwp;
+	struct timeval t;
+
+	if (unlikely(mtu < min_monitoring)) {
+		pr_err("XIA HID NWP: Can't send a monitoring packet because dev %s has MTU (%u) smaller than the smallest monitoring frame (%i)\n",
+			dev->name, mtu, min_monitoring);
+		dump_stack();
+		return;
+	}
+
+	skb = alloc_skb(mtu, GFP_ATOMIC);
+	if (unlikely(!skb))
+		return;
+	skb_reserve(skb, ll_hlen);
+	skb_reset_network_header(skb);
+	nwp = (struct monitoring_hdr *)skb_put(skb, hdr_len);
+	skb->dev = dev;
+	skb->protocol = __cpu_to_be16(ETH_P_NWP);
+
+	nwp->version	= NWP_VERSION;
+	nwp->type	= type;
+	nwp->reserved	= 0;
+	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->clock	= __cpu_to_be32((u32)t.tv_sec);
+	memcpy(skb_put(skb, dev->addr_len), src, dev->addr_len);
+	memcpy(skb_put(skb, dev->addr_len), dst, dev->addr_len);
+	if (inv) {
+		BUG_ON(type == NWP_TYPE_PING || type == NWP_TYPE_ACK);
+		memcpy(skb_put(skb, dev->addr_len), inv, dev->addr_len);
+	}
+
+	switch (type) {
+	case NWP_TYPE_PING:
+		send_nwp_frame(skb, src, dst);
+		break;
+	case NWP_TYPE_ACK:
+		send_nwp_frame(skb, dst, src);
+		break;
+	case NWP_TYPE_REQ_PING:
+		send_nwp_frame(skb, src, inv);
+		break;
+	case NWP_TYPE_REQ_ACK:
+		send_nwp_frame(skb, inv, src);
+		break;
+	case NWP_TYPE_INV_PING:
+		send_nwp_frame(skb, inv, dst);
+		break;
+	}
+}
+
+static void end_ping_failure(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	struct hrdw_addr *ha;
+	u8 *lladdr = dev->dev_addr;
+	u32 start, end, i, num_neighs, num_invs;
+	bool need_to_loop;
+
+	num_neighs = atomic_read(&hdev->neigh_cnt);
+	if (num_neighs == 1) {
+		/* Not enough neighbors to investigate; ping target again with
+		 * remaining time in this monitoring interval.
+		 */
+		hdev->remonitored = true;
+		send_monitoring(dev, lladdr, hdev->target, NULL, NWP_TYPE_PING);
+		goto out;
+	}
+
+	num_invs = NWP_NUM_INVESTIGATORS > num_neighs - 1
+			? num_neighs - 1
+			: NWP_NUM_INVESTIGATORS;
+
+	/* Here we need a random subset of neighbors. However,
+	 * the selection of these neighbors need not be mutually
+	 * independent; instead, we can simulate randomness by
+	 * choosing a random position to start from in the neighbor
+	 * list, and send investigative pings to those @num_invs
+	 * neighbors. One of the chosen investigators may be the
+	 * target in question.
+	 */
+	get_random_bytes(&start, sizeof(start));
+	start %= num_neighs;
+	end = start + num_invs;
+
+	/* If we randomly choose a position near the end of the neighbor list,
+	 * we may have to loop around to the beginning of the list to select
+	 * @num_invs investigators. This code should re-loop at most once.
+	 */
+	do {
+		need_to_loop = end > num_neighs;
+		i = 0;
+
+		rcu_read_lock();
+		list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
+			if (i >= start)
+				send_monitoring(dev, lladdr, hdev->target,
+						ha->ha, NWP_TYPE_REQ_PING);
+			if (++i >= end)
+				break;
+		}
+		rcu_read_unlock();
+
+		if (need_to_loop) {
+			BUG_ON(start == 0);
+			start = 0;
+			end %= num_neighs;
+		}
+	} while (need_to_loop);
+
+out:
+	hdev->monitor_timer.function = end_interval_failure;
+	hdev->investigating = true;
+	mod_timer(&hdev->monitor_timer, jiffies + NWP_INV_TIME);
+	hid_dev_put(hdev);
+}
+
+static bool pick_random_neigh(struct hid_dev *hdev)
+{
+	struct net_device *dev = hdev->dev;
+	struct hrdw_addr *ha;
+	u32 target_num, num_neighs, i = 0;
+	bool some_neigh_alive = false;
+
+	get_random_bytes(&target_num, sizeof(target_num));
+	num_neighs = atomic_read(&hdev->neigh_cnt);
+	if (!num_neighs) {
+		hdev->monitoring = false;
+		return false;
+	}
+	target_num %= num_neighs;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
+		if ((STATUS_MASK & ha->remote_sc) == ALIVE)
+			some_neigh_alive = true;
+		if (i++ == target_num &&
+			((STATUS_MASK & ha->remote_sc) == ALIVE)) {
+			memcpy(hdev->target, ha->ha, dev->addr_len);
+			rcu_read_unlock();
+			return true;
+		}
+	}
+	rcu_read_unlock();
+
+	if (!some_neigh_alive)
+		hdev->monitoring = false;
+	return false;
+}
+
+static void monitor(struct net_device *dev, bool need_new_target)
+{
+	struct hid_dev *hdev = hid_dev_get(dev);
+	if (need_new_target)
+		do {
+			if (pick_random_neigh(hdev))
+				break;
+			if (!hdev->monitoring)
+				goto out;
+		} while (hdev->monitoring);
+
+	hdev->monitor_timer.function = end_ping_failure;
+	send_monitoring(dev, dev->dev_addr, hdev->target, NULL, NWP_TYPE_PING);
+	mod_timer(&hdev->monitor_timer, jiffies + NWP_PING_TIME);
+
+out:
+	hid_dev_put(hdev);
+}
+
+static void end_interval_failure(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	bool need_new_target = true;
+
+	/* No investigative neighbors replied; possible network partition. */
+	if (!hdev->any_neighs_replied && !hdev->remonitored) {
+		hdev->remonitored = true;
+		need_new_target = false;
+		goto out;
+	}
+
+	/* @find_update_neigh_sc will estimate correct remote clock. */
+	find_update_neigh_sc(dev, hdev->target, FAILED);
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+
+out:
+	hdev->investigating = false;
+	hid_dev_put(hdev);
+	monitor(dev, need_new_target);
+}
+
+static void end_interval_success(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+	hid_dev_put(hdev);
+	monitor(dev, true);
+}
+
+static int process_monitoring(struct sk_buff *skb, u8 type)
+{
+	struct net_device *dev = skb->dev;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	struct monitoring_hdr *nwp;
+	u8 *src, *dst, *inv, *sender;
+	int hdr_len = monitoring_hdr_len(dev, type);
+
+	if (!hdev->monitoring)
+		goto out;
+	if (!pskb_may_pull(skb, hdr_len))
+		goto out;
+	skb_reset_network_header(skb);
+	nwp = (struct monitoring_hdr *)skb_network_header(skb);
+	if (nwp->haddr_len != dev->addr_len)
+		goto out;
+
+	nwp->clock = __be32_to_cpu(nwp->clock);
+	src = skb_pull(skb, offsetof(struct monitoring_hdr, haddrs_begin));
+	dst = skb_pull(skb, nwp->haddr_len);
+
+	switch (type) {
+	case NWP_TYPE_PING:
+	case NWP_TYPE_INV_PING:
+		send_monitoring(dev, src, dst, NULL, NWP_TYPE_ACK);
+		sender = NWP_TYPE_PING ? src : skb_pull(skb, nwp->haddr_len);
+		break;
+	case NWP_TYPE_ACK:
+		if (memcmp(dst, hdev->target, nwp->haddr_len) == 0)
+			hdev->monitor_timer.function = end_interval_success;
+		sender = dst;
+		break;
+	case NWP_TYPE_REQ_PING:
+		inv = skb_pull(skb, nwp->haddr_len);
+		send_monitoring(dev, src, dst, inv, NWP_TYPE_REQ_ACK);
+		send_monitoring(dev, src, dst, inv, NWP_TYPE_INV_PING);
+		sender = src;
+		break;
+	case NWP_TYPE_REQ_ACK:
+		if (hdev->investigating)
+			hdev->any_neighs_replied = true;
+		sender = skb_pull(skb, nwp->haddr_len);
+		break;
+	default:
+		goto out;
+	}
+
+	find_update_neigh_sc(dev, sender, ALIVE | (CLOCK_MASK & nwp->clock));
+
+out:
+	hid_dev_put(hdev);
+	consume_skb(skb);
+	return 0;
+}
+
+static void clean_neigh_list(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct net *net = dev_net(dev);
+	struct hrdw_addr *ha;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *main_xtbl;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	struct timeval t;
+	int curr_time;
+
+	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
+	do_gettimeofday(&t);
+	curr_time = (u32)t.tv_sec;
+
+	/* Remove neighbors that have failed and expired. */
+	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
+		if (((STATUS_MASK & ha->remote_sc) == FAILED) &&
+			clockcmp32(curr_time, ha->local_c + NWP_FAILED_TTL)) {
+			char *xid = ha->mhid->xhm_common.fx_xid;
+			remove_neigh(main_xtbl, xid, dev, ha->ha);
+		}
+
+	mod_timer(&hdev->clean_timer, jiffies + NWP_CLEAN_TIME);
+	hid_dev_put(hdev);
 }
 
 /*
@@ -907,6 +1289,7 @@ out:
 static int process_neigh_list(struct sk_buff *skb)
 {
 	struct net_device *dev = skb->dev;
+	struct hid_dev *hdev = hid_dev_get(dev);
 	struct net *net = dev_net(dev);
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
 	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len + STAT_LEN;
@@ -963,8 +1346,16 @@ static int process_neigh_list(struct sk_buff *skb)
 		hid_count--;
 	}
 
+	if (!hdev->monitoring) {
+		if (!timer_pending(&hdev->clean_timer))
+			mod_timer(&hdev->clean_timer, jiffies + NWP_CLEAN_TIME);
+		hdev->monitoring = true;
+		monitor(dev, true);
+	}
+
 out_loop:
 out:
+	hid_dev_put(hdev);
 	consume_skb(skb);
 	return 0;
 }
@@ -995,6 +1386,12 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 		return process_announcement(skb);
 	case NWP_TYPE_NEIGH_LIST:
 		return process_neigh_list(skb);
+	case NWP_TYPE_PING:
+	case NWP_TYPE_ACK:
+	case NWP_TYPE_REQ_PING:
+	case NWP_TYPE_REQ_ACK:
+	case NWP_TYPE_INV_PING:
+		return process_monitoring(skb, ghdr->type);
 	default:
 		goto freeskb;
 	}
@@ -1027,6 +1424,9 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 		dump_stack();
 	}
 
+	del_timer_sync(&hdev->clean_timer);
+	del_timer_sync(&hdev->monitor_timer);
+
 	dev_put(dev);
 	kfree(hdev);
 }
@@ -1046,6 +1446,18 @@ static struct hid_dev *hdev_init(struct net_device *dev)
 
 	spin_lock_init(&hdev->neigh_lock);
 	INIT_LIST_HEAD(&hdev->neighs);
+
+	init_timer(&hdev->monitor_timer);
+	hdev->monitor_timer.data = (unsigned long)dev;
+
+	init_timer(&hdev->clean_timer);
+	hdev->clean_timer.data = (unsigned long)dev;
+	hdev->clean_timer.function = clean_neigh_list;
+
+	hdev->monitoring = false;
+	hdev->any_neighs_replied = false;
+	hdev->remonitored = false;
+	hdev->investigating = false;
 
 	hid_dev_hold(hdev);
 	RCU_INIT_POINTER(dev->hid_ptr, hdev);
