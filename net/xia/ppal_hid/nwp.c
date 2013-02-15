@@ -95,7 +95,7 @@ static void find_update_neigh_sc(struct net_device *dev, const u8 *lladdr,
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	u32 status_clock, gfp_t flags)
+	u32 status_clock, bool perm, gfp_t flags)
 {
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
 	struct timeval t;
@@ -111,6 +111,7 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	do_gettimeofday(&t);
 	ha->local_c = (u32)t.tv_sec;
 	ha->remote_sc = status_clock;
+	ha->permanent = perm;
 	return ha;
 }
 
@@ -366,7 +367,7 @@ void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
 }
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr, u32 status_clock)
+	struct net_device *dev, const u8 *lladdr, u32 status_clock, bool perm)
 {
 	struct fib_xid_table *local_xtbl, *main_xtbl;
 	struct fib_xid_hid_main *mhid;
@@ -398,7 +399,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		goto local_xtbl;
 	}
 
-	ha = new_ha(dev, lladdr, status_clock, GFP_ATOMIC);
+	ha = new_ha(dev, lladdr, status_clock, perm, GFP_ATOMIC);
 	if (!ha) {
 		rc = -ENOMEM;
 		goto local_xtbl;
@@ -908,7 +909,7 @@ static bool pick_random_neigh(struct hid_dev *hdev)
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
 		if ((STATUS_MASK & ha->remote_sc) == ALIVE)
 			some_neigh_alive = true;
-		if (i++ == target_num &&
+		if (i++ == target_num && !ha->permanent &&
 			((STATUS_MASK & ha->remote_sc) == ALIVE)) {
 			memcpy(hdev->target, ha->ha, dev->addr_len);
 			rcu_read_unlock();
@@ -1046,10 +1047,11 @@ static void clean_neigh_list(unsigned long data)
 	do_gettimeofday(&t);
 	curr_time = (u32)t.tv_sec;
 
-	/* Remove neighbors that have failed and expired. */
+	/* Remove failed and expired neighs if they are not permanent. */
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list)
 		if (((STATUS_MASK & ha->remote_sc) == FAILED) &&
-			clockcmp32(curr_time, ha->local_c + NWP_FAILED_TTL)) {
+			clockcmp32(curr_time, ha->local_c + NWP_FAILED_TTL) &&
+			!ha->permanent) {
 			char *xid = ha->mhid->xhm_common.fx_xid;
 			remove_neigh(main_xtbl, xid, dev, ha->ha);
 		}
@@ -1168,9 +1170,12 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 		__be32 be_status_clock = __cpu_to_be32(ha->remote_sc);
 		BUG_ON(ha->dev != dev);
 
-		if (((STATUS_MASK & ha->remote_sc) == FAILED) &&
-			(clockcmp32((u32)t.tv_sec,
-			ha->local_c + NWP_LIST_TIME_MAX) > 0))
+		/* If neighbor has failed and expired or if neighbor was
+		 * manually-entered (@ha->permanent is true), then do not list.
+		 */
+		if (ha->permanent || ((clockcmp32((u32)t.tv_sec,
+			ha->local_c + NWP_LIST_TIME_MAX) > 0) && 
+			((STATUS_MASK & ha->remote_sc) == FAILED)))
 			continue;
 
 		is_new_hid = prv_mhid != mhid;
@@ -1242,7 +1247,8 @@ static void read_announcement(struct sk_buff *skb)
 		}
 		/* Ignore errors. */
 		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr,
-			ALIVE | (CLOCK_MASK & __be32_to_cpu(nwp->clock)));
+			ALIVE | (CLOCK_MASK & __be32_to_cpu(nwp->clock)),
+			false);
 		xid = next_xid;
 		count--;
 	}
@@ -1337,7 +1343,7 @@ static int process_neigh_list(struct sk_buff *skb)
 			}
 
 			insert_neigh(hid_ctx, xid, dev, haddr_or_xid,
-				status_clock);
+				status_clock, false);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;

@@ -87,6 +87,12 @@ struct hrdw_addr {
 	 * All bits: local wall time (seconds). */
 	u32			local_c;
 
+	/* If @permanent is true, this neighbor cannot be removed from the
+	 * neighbor list. Note: there are three bytes of alignment space
+	 * after @permanent in this struct.
+	 */
+	bool			permanent;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
@@ -125,7 +131,7 @@ static inline void mhid_put(struct fib_xid_hid_main *mhid)
 void hid_deferred_negdep(struct net *net, struct xia_xid *xid);
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr, u32 status_clock);
+	struct net_device *dev, const u8 *lladdr, u32 status_clock, bool perm);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	struct net_device *dev, const u8 *lladdr);

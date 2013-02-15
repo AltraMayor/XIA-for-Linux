@@ -168,8 +168,11 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	if (cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
 		return -EINVAL;
 
+	/* NWP Monitoring is not applicable to a manually-inserted neighbor.
+	 * Therefore, the @status_clock argument is meaningless here.
+	 */
 	return insert_neigh(ctx_hid(ctx), cfg->xfc_dst->xid_id, cfg->xfc_odev,
-		cfg->xfc_lladdr, 0);
+		cfg->xfc_lladdr, 0, true);
 }
 
 static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
