@@ -78,6 +78,21 @@ struct hrdw_addr {
 	struct xip_dst_anchor	anchor;
 	struct rcu_head		rcu_head;
 
+	/* Remote status and clock.
+	 * Bits 0-30: remote wall time (seconds).
+	 * Bit 31: 1 for alive, 0 for failed. */
+	u32			remote_sc;
+
+	/* Local clock.
+	 * All bits: local wall time (seconds). */
+	u32			local_c;
+
+	/* If @permanent is true, this neighbor cannot be removed from the
+	 * neighbor list. Note: there are three bytes of alignment space
+	 * after @permanent in this struct.
+	 */
+	bool			permanent;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
@@ -116,7 +131,7 @@ static inline void mhid_put(struct fib_xid_hid_main *mhid)
 void hid_deferred_negdep(struct net *net, struct xia_xid *xid);
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr);
+	struct net_device *dev, const u8 *lladdr, u32 status_clock, bool perm);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	struct net_device *dev, const u8 *lladdr);
@@ -137,6 +152,36 @@ struct hid_dev {
 	atomic_t		neigh_cnt;
 	spinlock_t		neigh_lock; /* Lock for the neighs list. */
 	struct list_head	neighs;
+
+	/* Periodically expires to start a new monitoring interval which
+	 * lasts for NWP_INTERVAL. */
+	struct timer_list	monitor_timer;
+	/* Periodically expires to clean the neighbor list of failed nodes
+	 * that have been failed for at least NWP_FAILED_TTL.
+	 */
+	struct timer_list	clean_timer;
+
+	/* Set to true if currently running monitoring algorithm; this avoids
+	 * trying to start the monitoring algorithm if it is already occurring.
+	 */
+	bool			monitoring;
+	/* Set to true if any investigative neighbors respond with an
+	 * NWP_TYPE_REQ_ACK packet during the monitoring interval. If none
+	 * reply, a network partition may have occurred.
+	 */
+	bool			any_neighs_replied;
+	/* Set to true if a network partition is diagnosed and the current
+	 * target has been remonitored. A target can be remonitored at most
+	 * once.
+	 */
+	bool			remonitored;
+	/* Set to true if the monitoring algorithm is currently in the
+	 * investigative stage.
+	 */
+	bool			investigating;
+
+	/* Hardware address of target currently being monitored. */
+	u8			target[MAX_ADDR_LEN];
 };
 
 static inline struct hid_dev *__hid_dev_get_rcu(const struct net_device *dev)
