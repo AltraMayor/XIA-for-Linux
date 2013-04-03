@@ -369,8 +369,7 @@ static struct xia_socket_proc *find_sproc_locked(xid_type_t ty,
 	struct hlist_head *head)
 {
 	struct xia_socket_proc *sproc;
-	struct hlist_node *p;
-	hlist_for_each_entry(sproc, p, head, list)
+	hlist_for_each_entry(sproc, head, list)
 		if (sproc->ppal_type == ty)
 			return sproc;
 	return NULL;
@@ -380,8 +379,7 @@ static struct xia_socket_proc *find_sproc_rcu(xid_type_t ty,
 	struct hlist_head *head)
 {
 	struct xia_socket_proc *sproc;
-	struct hlist_node *p;
-	hlist_for_each_entry_rcu(sproc, p, head, list)
+	hlist_for_each_entry_rcu(sproc, head, list)
 		if (sproc->ppal_type == ty)
 			return sproc;
 	return NULL;

@@ -619,14 +619,14 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 
 	int i;
 	struct xip_dst *xdst;
-	struct hlist_node *pos, *n;
+	struct hlist_node *n;
 	struct hlist_head roots[XIA_OUTDEGREE_MAX];
 
 	memset(roots, 0, sizeof(roots));
 
 	lock_anchor(anchor);
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
-		hlist_for_each_entry_safe(xdst, pos, n, &anchor->heads[i],
+		hlist_for_each_entry_safe(xdst, n, &anchor->heads[i],
 			anchors[i].list_node) {
 			if (!filter(xdst, i, arg))
 				continue;
@@ -657,7 +657,7 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 
 	/* Free @xdst's that we hold refcount. */
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
-		hlist_for_each_entry_safe(xdst, pos, n, &roots[i],
+		hlist_for_each_entry_safe(xdst, n, &roots[i],
 			anchors[i].list_node) {
 			hlist_del(&xdst->anchors[i].list_node);
 			xdst_rcu_free(xdst);
@@ -746,8 +746,7 @@ static struct xip_route_proc *find_rproc_locked(xid_type_t ty,
 	struct hlist_head *head)
 {
 	struct xip_route_proc *rproc;
-	struct hlist_node *p;
-	hlist_for_each_entry(rproc, p, head, xrp_list)
+	hlist_for_each_entry(rproc, head, xrp_list)
 		if (rproc->xrp_ppal_type == ty)
 			return rproc;
 	return NULL;
@@ -757,8 +756,7 @@ static struct xip_route_proc *find_rproc_rcu(xid_type_t ty,
 	struct hlist_head *head)
 {
 	struct xip_route_proc *rproc;
-	struct hlist_node *p;
-	hlist_for_each_entry_rcu(rproc, p, head, xrp_list)
+	hlist_for_each_entry_rcu(rproc, head, xrp_list)
 		if (rproc->xrp_ppal_type == ty)
 			return rproc;
 	return NULL;
