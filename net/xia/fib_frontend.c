@@ -156,10 +156,9 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 	aindex = xtbl_branch_index(xtbl, abranch);
 	for (i = cb->args[3]; i < divisor; i++, first_j = 0) {
 		struct fib_xid *fxid;
-		struct hlist_node *p;
 		struct hlist_head *head = &abranch->buckets[i];
 		j = 0;
-		hlist_for_each_entry_rcu(fxid, p, head,
+		hlist_for_each_entry_rcu(fxid, head,
 			fx_branch_list[aindex]) {
 			if (j < first_j)
 				goto next;
@@ -209,11 +208,10 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 
 	for (i = cb->args[0]; i < NUM_PRINCIPAL_HINT; i++, first_j = 0) {
 		struct xip_ppal_ctx *ctx;
-		struct hlist_node *p;
 		struct hlist_head *head = &net->xia.fib_ctx.ppal[i];
 		j = 0;
 		rcu_read_lock();
-		hlist_for_each_entry_rcu(ctx, p, head, xpc_list) {
+		hlist_for_each_entry_rcu(ctx, head, xpc_list) {
 			if (j < first_j)
 				goto next;
 			if (dumped)
