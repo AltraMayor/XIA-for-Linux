@@ -36,6 +36,14 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct xip_hid_ctx *hid_ctx;
 	int rc;
 
+	/* XXX Once local and main tables are unified, the NLM_F_* flags
+	 * should be supported. Right now, the extra complexity is not
+	 * worth it given that there's no user for them.
+	 */
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE) ||
+		!(cfg->xfc_nlflags & NLM_F_EXCL))
+		return -EOPNOTSUPP;
+
 	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
 	if (!def_upd)
 		return -ENOMEM;
@@ -161,6 +169,14 @@ static const struct xia_ppal_rt_eops hid_rt_eops_local = {
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
+	/* XXX Once local and main tables are unified, the NLM_F_* flags
+	 * should be supported. Right now, the extra complexity is not
+	 * worth it given that there's no user for them.
+	 */
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE) ||
+		!(cfg->xfc_nlflags & NLM_F_EXCL))
+		return -EOPNOTSUPP;
+
 	if (!cfg->xfc_odev)
 		return -EINVAL;
 	if (!cfg->xfc_lladdr)

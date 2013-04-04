@@ -45,38 +45,65 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *local_xtbl, struct xia_fib_config *cfg)
 {
 	struct deferred_xip_update *def_upd;
+	struct fib_xid_ad_local *new_lad, *cur_lad;
 	const u8 *id;
-	struct fib_xid_ad_local *lad;
+	u32 local_bucket;
 	int rc;
+
+	/* Allocate memory before acquiring lock because we can sleep now. */
 
 	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
 	if (!def_upd)
 		return -ENOMEM;
 
-	lad = kmalloc(sizeof(*lad), GFP_KERNEL);
-	if (!lad) {
+	new_lad = kmalloc(sizeof(*new_lad), GFP_KERNEL);
+	if (!new_lad) {
 		rc = -ENOMEM;
 		goto def_upd;
 	}
-
 	id = cfg->xfc_dst->xid_id;
-	init_fxid(&lad->common, id);
-	xdst_init_anchor(&lad->anchor);
+	init_fxid(&new_lad->common, id);
+	xdst_init_anchor(&new_lad->anchor);
 
-	rc = fib_add_fxid(local_xtbl, &lad->common);
-	if (rc)
-		goto lad;
+	/* Acquire lock. */
+	cur_lad = fxid_lad(xia_find_xid_lock(&local_bucket, local_xtbl, id));
+
+	if (cur_lad) {
+		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
+			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock_local;
+		}
+
+		/* Replace entry.
+		 * Since local entries are identical, there's nothing to
+		 * do here.
+		 */
+		rc = 0;
+		goto unlock_local;
+	}
+
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_local;
+	}
+
+	/* Add new entry. */
+
+	BUG_ON(fib_add_fxid_locked(local_bucket, local_xtbl, &new_lad->common));
+	fib_unlock_bucket(local_xtbl, local_bucket);
 
 	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @lad, wait an RCU synchronization to make sure that
-	 * every thread see @lad.
+	 * migrate to @new_lad, wait an RCU synchronization to make sure that
+	 * every thread see @new_lad.
 	 */
 	fib_defer_xip_upd(def_upd, local_deferred_negdep,
 		xtbl_net(local_xtbl), XIDTYPE_AD, id);
 	return 0;
 
-lad:
-	free_fxid(local_xtbl, &lad->common);
+unlock_local:
+	fib_unlock_bucket(local_xtbl, local_bucket);
+	free_fxid(local_xtbl, &new_lad->common);
 def_upd:
 	fib_free_xip_upd(def_upd);
 	return rc;
@@ -196,45 +223,81 @@ static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
 	rcu_read_unlock();
 }
 
-static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
+static int main_newroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *main_xtbl, struct xia_fib_config *cfg)
 {
 	struct deferred_xip_update *def_upd;
+	struct fib_xid_ad_main *new_mad, *cur_mad;
 	const u8 *id;
-	struct fib_xid_ad_main *mad;
+	u32 main_bucket;
 	int rc;
 
 	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_AD)
 		return -EINVAL;
 
+	/* Allocate memory before acquiring lock because we can sleep now. */
+
 	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
 	if (!def_upd)
 		return -ENOMEM;
 
-	mad = kzalloc(sizeof(*mad), GFP_KERNEL);
-	if (!mad) {
+	new_mad = kmalloc(sizeof(*new_mad), GFP_KERNEL);
+	if (!new_mad) {
 		rc = -ENOMEM;
 		goto def_upd;
 	}
-
 	id = cfg->xfc_dst->xid_id;
-	init_fxid(&mad->common, id);
-	mad->gw = *cfg->xfc_gw;
+	init_fxid(&new_mad->common, id);
+	new_mad->gw = *cfg->xfc_gw;
 
-	rc = fib_add_fxid(xtbl, &mad->common);
-	if (rc)
-		goto mad;
+	/* Acquire lock. */
+	cur_mad = fxid_mad(xia_find_xid_lock(&main_bucket, main_xtbl, id));
+
+	if (cur_mad) {
+		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
+			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock_main;
+		}
+
+		/* Replace entry. */
+
+		rc = 0;
+		if (!memcmp(&cur_mad->gw, &new_mad->gw, sizeof(cur_mad->gw))) {
+			/* Since main entries are identical,
+			 * there's nothing to do here.
+			 */
+			goto unlock_main;
+		} else {
+			fib_replace_fxid_locked(main_xtbl, &cur_mad->common,
+				&new_mad->common);
+			fib_unlock_bucket(main_xtbl, main_bucket);
+			free_fxid(main_xtbl, &cur_mad->common);
+			goto def_upd;
+		}
+	}
+
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_main;
+	}
+
+	/* Add new entry. */
+
+	BUG_ON(fib_add_fxid_locked(main_bucket, main_xtbl, &new_mad->common));
+	fib_unlock_bucket(main_xtbl, main_bucket);
 
 	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @mad, wait an RCU synchronization to make sure that
-	 * every thread see @mad.
+	 * migrate to @new_mad, wait an RCU synchronization to make sure that
+	 * every thread see @new_mad.
 	 */
 	fib_defer_xip_upd(def_upd, main_deferred_negdep,
-		xtbl_net(xtbl), XIDTYPE_AD, id);
+		xtbl_net(main_xtbl), XIDTYPE_AD, id);
 	return 0;
 
-mad:
-	free_fxid(xtbl, &mad->common);
+unlock_main:
+	fib_unlock_bucket(main_xtbl, main_bucket);
+	free_fxid(main_xtbl, &new_mad->common);
 def_upd:
 	fib_free_xip_upd(def_upd);
 	return rc;
