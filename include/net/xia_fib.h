@@ -222,7 +222,7 @@ void xip_release_ppal_ctx(struct xip_ppal_ctx *ctx);
 
 /** xip_add_ppal_ctx - Add @ctx to @fib_ctx.
  * RETURN
- *	-ESRCH in case of another @ctx of same type already exists in @fib_ctx.
+ *	-EEXIST in case of another @ctx of same type already exists in @fib_ctx.
  *	0 on success.
  * NOTE
  *	This function does not take any lock because it is expected to be only
@@ -243,7 +243,7 @@ struct xip_ppal_ctx *xip_del_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
 
 /** init_xid_table - create a new XID table of id @tbl_id in @ctx.
  * RETURN
- *	-ESRCH in case an XID table of id @tbl_id already exists.
+ *	-EEXIST in case an XID table of id @tbl_id already exists.
  *	0 on success.
  * NOTE
  *	@ctx should be in no struct fib_xip_ppal_ctx!
@@ -376,7 +376,7 @@ int xia_iterate_xids(struct fib_xid_table *xtbl,
 
 /** fib_add_fxid - Add @fxid into @xtbl.
  * RETURN
- *	-ESRCH in case an fxid with same XID is already in @xtbl.
+ *	-EEXIST in case an fxid with same XID is already in @xtbl.
  *	0 on success.
  */
 int fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
@@ -408,6 +408,21 @@ void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
  *	It returns the fxid with same @xid on success, otherwise NULL.
  */
 struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
+
+/** Replace @old_fxid to @new_fxid.
+ *
+ * NOTE
+ *	@old_fxid MUST be in @xtbl.
+ *
+ *	@new_fxid MUST not be in any table.
+ *
+ *	@old_fix MUST be released by caller.
+ *
+ *	BE VERY CAREFUL when calling this function because if the needed lock
+ *	is not held, it may corrupt @xtbl!
+ */
+void fib_replace_fxid_locked(struct fib_xid_table *xtbl,
+	struct fib_xid *old_fxid, struct fib_xid *new_fxid);
 
 void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 	__releases(xip_bucket_lock);
