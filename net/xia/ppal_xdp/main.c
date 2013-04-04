@@ -181,45 +181,82 @@ static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
 	rcu_read_unlock();
 }
 
-static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
+static int main_newroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *main_xtbl, struct xia_fib_config *cfg)
 {
 	struct deferred_xip_update *def_upd;
+	struct fib_xid_xdp_main *new_mxdp, *cur_mxdp;
 	const u8 *id;
-	struct fib_xid_xdp_main *mxdp;
+	u32 main_bucket;
 	int rc;
 
 	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_XDP)
 		return -EINVAL;
 
+	/* Allocate memory before acquiring lock because we can sleep now. */
+
 	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
 	if (!def_upd)
 		return -ENOMEM;
 
-	mxdp = kmalloc(sizeof(*mxdp), GFP_KERNEL);
-	if (!mxdp) {
+	new_mxdp = kmalloc(sizeof(*new_mxdp), GFP_KERNEL);
+	if (!new_mxdp) {
 		rc = -ENOMEM;
 		goto def_upd;
 	}
-
 	id = cfg->xfc_dst->xid_id;
-	init_fxid(&mxdp->common, id);
-	mxdp->gw = *cfg->xfc_gw;
+	init_fxid(&new_mxdp->common, id);
+	new_mxdp->gw = *cfg->xfc_gw;
 
-	rc = fib_add_fxid(xtbl, &mxdp->common);
-	if (rc)
-		goto mxdp;
+	/* Acquire lock. */
+	cur_mxdp = fxid_mxdp(xia_find_xid_lock(&main_bucket, main_xtbl, id));
+
+	if (cur_mxdp) {
+		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
+			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock_main;
+		}
+
+		/* Replace entry. */
+
+		rc = 0;
+		if (!memcmp(&cur_mxdp->gw, &new_mxdp->gw,
+			sizeof(cur_mxdp->gw))) {
+			/* Since main entries are identical,
+			 * there's nothing to do here.
+			 */
+			goto unlock_main;
+		} else {
+			fib_replace_fxid_locked(main_xtbl, &cur_mxdp->common,
+				&new_mxdp->common);
+			fib_unlock_bucket(main_xtbl, main_bucket);
+			free_fxid(main_xtbl, &cur_mxdp->common);
+			goto def_upd;
+		}
+	}
+
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_main;
+	}
+
+	/* Add new entry. */
+
+	BUG_ON(fib_add_fxid_locked(main_bucket, main_xtbl, &new_mxdp->common));
+	fib_unlock_bucket(main_xtbl, main_bucket);
 
 	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @mxdp, wait an RCU synchronization to make sure that
-	 * every thread see @mxdp.
+	 * migrate to @new_mxdp, wait an RCU synchronization to make sure that
+	 * every thread see @new_mxdp.
 	 */
 	fib_defer_xip_upd(def_upd, main_deferred_negdep,
-		xtbl_net(xtbl), XIDTYPE_XDP, id);
+		xtbl_net(main_xtbl), XIDTYPE_XDP, id);
 	return 0;
 
-mxdp:
-	free_fxid(xtbl, &mxdp->common);
+unlock_main:
+	fib_unlock_bucket(main_xtbl, main_bucket);
+	free_fxid(main_xtbl, &new_mxdp->common);
 def_upd:
 	fib_free_xip_upd(def_upd);
 	return rc;

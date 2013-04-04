@@ -613,6 +613,16 @@ void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 EXPORT_SYMBOL_GPL(fib_rm_fxid);
 
+void fib_replace_fxid_locked(struct fib_xid_table *xtbl,
+	struct fib_xid *old_fxid, struct fib_xid *new_fxid)
+{
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int aindex = xtbl_branch_index(xtbl, abranch);
+	hlist_replace_rcu(&old_fxid->fx_branch_list[aindex],
+		&new_fxid->fx_branch_list[aindex]);
+}
+EXPORT_SYMBOL_GPL(fib_replace_fxid_locked);
+
 int fib_default_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
