@@ -1,6 +1,5 @@
 config XIA_PPAL_HID
 	tristate "Host Principal (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
 	default m
 	help
 	  Host (HID) Principal is essential to route in XIA.

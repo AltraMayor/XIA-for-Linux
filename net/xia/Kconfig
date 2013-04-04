@@ -1,6 +1,5 @@
 config XIA
 	tristate "eXpressive Internet Architecture (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
 	default n
 	help
 	  eXpressive Internet Architecture (XIA) is a new network stack
