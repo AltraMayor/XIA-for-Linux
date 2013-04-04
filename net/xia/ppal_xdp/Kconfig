@@ -1,6 +1,5 @@
 config XIA_PPAL_XDP
 	tristate "XDP Principal (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
 	default m
 	help
 	  XDP (eXpressive Datagram Protocol) principal provides
