@@ -11,13 +11,13 @@ struct xia_lock_table {
 static inline void xia_lock_table_lock(struct xia_lock_table *lock_table,
 	u32 hash)
 {
-	spin_lock(&lock_table->locks[hash & lock_table->mask]);
+	spin_lock_bh(&lock_table->locks[hash & lock_table->mask]);
 }
 
 static inline void xia_lock_table_unlock(struct xia_lock_table *lock_table,
 	u32 hash)
 {
-	spin_unlock(&lock_table->locks[hash & lock_table->mask]);
+	spin_unlock_bh(&lock_table->locks[hash & lock_table->mask]);
 }
 
 /* Constants to be used as the second parameter of xia_lock_table_init. */
