@@ -34,7 +34,7 @@ struct fib_xip_ppal_ctx {
  */
 struct xip_dst_table {
 	struct dst_entry	*buckets[XIP_DST_TABLE_SIZE];
-	u32			last_bucket; /* Used for garbage collection. */
+	atomic_t		last_bucket; /* Used for garbage collection. */
 };
 
 struct netns_xia {
