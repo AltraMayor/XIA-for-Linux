@@ -10,8 +10,6 @@
  *	Route cache (DST)
  */
 
-static int xip_dst_gc(struct dst_ops *ops);
-
 static struct dst_entry *xip_dst_check(struct dst_entry *dst, u32 cookie)
 {
 	return NULL;
@@ -63,7 +61,7 @@ static void xip_update_pmtu(struct dst_entry *dst, struct sock *sk,
 	struct sk_buff *skb, u32 mtu)
 {
 	if (mtu < dst_mtu(dst)) {
-		mtu = max_t(u32, mtu, XIP_MIN_MTU);
+		mtu = max_t(typeof(mtu), mtu, XIP_MIN_MTU);
 		dst_metric_set(dst, RTAX_MTU, mtu);
 	}
 }
@@ -73,6 +71,8 @@ static struct neighbour *xip_neigh_lookup(const struct dst_entry *dst,
 {
 	return ERR_PTR(-EINVAL);
 }
+
+static int xip_dst_gc(struct dst_ops *ops);
 
 struct dst_ops xip_dst_ops_template __read_mostly = {
 	.family =		AF_XIA,
@@ -178,13 +178,9 @@ static void xdst_unlock_bucket(struct net *net, u32 bucket) __releases(bucket)
 	xia_lock_table_unlock(&xia_main_lock_table, hash_bucket(net, bucket));
 }
 
-static void detach_anchors(struct xip_dst *xdst);
-
-/* DO NOT call this function! Call xdst_free or xdst_rcu_free instead. */
-static void xdst_free_common(struct xip_dst *xdst)
+/* DO NOT call this function! Call xdst_free() or xdst_rcu_free() instead. */
+static inline void xdst_free_begin(struct xip_dst *xdst)
 {
-	detach_anchors(xdst);
-
 	xdst->dst.obsolete = DST_OBSOLETE_KILL;
 
 	/* XXX The following cleanup isn't really safe, but DST's interface
@@ -196,25 +192,44 @@ static void xdst_free_common(struct xip_dst *xdst)
 	xdst->dst.output = dst_discard;
 }
 
-/* DO NOT wait for RCU synchonization.
- * BE CAREFUL with this funtion!
- */
-static inline void xdst_free(struct xip_dst *xdst)
+static void detach_anchors(struct xip_dst *xdst);
+
+/* DO NOT call this function! Call xdst_free() or xdst_rcu_free() instead. */
+static inline void xdst_free_end(struct xip_dst *xdst)
 {
-	xdst_free_common(xdst);
+	detach_anchors(xdst);
 	xdst_put(xdst);
 }
 
+/* @xdst must not be in any DST table!
+ *
+ * This function does NOT wait for RCU synchronization, so BE CAREFUL with it!
+ * If RCU synchronization is needed, call xdst_rcu_free().
+ *
+ * Given that this function will call xdst_free_end() -> detach_anchors(),
+ * one would be better advised to check detach_anchors()'s calling constraints.
+ * If this is an issue, call xdst_rcu_free() instead.
+ */
+static void xdst_free(struct xip_dst *xdst)
+{
+	xdst_free_begin(xdst);
+	xdst_free_end(xdst);
+}
+
+/* DO NOT call this function! Call xdst_rcu_free() instead. */
 static void _xdst_rcu_free(struct rcu_head *head)
 {
 	struct xip_dst *xdst = container_of(head, struct xip_dst, dst.rcu_head);
-	xdst_put(xdst);
+	xdst_free_end(xdst);
 }
 
-/* Wait for RCU synchonization. */
+/* @xdst must not be in any DST table!
+ *
+ * This function waits for RCU synchonization before releasing @xdst.
+ */
 static inline void xdst_rcu_free(struct xip_dst *xdst)
 {
-	xdst_free_common(xdst);
+	xdst_free_begin(xdst);
 	call_rcu(&xdst->dst.rcu_head, _xdst_rcu_free);
 }
 
@@ -448,29 +463,27 @@ EXPORT_SYMBOL_GPL(clear_xdst_table);
 static int xip_dst_gc(struct dst_ops *ops)
 {
 	struct net *net;
-	int entries;
 	u32 bucket;
 	struct dst_entry **pdsth;
 
-	entries = dst_entries_get_fast(ops);
-	if (entries < ops->gc_thresh)
-		return 0;
-
+	/* Get @bucket. */
 	net = dstops_net(ops);
-	bucket = net->xia.xip_dst_table.last_bucket;
 	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_DST_TABLE_SIZE);
-	net->xia.xip_dst_table.last_bucket = (bucket + 1) &
+	bucket = atomic_inc_return(&net->xia.xip_dst_table.last_bucket) &
 		(XIP_DST_TABLE_SIZE - 1);
 
+	/* Clean @bucket. */
 	xdst_lock_bucket(net, bucket);
 	pdsth = &net->xia.xip_dst_table.buckets[bucket];
 	while (*pdsth) {
 		struct dst_entry **pnext = &(*pdsth)->next;
 		if (atomic_read(&(*pdsth)->__refcnt) == 1) {
+			struct dst_entry *freeable_dst = *pdsth;
 			rcu_assign_pointer(*pdsth, *pnext);
-			xdst_rcu_free(dst_xdst(*pdsth));
+			xdst_rcu_free(dst_xdst(freeable_dst));
+		} else {
+			pdsth = pnext;
 		}
-		pdsth = pnext;
 	}
 	xdst_unlock_bucket(net, bucket);
 
@@ -504,16 +517,16 @@ void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
 	struct xip_dst_anchor *anchor)
 {
 	lock_anchor(anchor);
-	if (cmpxchg(&xdst->anchors[index].anchor, NULL, anchor) != NULL)
-		BUG();
+	BUG_ON(cmpxchg(&xdst->anchors[index].anchor, NULL, anchor) != NULL);
 	hlist_add_head(&xdst->anchors[index].list_node, &anchor->heads[index]);
 	unlock_anchor(anchor);
 }
 EXPORT_SYMBOL_GPL(xdst_attach_to_anchor);
 
 /* NOTE
- *	IMPORTANT! Don't call this function holding a lock on a bucket!
- *	This may lead to a deadlock with function xdst_free_anchor_f.
+ *	IMPORTANT! Don't call this function holding a lock on a bucket of
+ *	the DST table! This may lead to a deadlock with
+ *	function xdst_free_anchor_f.
  *
  *	IMPORTANT! Don't call this function holding a lock on an anchor!
  *	This may lead to a deadlock.
@@ -535,9 +548,8 @@ static void detach_anchors(struct xip_dst *xdst)
 			/* @xdst is still attached. */
 			BUG_ON(anchor != reread);
 			hlist_del(&xdst->anchors[i].list_node);
-			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
-				anchor)
-				BUG();
+			BUG_ON(cmpxchg(&xdst->anchors[i].anchor, anchor, NULL)
+				!= anchor);
 		}
 		unlock_anchor(anchor);
 	}
@@ -613,55 +625,41 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 	 *		they have already being in a DST table once.
 	 *	2. Caller waited for a RCU synchronization. This is required
 	 *		to implement assumption 1; see function choose_an_edge.
-	 *	3. @anchor is not reachable from somewhere else but from
-	 *		the @xdst's that point to it.
 	 */
 
 	int i;
-	struct xip_dst *xdst;
-	struct hlist_node *n;
-	struct hlist_head roots[XIA_OUTDEGREE_MAX];
-
-	memset(roots, 0, sizeof(roots));
 
 	lock_anchor(anchor);
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
+		struct xip_dst *xdst;
+		struct hlist_node *n;
 		hlist_for_each_entry_safe(xdst, n, &anchor->heads[i],
 			anchors[i].list_node) {
+			int held;
+
 			if (!filter(xdst, i, arg))
 				continue;
 
+			/* Remove @xdst from a DST table if it's there. */
+			held = del_xdst_and_hold(xdst);
+
+			/* Release @anchor in @xdst. */
 			hlist_del(&xdst->anchors[i].list_node);
-			if (del_xdst_and_hold(xdst)) {
+			BUG_ON(cmpxchg(&xdst->anchors[i].anchor, anchor, NULL)
+				!= anchor);
+
+			if (held) {
 				/* We are responsable for freeing @xdst. */
-				hlist_add_head(&xdst->anchors[i].list_node,
-					&roots[i]);
+				xdst_rcu_free(xdst);
 			} else {
 				/* We don't have a refcount to @xdst, and
 				 * assumption 1 guarantees that somebody
 				 * else is going to release @xdst.
 				 */
 			}
-
-			/* Releasing @anchor. */
-			if (cmpxchg(&xdst->anchors[i].anchor, anchor, NULL) !=
-				anchor)
-				BUG();
 		}
 	}
 	unlock_anchor(anchor);
-
-	/* Assumption 3 guarantees that, at this point, nobody will add
-	 * an @xdst to @anchor now that the lock was released.
-	 */
-
-	/* Free @xdst's that we hold refcount. */
-	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
-		hlist_for_each_entry_safe(xdst, n, &roots[i],
-			anchors[i].list_node) {
-			hlist_del(&xdst->anchors[i].list_node);
-			xdst_rcu_free(xdst);
-		}
 }
 
 static int filter_none(struct xip_dst *xdst, int anchor_index, void *arg)

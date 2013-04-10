@@ -173,7 +173,7 @@ void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
 
 static inline struct xip_dst *dst_xdst(struct dst_entry *dst)
 {
-	return dst ? container_of(dst, struct xip_dst, dst) : NULL;
+	return likely(dst) ? container_of(dst, struct xip_dst, dst) : NULL;
 }
 
 static inline struct xip_dst *skb_xdst(struct sk_buff *skb)
@@ -195,7 +195,9 @@ extern struct dst_ops xip_dst_ops_template;
 static inline struct net *dstops_net(struct dst_ops *ops)
 {
 	BUG_ON(ops == &xip_dst_ops_template);
-	return container_of(ops, struct net, xia.xip_dst_ops);
+	return likely(ops)
+		? container_of(ops, struct net, xia.xip_dst_ops)
+		: NULL;
 }
 
 static inline struct net *xdst_net(struct xip_dst *xdst)
