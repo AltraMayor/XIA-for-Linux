@@ -481,6 +481,8 @@ static int xip_dst_gc(struct dst_ops *ops)
 			struct dst_entry *freeable_dst = *pdsth;
 			rcu_assign_pointer(*pdsth, *pnext);
 			xdst_rcu_free(dst_xdst(freeable_dst));
+			xdst_unlock_bucket(net, bucket);
+			return 0;
 		} else {
 			pdsth = pnext;
 		}
