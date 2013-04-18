@@ -202,7 +202,8 @@ void *dst_alloc(struct dst_ops *ops, struct net_device *dev,
 {
 	struct dst_entry *dst;
 
-	if (ops->gc && dst_entries_get_fast(ops) > ops->gc_thresh) {
+	if (ops->gc && !(flags & DST_NOCOUNT) &&
+		dst_entries_get_fast(ops) > ops->gc_thresh) {
 		if (ops->gc(ops))
 			return NULL;
 	}
