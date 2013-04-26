@@ -169,9 +169,14 @@ static int alloc_buckets(struct fib_xid_buckets *branch, size_t num)
 {
 	struct hlist_head *buckets;
 	size_t size = sizeof(*buckets) * num;
-	buckets = vmalloc(size);
-	if (!buckets)
-		return -ENOMEM;
+	buckets = kmalloc(size, GFP_KERNEL);
+	if (unlikely(!buckets)) {
+		buckets = vmalloc(size);
+		if (!buckets)
+			return -ENOMEM;
+		pr_warn("XIP %s: the kernel is running out of memory and/or memory is too fragmented. Allocated virtual memory for now; hopefully, it's going to gracefully degrade packet forwarding performance.\n",
+			__func__);
+	}
 	memset(buckets, 0, size);
 	branch->buckets = buckets;
 	branch->divisor = num;
@@ -181,7 +186,10 @@ static int alloc_buckets(struct fib_xid_buckets *branch, size_t num)
 /* This function must be called in process context due to virtual memory. */
 static inline void free_buckets(struct fib_xid_buckets *branch)
 {
-	vfree(branch->buckets);
+	if (unlikely(is_vmalloc_addr(branch->buckets)))
+		vfree(branch->buckets);
+	else
+		kfree(branch->buckets);
 	branch->buckets = NULL;
 	branch->divisor = 0;
 }
