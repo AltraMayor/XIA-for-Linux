@@ -464,7 +464,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 {
 	struct net *net;
 	u32 bucket;
-	struct dst_entry **pdsth;
+	struct dst_entry **pdsth, **p_chosen_dsth;
 
 	/* Get @bucket. */
 	net = dstops_net(ops);
@@ -472,20 +472,27 @@ static int xip_dst_gc(struct dst_ops *ops)
 	bucket = atomic_inc_return(&net->xia.xip_dst_table.last_bucket) &
 		(XIP_DST_TABLE_SIZE - 1);
 
-	/* Clean @bucket. */
+	/* Choose an entry in @bucket to release. */
+	p_chosen_dsth = NULL;
 	xdst_lock_bucket(net, bucket);
 	pdsth = &net->xia.xip_dst_table.buckets[bucket];
 	while (*pdsth) {
-		struct dst_entry **pnext = &(*pdsth)->next;
 		if (atomic_read(&(*pdsth)->__refcnt) == 1) {
-			struct dst_entry *freeable_dst = *pdsth;
-			rcu_assign_pointer(*pdsth, *pnext);
-			xdst_rcu_free(dst_xdst(freeable_dst));
-			xdst_unlock_bucket(net, bucket);
-			return 0;
-		} else {
-			pdsth = pnext;
+			if (unlikely(!p_chosen_dsth))
+				p_chosen_dsth = pdsth;
+			else if (time_after((*p_chosen_dsth)->lastuse,
+					(*pdsth)->lastuse) &&
+				(*p_chosen_dsth)->__use > (*pdsth)->__use)
+				p_chosen_dsth =  pdsth;
 		}
+		pdsth = &(*pdsth)->next;
+	}
+	if (p_chosen_dsth) {
+		struct dst_entry *freeable_dst = *p_chosen_dsth;
+		rcu_assign_pointer(*p_chosen_dsth, (*p_chosen_dsth)->next);
+		xdst_rcu_free(dst_xdst(freeable_dst));
+		xdst_unlock_bucket(net, bucket);
+		return 0;
 	}
 	xdst_unlock_bucket(net, bucket);
 
@@ -1083,6 +1090,9 @@ tail_call:
 		/* Record that we're going for a recursion. */
 		select_edge(plast_node, *plast_row, chosen_edge);
 
+		/* Let the garbagge collector know that @xdst is being used. */
+		dst_use_noref(&xdst->dst, jiffies);
+
 		*plast_row = next_row;
 		xdst_hint = NULL;
 		goto tail_call;
@@ -1187,6 +1197,8 @@ tail_call:
 
 ret_xdst:
 	xdst_hold(xdst);
+	/* Let the garbagge collector know that @xdst is being used. */
+	dst_use_noref(&xdst->dst, jiffies);
 out:
 	rcu_read_unlock();
 	return xdst;
