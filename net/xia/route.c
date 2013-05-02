@@ -178,9 +178,13 @@ static void xdst_unlock_bucket(struct net *net, u32 bucket) __releases(bucket)
 	xia_lock_table_unlock(&xia_main_lock_table, hash_bucket(net, bucket));
 }
 
+static void detach_anchors(struct xip_dst *xdst);
+
 /* DO NOT call this function! Call xdst_free() or xdst_rcu_free() instead. */
 static inline void xdst_free_begin(struct xip_dst *xdst)
 {
+	detach_anchors(xdst);
+
 	xdst->dst.obsolete = DST_OBSOLETE_KILL;
 
 	/* XXX The following cleanup isn't really safe, but DST's interface
@@ -192,23 +196,21 @@ static inline void xdst_free_begin(struct xip_dst *xdst)
 	xdst->dst.output = dst_discard;
 }
 
-static void detach_anchors(struct xip_dst *xdst);
-
 /* DO NOT call this function! Call xdst_free() or xdst_rcu_free() instead. */
 static inline void xdst_free_end(struct xip_dst *xdst)
 {
-	detach_anchors(xdst);
 	xdst_put(xdst);
 }
 
 /* @xdst must not be in any DST table!
  *
- * This function does NOT wait for RCU synchronization, so BE CAREFUL with it!
- * If RCU synchronization is needed, call xdst_rcu_free().
+ * IMPORTANT: this function does NOT wait for RCU synchronization,
+ * so BE CAREFUL with it! If RCU synchronization is needed,
+ * call xdst_rcu_free() instead.
  *
- * Given that this function will call xdst_free_end() -> detach_anchors(),
- * one would be better advised to check detach_anchors()'s calling constraints.
- * If this is an issue, call xdst_rcu_free() instead.
+ * IMPORTANT: given that this function will call xdst_free_begin(),
+ * which, in turn, calls detach_anchors(), one would be better off checking
+ * detach_anchors()'s calling constraints.
  */
 static void xdst_free(struct xip_dst *xdst)
 {
@@ -226,6 +228,10 @@ static void _xdst_rcu_free(struct rcu_head *head)
 /* @xdst must not be in any DST table!
  *
  * This function waits for RCU synchonization before releasing @xdst.
+ *
+ * IMPORTANT: given that this function will call xdst_free_begin(),
+ * which, in turn, calls detach_anchors(), one would be better off checking
+ * detach_anchors()'s calling constraints.
  */
 static inline void xdst_rcu_free(struct xip_dst *xdst)
 {
@@ -490,8 +496,8 @@ static int xip_dst_gc(struct dst_ops *ops)
 	if (p_chosen_dsth) {
 		struct dst_entry *freeable_dst = *p_chosen_dsth;
 		rcu_assign_pointer(*p_chosen_dsth, (*p_chosen_dsth)->next);
-		xdst_rcu_free(dst_xdst(freeable_dst));
 		xdst_unlock_bucket(net, bucket);
+		xdst_rcu_free(dst_xdst(freeable_dst));
 		return 0;
 	}
 	xdst_unlock_bucket(net, bucket);
@@ -632,16 +638,19 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 	 *	1. All @xdst's to be found here are in a DST table, or
 	 *		is being removed by somebody else, that is,
 	 *		they have already being in a DST table once.
-	 *	2. Caller waited for a RCU synchronization. This is required
+	 *	2. Caller waited for an RCU synchronization. This is required
 	 *		to implement assumption 1; see function choose_an_edge.
 	 */
 
 	int i;
+	struct xip_dst *xdst;
+	struct hlist_node *n;
+	struct hlist_head roots[XIA_OUTDEGREE_MAX];
+
+	memset(roots, 0, sizeof(roots));
 
 	lock_anchor(anchor);
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
-		struct xip_dst *xdst;
-		struct hlist_node *n;
 		hlist_for_each_entry_safe(xdst, n, &anchor->heads[i],
 			anchors[i].list_node) {
 			int held;
@@ -659,7 +668,8 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 
 			if (held) {
 				/* We are responsable for freeing @xdst. */
-				xdst_rcu_free(xdst);
+				hlist_add_head(&xdst->anchors[i].list_node,
+					&roots[i]);
 			} else {
 				/* We don't have a refcount to @xdst, and
 				 * assumption 1 guarantees that somebody
@@ -669,6 +679,16 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 		}
 	}
 	unlock_anchor(anchor);
+
+	/* It is important to release @xdst's only after the main loop above
+	 * to avoid a deadlock at @anchor.
+	 */
+	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
+		hlist_for_each_entry_safe(xdst, n, &roots[i],
+			anchors[i].list_node) {
+			hlist_del(&xdst->anchors[i].list_node);
+			xdst_rcu_free(xdst);
+		}
 }
 
 static int filter_none(struct xip_dst *xdst, int anchor_index, void *arg)
