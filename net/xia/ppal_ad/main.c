@@ -2,6 +2,7 @@
 #include <net/xia_fib.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
+#include <net/xia_vxidty.h>
 
 /* Autonomous Domain Principal */
 #define XIDTYPE_AD (__cpu_to_be32(0x10))
@@ -489,9 +490,15 @@ static int __init xia_ad_init(void)
 {
 	int rc;
 
+	rc = vxt_register_xidty(XIDTYPE_AD);
+	if (rc < 0) {
+		pr_err("Can't obtain a virtual XID type for AD\n");
+		goto out;
+	}
+
 	rc = xia_register_pernet_subsys(&ad_net_ops);
 	if (rc)
-		goto out;
+		goto vxt;
 
 	rc = xip_add_router(&ad_rt_proc);
 	if (rc)
@@ -508,6 +515,8 @@ route:
 	xip_del_router(&ad_rt_proc);
 net:
 	xia_unregister_pernet_subsys(&ad_net_ops);
+vxt:
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_AD));
 out:
 	return rc;
 }
@@ -520,6 +529,7 @@ static void __exit xia_ad_exit(void)
 	ppal_del_map(XIDTYPE_AD);
 	xip_del_router(&ad_rt_proc);
 	xia_unregister_pernet_subsys(&ad_net_ops);
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_AD));
 
 	rcu_barrier();
 

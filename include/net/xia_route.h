@@ -3,11 +3,6 @@
 
 #include <net/xia.h>
 
-#ifdef __KERNEL__
-#include <net/dst.h>
-#include <net/netns/xia.h>
-#endif
-
 #define XIP_MIN_MTU	1024
 
 struct xiphdr {
@@ -83,6 +78,8 @@ struct xip_dst_cachinfo {
 };
 
 #ifdef __KERNEL__
+
+#include <net/dst.h>
 
 static inline struct xiphdr *xip_hdr(const struct sk_buff *skb)
 {
@@ -262,9 +259,6 @@ enum XRP_ACTION {
 
 /* Route processing per principal. */
 struct xip_route_proc {
-	/* Attachment to bucket list. */
-	struct hlist_node	xrp_list;
-
 	/* Principal type. */
 	xid_type_t		xrp_ppal_type;
 
@@ -277,12 +271,20 @@ struct xip_route_proc {
 };
 
 /** xip_add_router - Add @rproc to XIA routing mechanism.
+ *
  * RETURN
  *	Zero on success; otherwise a negative error number.
+ *
+ * NOTE
+ *	The XID type must be registered with virtual XID types.
  */
 int xip_add_router(struct xip_route_proc *rproc);
 
-/** xip_add_router - Remove @rproc from XIA routing mechanism. */
+/** xip_add_router - Remove @rproc from XIA routing mechanism.
+ *
+ * NOTE
+ *	The XID type must be registered with virtual XID types.
+ */
 void xip_del_router(struct xip_route_proc *rproc);
 
 struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,

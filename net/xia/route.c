@@ -1,9 +1,10 @@
 #include <linux/export.h>
-#include <net/ip_vs.h> /* Needed for skb_net(). */
+#include <net/ip_vs.h>		/* Needed for skb_net(). */
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
-#include <net/xia_output.h> /* Needed for __xip_local_out(). */
-#include <net/xia_socket.h> /* Needed for copy_n_and_shade_xia_addr(). */
+#include <net/xia_output.h>	/* Needed for __xip_local_out(). */
+#include <net/xia_socket.h>	/* Needed for copy_n_and_shade_xia_addr(). */
+#include <net/xia_vxidty.h>
 #include <net/xia_route.h>
 
 /*
@@ -760,34 +761,8 @@ EXPORT_SYMBOL_GPL(xdst_invalidate_redirect);
  *	Principal routing
  */
 
-static DEFINE_SPINLOCK(ppal_lock);
-static struct hlist_head principals[NUM_PRINCIPAL_HINT];
-
-static inline struct hlist_head *ppalhead(xid_type_t ty)
-{
-	BUILD_BUG_ON_NOT_POWER_OF_2(NUM_PRINCIPAL_HINT);
-	return &principals[__be32_to_cpu(ty) & (NUM_PRINCIPAL_HINT - 1)];
-}
-
-static struct xip_route_proc *find_rproc_locked(xid_type_t ty,
-	struct hlist_head *head)
-{
-	struct xip_route_proc *rproc;
-	hlist_for_each_entry(rproc, head, xrp_list)
-		if (rproc->xrp_ppal_type == ty)
-			return rproc;
-	return NULL;
-}
-
-static struct xip_route_proc *find_rproc_rcu(xid_type_t ty,
-	struct hlist_head *head)
-{
-	struct xip_route_proc *rproc;
-	hlist_for_each_entry_rcu(rproc, head, xrp_list)
-		if (rproc->xrp_ppal_type == ty)
-			return rproc;
-	return NULL;
-}
+static DEFINE_MUTEX(ppal_mutex);
+static struct xip_route_proc *principals[XIP_MAX_XID_TYPES] __read_mostly;
 
 /* Implement negative dependency for unknown principals. */
 struct xip_negdep_route_proc {
@@ -820,12 +795,6 @@ static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
 	return XRP_ACT_NEXT_EDGE;
 }
 
-/* Return struct xip_route_proc associated to @ty, or NULL otherwise. */
-static inline struct xip_route_proc *get_the_rproc_rcu(const xid_type_t ty)
-{
-	return find_rproc_rcu(ty, ppalhead(ty));
-}
-
 /* Return struct xip_route_proc associated to @ty.
  *
  * If it doesn't exist, returns @negdep_rproc.rproc to deal with
@@ -836,8 +805,17 @@ static inline struct xip_route_proc *get_the_rproc_rcu(const xid_type_t ty)
  */
 static inline struct xip_route_proc *get_an_rproc_rcu(const xid_type_t ty)
 {
-	struct xip_route_proc *rproc = get_the_rproc_rcu(ty);
-	return rproc ? rproc : &negdep_rproc.rproc;
+	int vxt = xt_to_vxt_rcu(ty);
+	if (likely(vxt >= 0)) {
+		struct xip_route_proc *rproc = rcu_dereference(principals[vxt]);
+		/* We do not assume that @rproc must be available even
+		 * when @vxt >= 0 because virtual XID types may exist
+		 * before an @rproc is registered.
+		 */
+		if (likely(rproc))
+			return rproc;
+	}
+	return &negdep_rproc.rproc;
 }
 
 static int deliver_rcu(struct net *net, const struct xia_xid *xid,
@@ -894,15 +872,19 @@ static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
 int xip_add_router(struct xip_route_proc *rproc)
 {
 	xid_type_t ty = rproc->xrp_ppal_type;
-	struct hlist_head *head = ppalhead(ty);
+	int vxt = xt_to_vxt(ty);
 
-	spin_lock(&ppal_lock);
-	if (find_rproc_locked(ty, head)) {
-		spin_unlock(&ppal_lock);
+	if (unlikely(vxt < 0))
+		return -EINVAL;
+
+	mutex_lock(&ppal_mutex);
+
+	if (principals[vxt]) {
+		BUG_ON(principals[vxt]->xrp_ppal_type != ty);
+		mutex_unlock(&ppal_mutex);
 		return -EEXIST;
 	}
-	hlist_add_head_rcu(&rproc->xrp_list, head);
-	spin_unlock(&ppal_lock);
+	rcu_assign_pointer(principals[vxt], rproc);
 
 	/* One has to synchronize RCU here because another thread may have
 	 * a reference to @negdep_rproc obtained from get_an_rproc_rcu() to
@@ -912,37 +894,34 @@ int xip_add_router(struct xip_route_proc *rproc)
 	 */
 	synchronize_rcu();
 
-	spin_lock(&ppal_lock);
-	if (!find_rproc_locked(ty, head)) {
-		/* Another thread removed @rproc before we could add @rproc,
-		 * so we're done.
-		 */
-		goto out;
-	}
-
-	/* From here @rproc cannot be removed before we finish, and no
-	 * dependency to principal of type @ty can be added to @negdep_rproc.
+	/* From here, no dependency to principal of type @ty can be added to
+	 * @negdep_rproc.
 	 */
 
 	/* Free all negative dependencies on unknown principals.
-	 * One can't just filter XDST entries whose type is @ty because
+	 * One cannot just filter XDST entries whose type is @ty because
 	 * those entries may have come from redirects, that is,
 	 * their types are known and different of @ty.
 	 */
 	xdst_free_anchor(&negdep_rproc.anchor);
 
-out:
-	spin_unlock(&ppal_lock);
+	mutex_unlock(&ppal_mutex);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xip_add_router);
 
 void xip_del_router(struct xip_route_proc *rproc)
 {
+	int vxt;
+
 	BUG_ON(rproc == &negdep_rproc.rproc);
-	spin_lock(&ppal_lock);
-	hlist_del_rcu(&rproc->xrp_list);
-	spin_unlock(&ppal_lock);
+	vxt = xt_to_vxt(rproc->xrp_ppal_type);
+	BUG_ON(vxt < 0);
+
+	mutex_lock(&ppal_mutex);
+	BUG_ON(principals[vxt] != rproc);
+	RCU_INIT_POINTER(principals[vxt], NULL);
+	mutex_unlock(&ppal_mutex);
 	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(xip_del_router);
