@@ -5,7 +5,7 @@
 obj-$(CONFIG_XIA) += xia.o
 
 xia-objs :=	main.o socket.o dag.o locktbl.o fib.o fib_frontend.o route.o \
-		output.o
+		output.o vxidty.o
 
 obj-$(CONFIG_XIA_PPAL_AD) += ppal_ad/
 obj-$(CONFIG_XIA_PPAL_HID) += ppal_hid/

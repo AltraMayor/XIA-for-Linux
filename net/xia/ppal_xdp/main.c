@@ -7,6 +7,7 @@
 #include <net/xia_dag.h>
 #include <net/xia_socket.h>
 #include <net/xia_output.h>
+#include <net/xia_vxidty.h>
 #include <net/xia_xdp.h>
 
 /*
@@ -1142,9 +1143,15 @@ static int __init xia_xdp_init(void)
 	sysctl_xdp_mem[1] = limit;
 	sysctl_xdp_mem[2] = sysctl_xdp_mem[0] * 2;
 
+	rc = vxt_register_xidty(XIDTYPE_XDP);
+	if (rc < 0) {
+		pr_err("Can't obtain a virtual XID type for XDP\n");
+		goto out;
+	}
+
 	rc = xia_register_pernet_subsys(&xdp_net_ops);
 	if (rc)
-		goto out;
+		goto vxt;
 
 	rc = xip_add_router(&xdp_rt_proc);
 	if (rc)
@@ -1167,6 +1174,8 @@ route:
 	xip_del_router(&xdp_rt_proc);
 net:
 	xia_unregister_pernet_subsys(&xdp_net_ops);
+vxt:
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_XDP));
 out:
 	return rc;
 }
@@ -1181,6 +1190,7 @@ static void __exit xia_xdp_exit(void)
 	xip_del_router(&xdp_rt_proc);
 	xia_unregister_pernet_subsys(&xdp_net_ops);
 	xia_del_socket_end(&xdp_sock_proc);
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_XDP));
 
 	rcu_barrier();
 

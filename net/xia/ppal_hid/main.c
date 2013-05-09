@@ -1,6 +1,7 @@
 #include <linux/module.h>
 #include <net/xia_dag.h>
 #include <net/xia_output.h>
+#include <net/xia_vxidty.h>
 #include <net/xia_hid.h>
 
 /*
@@ -558,9 +559,15 @@ static int __init xia_hid_init(void)
 {
 	int rc;
 
+	rc = vxt_register_xidty(XIDTYPE_HID);
+	if (rc < 0) {
+		pr_err("Can't obtain a virtual XID type for HID\n");
+		goto out;
+	}
+
 	rc = xia_lock_table_init(&localhid_locktbl, XIA_LTBL_SPREAD_SMALL);
 	if (rc < 0)
-		goto out;
+		goto vxt;
 
 	rc = xia_register_pernet_subsys(&hid_net_ops);
 	if (rc)
@@ -589,6 +596,8 @@ net:
 	xia_unregister_pernet_subsys(&hid_net_ops);
 locktbl:
 	xia_lock_table_finish(&localhid_locktbl);
+vxt:
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_HID));
 out:
 	return rc;
 }
@@ -607,6 +616,7 @@ static void __exit xia_hid_exit(void)
 	flush_scheduled_work();
 
 	xia_lock_table_finish(&localhid_locktbl);
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_HID));
 	pr_alert("XIA Principal HID UNloaded\n");
 }
 
