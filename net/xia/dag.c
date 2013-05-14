@@ -30,7 +30,7 @@ struct ppal_node {
 };
 
 /* This constant must be a power of 2. */
-#define PPAL_MAP_SIZE	NUM_PRINCIPAL_HINT
+#define PPAL_MAP_SIZE	128
 
 #ifdef __KERNEL__
 static DEFINE_SPINLOCK(map_lock);

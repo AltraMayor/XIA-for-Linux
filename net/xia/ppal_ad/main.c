@@ -23,6 +23,8 @@ static inline struct xip_ad_ctx *ctx_ad(struct xip_ppal_ctx *ctx)
 		: NULL;
 }
 
+static int my_vxt __read_mostly = -1;
+
 /*
  *	Local AD table
  */
@@ -191,8 +193,10 @@ static void local_deferred_negdep(struct net *net, struct xia_xid *xid)
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_ad_main *mad;
 
+	BUG_ON(xid->xid_type != XIDTYPE_AD);
+
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type);
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 	if (unlikely(!ctx)) {
 		/* Principal is unloading. */
 		goto out;
@@ -214,9 +218,10 @@ static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
 {
 	struct xip_ad_ctx *ad_ctx;
 
+	BUG_ON(xid->xid_type != XIDTYPE_AD);
+
 	rcu_read_lock();
-	ad_ctx = ctx_ad(
-		xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type));
+	ad_ctx = ctx_ad(xip_find_ppal_ctx_vxt_rcu(net, my_vxt));
 	if (likely(ad_ctx)) {
 		/* Flush all @negdep due to XID redirects. */
 		xdst_free_anchor(&ad_ctx->negdep);
@@ -409,7 +414,7 @@ static int __net_init ad_net_init(struct net *net)
 	if (rc)
 		goto ad_ctx;
 
-	rc = xip_add_ppal_ctx(&net->xia.fib_ctx, &ad_ctx->ctx);
+	rc = xip_add_ppal_ctx(net, &ad_ctx->ctx);
 	if (rc)
 		goto ad_ctx;
 	goto out;
@@ -423,7 +428,7 @@ out:
 static void __net_exit ad_net_exit(struct net *net)
 {
 	struct xip_ad_ctx *ad_ctx =
-		ctx_ad(xip_del_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_AD));
+		ctx_ad(xip_del_ppal_ctx(net, XIDTYPE_AD));
 	free_ad_ctx(ad_ctx);
 }
 
@@ -447,7 +452,7 @@ static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct fib_xid_ad_main *mad;
 
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_AD);
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 	BUG_ON(!ctx);
 
 	/* Is it a local AD? */
@@ -495,6 +500,7 @@ static int __init xia_ad_init(void)
 		pr_err("Can't obtain a virtual XID type for AD\n");
 		goto out;
 	}
+	my_vxt = rc;
 
 	rc = xia_register_pernet_subsys(&ad_net_ops);
 	if (rc)
