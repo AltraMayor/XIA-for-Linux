@@ -7,25 +7,11 @@
 
 #include <net/dst_ops.h>
 
-/* Hash of principals.
- * It has to be power of 2.
- * Until one has a significant number of principals, or a way to instantiate
- * them in userland, a fixed arrary is enough.
- */
-#define NUM_PRINCIPAL_HINT	128
-
-/* XIP Principal Context
- *
- * Principals that need to link data to struct net, should do so using
- * the struct defined below. It avoids messing the struct netns_xia, and
- * simplifies loading and unloading of principals.
- */
-struct fib_xip_ppal_ctx {
-	struct hlist_head	ppal[NUM_PRINCIPAL_HINT];
-};
+/* Maximum number of XID types recognized at the same time. */
+#define XIP_MAX_XID_TYPES	8
 
 /* It must be a power of 2. */
-#define XIP_DST_TABLE_SIZE 256
+#define XIP_DST_TABLE_SIZE	256
 
 /* XXX This data structure is definitely not perfect because
  * it does not reflect the load/capacity of a given namespace (struct net),
@@ -38,8 +24,12 @@ struct xip_dst_table {
 };
 
 struct netns_xia {
-	/* Principals should only hang data at @fib_ctx. */
-	struct fib_xip_ppal_ctx	fib_ctx;
+	/* Hash of principal contexts.
+	 * Principals that need to link data to struct net, should do so using
+	 * struct xip_ppal_ctx. It avoids messing the struct netns_xia, and
+	 * simplifies loading and unloading of principals.
+	 */
+	struct xip_ppal_ctx	*fib_ctx[XIP_MAX_XID_TYPES];
 
 	/* Route cache. */
 	struct dst_ops		xip_dst_ops;

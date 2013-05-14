@@ -17,11 +17,8 @@
 
 #include <net/xia.h>	/* xid_type_t */
 
-/* Maximum number of XID types recognized at the same time.
- * IMPORTANT: depending on the perfect hashing mechanism used, this number
- * may not be reacheable for many sets of XID types.
- */
-#define VXT_MAX_XID_TYPES	64
+/* It must be a power of 2. */
+#define XIP_VXT_TABLE_SIZE	64
 
 /* Virtual XID Type */
 struct xip_vxt_entry {
@@ -44,12 +41,11 @@ extern const struct xip_vxt_entry *xip_virtual_xid_types;
  */
 static inline int xt_to_vxt_rcu(xid_type_t ty)
 {
-	BUILD_BUG_ON_NOT_POWER_OF_2(VXT_MAX_XID_TYPES);
 	if (likely(ty > 0)) {
 		const struct xip_vxt_entry *entry =
 			&(
 				rcu_dereference(xip_virtual_xid_types)
-				[__be32_to_cpu(ty) & (VXT_MAX_XID_TYPES - 1)]
+				[__be32_to_cpu(ty) & (XIP_VXT_TABLE_SIZE - 1)]
 			);
 		if (likely(entry->xid_type == ty))
 			return entry->index;

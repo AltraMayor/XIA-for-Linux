@@ -1,6 +1,7 @@
 #include <linux/export.h>
 #include <linux/jhash.h>
 #include <net/xia_locktbl.h>
+#include <net/xia_vxidty.h>
 #include <net/xia_fib.h>
 
 /*
@@ -42,22 +43,14 @@ static void bucket_unlock(struct fib_xid_table *xtbl, u32 bucket)
  *	Principal context
  */
 
-int init_fib_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx)
+int init_fib_ppal_ctx(struct net *net)
 {
-	memset(fib_ctx, 0, sizeof(*fib_ctx));
+	memset(net->xia.fib_ctx, 0, sizeof(net->xia.fib_ctx));
 	return 0;
-}
-
-static inline struct hlist_head *ppalhead(struct fib_xip_ppal_ctx *fib_ctx,
-						xid_type_t ty)
-{
-	BUILD_BUG_ON_NOT_POWER_OF_2(NUM_PRINCIPAL_HINT);
-	return &fib_ctx->ppal[__be32_to_cpu(ty) & (NUM_PRINCIPAL_HINT - 1)];
 }
 
 int xip_init_ppal_ctx(struct xip_ppal_ctx *ctx, xid_type_t ty)
 {
-	INIT_HLIST_NODE(&ctx->xpc_list);
 	ctx->xpc_ppal_type = ty;
 	memset(ctx->xpc_xid_tables, 0, sizeof(ctx->xpc_xid_tables));
 	return 0;
@@ -67,8 +60,6 @@ EXPORT_SYMBOL_GPL(xip_init_ppal_ctx);
 void xip_release_ppal_ctx(struct xip_ppal_ctx *ctx)
 {
 	int i;
-
-	BUG_ON(!hlist_unhashed(&ctx->xpc_list));
 
 	for (i = 0; i < XRTABLE_MAX_INDEX; i++) {
 		struct fib_xid_table *xtbl = ctx->xpc_xid_tables[i];
@@ -80,85 +71,47 @@ void xip_release_ppal_ctx(struct xip_ppal_ctx *ctx)
 }
 EXPORT_SYMBOL_GPL(xip_release_ppal_ctx);
 
-static struct xip_ppal_ctx *__xip_find_ppal_ctx(
-	struct fib_xip_ppal_ctx *fib_ctx, xid_type_t ty,
-	struct hlist_head **phead)
+int xip_add_ppal_ctx(struct net *net, struct xip_ppal_ctx *ctx)
 {
-	struct xip_ppal_ctx *ctx;
-	*phead = ppalhead(fib_ctx, ty);
-	hlist_for_each_entry(ctx, *phead, xpc_list) {
-		if (ctx->xpc_ppal_type == ty)
-			return ctx;
-	}
-	return NULL;
-}
+	xid_type_t ty = ctx->xpc_ppal_type;
+	int vxt = xt_to_vxt(ty);
 
-int xip_add_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
-	struct xip_ppal_ctx *ctx)
-{
-	struct hlist_head *head;
-	if (__xip_find_ppal_ctx(fib_ctx, ctx->xpc_ppal_type, &head))
+	if (unlikely(vxt < 0))
+		return -EINVAL;
+
+	if (net->xia.fib_ctx[vxt]) {
+		BUG_ON(net->xia.fib_ctx[vxt]->xpc_ppal_type != ty);
 		return -EEXIST;
-	hlist_add_head_rcu(&ctx->xpc_list, head);
+	}
+	rcu_assign_pointer(net->xia.fib_ctx[vxt], ctx);
+		
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xip_add_ppal_ctx);
 
-struct xip_ppal_ctx *xip_del_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
-	xid_type_t ty)
+struct xip_ppal_ctx *xip_del_ppal_ctx(struct net *net, xid_type_t ty)
 {
-	struct hlist_head *head;
-	struct xip_ppal_ctx *ctx = __xip_find_ppal_ctx(fib_ctx, ty, &head);
+	int vxt = xt_to_vxt(ty);
+	struct xip_ppal_ctx *ctx;
+
+	BUG_ON(vxt < 0);
+	ctx = net->xia.fib_ctx[vxt];
 	BUG_ON(!ctx);
-	hlist_del_init_rcu(&ctx->xpc_list);
+	BUG_ON(ctx->xpc_ppal_type != ty);
+	RCU_INIT_POINTER(net->xia.fib_ctx[vxt], NULL);
 	synchronize_rcu();
 	return ctx;
 }
 EXPORT_SYMBOL_GPL(xip_del_ppal_ctx);
 
-struct xip_ppal_ctx *xip_find_ppal_ctx_rcu(
-	struct fib_xip_ppal_ctx *fib_ctx, xid_type_t ty)
+struct xip_ppal_ctx *xip_find_ppal_ctx_rcu(struct net *net, xid_type_t ty)
 {
-	struct xip_ppal_ctx *ctx;
-	struct hlist_head *head = ppalhead(fib_ctx, ty);
-	hlist_for_each_entry_rcu(ctx, head, xpc_list) {
-		if (ctx->xpc_ppal_type == ty)
-			return ctx;
-	}
-	return NULL;
+	int vxt = xt_to_vxt_rcu(ty);
+	return likely(vxt >= 0)
+		? xip_find_ppal_ctx_vxt_rcu(net, vxt)
+		: NULL;
 }
 EXPORT_SYMBOL_GPL(xip_find_ppal_ctx_rcu);
-
-struct xip_ppal_ctx *xip_find_my_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx,
-	xid_type_t ty)
-{
-	struct hlist_head *head;
-	return __xip_find_ppal_ctx(fib_ctx, ty, &head);
-}
-EXPORT_SYMBOL_GPL(xip_find_my_ppal_ctx);
-
-struct fib_xid_table *xia_find_xtbl_hold(struct fib_xip_ppal_ctx *fib_ctx,
-	xid_type_t ty, u32 tbl_id)
-{
-	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *xtbl;
-
-	rcu_read_lock();
-
-	ctx = xip_find_ppal_ctx_rcu(fib_ctx, ty);
-	if (!ctx) {
-		rcu_read_unlock();
-		return NULL;
-	}
-		
-	xtbl = ctx->xpc_xid_tables[tbl_id];
-	if (xtbl)
-		xtbl_hold(xtbl);
-
-	rcu_read_unlock();
-	return xtbl;
-}
-EXPORT_SYMBOL_GPL(xia_find_xtbl_hold);
 
 /*
  *	Routing tables
@@ -329,18 +282,16 @@ void xtbl_finish_destroy(struct fib_xid_table *xtbl)
 }
 EXPORT_SYMBOL_GPL(xtbl_finish_destroy);
 
-void release_fib_ppal_ctx(struct fib_xip_ppal_ctx *fib_ctx)
+void release_fib_ppal_ctx(struct net *net)
 {
 	int i;
 
-	for (i = 0; i < NUM_PRINCIPAL_HINT; i++) {
-		struct hlist_head *head = &fib_ctx->ppal[i];
-		struct xip_ppal_ctx *ctx;
-		if (hlist_empty(head))
+	for (i = 0; i < XIP_MAX_XID_TYPES; i++) {
+		struct xip_ppal_ctx *ctx = net->xia.fib_ctx[i];
+		if (!ctx)
 			continue;
 
-		ctx = hlist_entry(head->first, struct xip_ppal_ctx, xpc_list);
-		LIMIT_NETDEBUG(KERN_CRIT pr_fmt("BUG: Principal %x did not release its context\n"),
+		pr_crit("BUG: Principal 0x%x did not release its context\n",
 			__be32_to_cpu(ctx->xpc_ppal_type));
 		break;
 	}

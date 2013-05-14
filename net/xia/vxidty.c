@@ -8,10 +8,10 @@
 #define ULONG_SIZE_IN_BIT	(sizeof(unsigned long) * 8)
 
 static DEFINE_MUTEX(vxt_mutex);
-static unsigned long allocated_vxt[(VXT_MAX_XID_TYPES + ULONG_SIZE_IN_BIT - 1)
+static unsigned long allocated_vxt[(XIP_MAX_XID_TYPES + ULONG_SIZE_IN_BIT - 1)
 	/ ULONG_SIZE_IN_BIT];
-static struct xip_vxt_entry map1[VXT_MAX_XID_TYPES] __read_mostly;
-static struct xip_vxt_entry map2[VXT_MAX_XID_TYPES] __read_mostly;
+static struct xip_vxt_entry map1[XIP_VXT_TABLE_SIZE] __read_mostly;
+static struct xip_vxt_entry map2[XIP_VXT_TABLE_SIZE] __read_mostly;
 const struct xip_vxt_entry *xip_virtual_xid_types __read_mostly = map1;
 
 #define MAP_SIZE_IN_BYTE	(sizeof(map1))
@@ -24,7 +24,9 @@ static inline struct xip_vxt_entry *writable_current_map(void)
 static inline struct xip_vxt_entry *get_entry_locked(struct xip_vxt_entry *map,
 	xid_type_t ty)
 {
-	return &map[__be32_to_cpu(ty) & (VXT_MAX_XID_TYPES - 1)];
+	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_VXT_TABLE_SIZE);
+	BUILD_BUG_ON(XIP_VXT_TABLE_SIZE < XIP_MAX_XID_TYPES);
+	return &map[__be32_to_cpu(ty) & (XIP_VXT_TABLE_SIZE - 1)];
 }
 
 static inline struct xip_vxt_entry *next_map(void)
@@ -49,8 +51,8 @@ int vxt_register_xidty(xid_type_t ty)
 		ret = -EINVAL;
 		goto out;
 	}
-	ret = find_first_zero_bit(allocated_vxt, VXT_MAX_XID_TYPES);
-	if (ret >= VXT_MAX_XID_TYPES) {
+	ret = find_first_zero_bit(allocated_vxt, XIP_MAX_XID_TYPES);
+	if (ret >= XIP_MAX_XID_TYPES) {
 		ret = -ENOSPC;
 		goto out;
 	}
