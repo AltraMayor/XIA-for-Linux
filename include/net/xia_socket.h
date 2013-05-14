@@ -20,9 +20,6 @@ struct xia_socket_type_proc {
 struct xia_socket_proc {
 	const char		*name;
 
-	/* Attachment to bucket list. */
-	struct hlist_node	list;
-
 	/* This field is used to check that xia_del_socket_begin() and
 	 * xia_del_socket_end() are called in order.
 	 *

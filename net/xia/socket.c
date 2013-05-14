@@ -3,6 +3,7 @@
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
 #include <net/xia_route.h>
+#include <net/xia_vxidty.h>
 #include <net/xia_socket.h>
 
 /*
@@ -350,41 +351,8 @@ EXPORT_SYMBOL_GPL(xia_sendpage);
  *	Principal-socket registering
  */
 
-/* XXX This section is mostly copied from route.c for now, but
- * I expect they will diverge as both, route.c and here, will evolve in
- * different directions. If it doesn't happen, one should create
- * a library to be used by both.	-- Michel Machado
- */
-
-static DEFINE_SPINLOCK(ppal_lock);
-/* TODO Adopt perfect hashing on this table. */
-static struct hlist_head principals[XIP_MAX_XID_TYPES];
-
-static inline struct hlist_head *ppalhead(xid_type_t ty)
-{
-	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_MAX_XID_TYPES);
-	return &principals[__be32_to_cpu(ty) & (XIP_MAX_XID_TYPES - 1)];
-}
-
-static struct xia_socket_proc *find_sproc_locked(xid_type_t ty,
-	struct hlist_head *head)
-{
-	struct xia_socket_proc *sproc;
-	hlist_for_each_entry(sproc, head, list)
-		if (sproc->ppal_type == ty)
-			return sproc;
-	return NULL;
-}
-
-static struct xia_socket_proc *find_sproc_rcu(xid_type_t ty,
-	struct hlist_head *head)
-{
-	struct xia_socket_proc *sproc;
-	hlist_for_each_entry_rcu(sproc, head, list)
-		if (sproc->ppal_type == ty)
-			return sproc;
-	return NULL;
-}
+static DEFINE_MUTEX(ppal_mutex);
+static struct xia_socket_proc *principals[XIP_MAX_XID_TYPES];
 
 #define WAIT_SOCKS	5
 
@@ -405,11 +373,15 @@ static void unregister_protos(struct xia_socket_proc *sproc, int last_proc)
 
 int xia_add_socket(struct xia_socket_proc *sproc)
 {
-	xid_type_t ty = sproc->ppal_type;
-	struct hlist_head *head = ppalhead(ty);
-	int rc, last_proc;
+	xid_type_t ty;
+	int vxt, rc, last_proc;
 
 	BUG_ON(sproc->dead != 0);
+
+	ty = sproc->ppal_type;
+	vxt = xt_to_vxt(ty);
+	if (unlikely(vxt < 0))
+		return -EINVAL;
 
 	rc = percpu_counter_init(&sproc->sockets_allocated, 0);
 	if (rc)
@@ -433,17 +405,19 @@ int xia_add_socket(struct xia_socket_proc *sproc)
 	last_proc--;
 
 	/* Make it visible for new socks. */
-	spin_lock(&ppal_lock);
-	rc = -EEXIST;
-	if (find_sproc_locked(ty, head))
+	mutex_lock(&ppal_mutex);
+	if (principals[vxt]) {
+		BUG_ON(principals[vxt]->ppal_type != ty);
+		rc = -EEXIST;
 		goto lock;
-	hlist_add_head_rcu(&sproc->list, head);
-	spin_unlock(&ppal_lock);
+	}
+	rcu_assign_pointer(principals[vxt], sproc);
+	mutex_unlock(&ppal_mutex);
 	sproc->dead = 1;
 	return 0;
 
 lock:
-	spin_unlock(&ppal_lock);
+	mutex_unlock(&ppal_mutex);
 procs:
 	/* One doesn't need to wait all socks to be released because
 	 * none has been created.
@@ -457,10 +431,16 @@ EXPORT_SYMBOL_GPL(xia_add_socket);
 
 void xia_del_socket_begin(struct xia_socket_proc *sproc)
 {
+	int vxt;
+
 	BUG_ON(sproc->dead != 1);
-	spin_lock(&ppal_lock);
-	hlist_del_rcu(&sproc->list);
-	spin_unlock(&ppal_lock);
+	vxt = xt_to_vxt(sproc->ppal_type);
+	BUG_ON(vxt < 0);
+
+	mutex_lock(&ppal_mutex);
+	BUG_ON(principals[vxt] != sproc);
+	RCU_INIT_POINTER(principals[vxt], NULL);
+	mutex_unlock(&ppal_mutex);
 	synchronize_rcu();
 	sproc->dead = 2;
 }
@@ -516,21 +496,22 @@ static void xia_sock_destruct(struct sock *sk)
 static int xia_create(struct net *net, struct socket *sock,
 		int protocol, int kern)
 {
-	xid_type_t ty = __raw_cpu_to_be32(protocol);
-	struct hlist_head *head = ppalhead(ty);
 	struct xia_socket_proc *sproc;
 	const struct xia_socket_type_proc *stproc;
 	struct proto *chosen_prot;
 	struct sock *sk;
 	struct xia_sock *xia;
-	int rc;
+	xid_type_t ty;
+	int rc, vxt;
 
 	sock->state = SS_UNCONNECTED;
 
 	/* Look for the requested type/protocol pair. */
 	rc = -ESOCKTNOSUPPORT;
+	ty = __raw_cpu_to_be32(protocol);
 	rcu_read_lock();
-	sproc = find_sproc_rcu(ty, head);
+	vxt = xt_to_vxt_rcu(ty);
+	sproc = likely(vxt >= 0) ? rcu_dereference(principals[vxt]) : NULL;
 	if (!sproc)
 		goto out_rcu_unlock;
 	stproc = sproc->procs[sock->type];
