@@ -357,12 +357,13 @@ EXPORT_SYMBOL_GPL(xia_sendpage);
  */
 
 static DEFINE_SPINLOCK(ppal_lock);
-static struct hlist_head principals[NUM_PRINCIPAL_HINT];
+/* TODO Adopt perfect hashing on this table. */
+static struct hlist_head principals[XIP_MAX_XID_TYPES];
 
 static inline struct hlist_head *ppalhead(xid_type_t ty)
 {
-	BUILD_BUG_ON_NOT_POWER_OF_2(NUM_PRINCIPAL_HINT);
-	return &principals[__be32_to_cpu(ty) & (NUM_PRINCIPAL_HINT - 1)];
+	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_MAX_XID_TYPES);
+	return &principals[__be32_to_cpu(ty) & (XIP_MAX_XID_TYPES - 1)];
 }
 
 static struct xia_socket_proc *find_sproc_locked(xid_type_t ty,

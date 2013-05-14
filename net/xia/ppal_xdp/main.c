@@ -25,6 +25,8 @@ static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
 		: NULL;
 }
 
+static int my_vxt __read_mostly = -1;
+
 /*
  *	Local XDP table
  */
@@ -172,9 +174,10 @@ static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
 {
 	struct xip_xdp_ctx *xdp_ctx;
 
+	BUG_ON(xid->xid_type != XIDTYPE_XDP);
+
 	rcu_read_lock();
-	xdp_ctx = ctx_xdp(xip_find_ppal_ctx_rcu(&net->xia.fib_ctx,
-		xid->xid_type));
+	xdp_ctx = ctx_xdp(xip_find_ppal_ctx_vxt_rcu(net, my_vxt));
 	if (likely(xdp_ctx)) {
 		/* Flush all @negdep due to XID redirects. */
 		xdst_free_anchor(&xdp_ctx->negdep);
@@ -368,7 +371,7 @@ static int __net_init xdp_net_init(struct net *net)
 	if (rc)
 		goto xdp_ctx;
 
-	rc = xip_add_ppal_ctx(&net->xia.fib_ctx, &xdp_ctx->ctx);
+	rc = xip_add_ppal_ctx(net, &xdp_ctx->ctx);
 	if (rc)
 		goto xdp_ctx;
 	goto out;
@@ -382,7 +385,7 @@ out:
 static void __net_exit xdp_net_exit(struct net *net)
 {
 	struct xip_xdp_ctx *xdp_ctx =
-		ctx_xdp(xip_del_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_XDP));
+		ctx_xdp(xip_del_ppal_ctx(net, XIDTYPE_XDP));
 	free_xdp_ctx(xdp_ctx);
 }
 
@@ -462,7 +465,7 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct fib_xid_xdp_main *mxdp;
 
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 	BUG_ON(!ctx);
 
 	/* Is it a local XDP (i.e. a listening socket)?
@@ -943,8 +946,10 @@ static void local_deferred_negdep(struct net *net, struct xia_xid *xid)
 	struct fib_xid_table *main_xtbl;
 	struct fib_xid_xdp_main *mxdp;
 
+	BUG_ON(xid->xid_type != XIDTYPE_XDP);
+
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type);
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 	if (unlikely(!ctx)) {
 		/* Principal is unloading. */
 		goto out;
@@ -988,7 +993,7 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 
 	net = sock_net(sk);
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_XDP);
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 	BUG_ON(!ctx);
 	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	BUG_ON(!local_xtbl);
@@ -1036,8 +1041,9 @@ static void xdp_unhash(struct sock *sk)
 {
 	struct xia_sock *xia = xia_sk(sk);
 	struct net *net;
-	struct fib_xid_xdp_local *lxdp;
+	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *local_xtbl;
+	struct fib_xid_xdp_local *lxdp;
 
 	if (!xia_sk_bound(xia))
 		return;
@@ -1047,8 +1053,9 @@ static void xdp_unhash(struct sock *sk)
 	sock_prot_inuse_add(net, sk->sk_prot, -1);
 
 	/* Remove from routing table. */
-	local_xtbl = xia_find_xtbl_hold(&net->xia.fib_ctx, XIDTYPE_XDP,
-		XRTABLE_LOCAL_INDEX);
+	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
+	BUG_ON(!ctx);
+	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
 	BUG_ON(!local_xtbl);
 	lxdp = xiask_lxdp(xia);
 	fib_rm_fxid(local_xtbl, &lxdp->fxid);
@@ -1058,7 +1065,6 @@ static void xdp_unhash(struct sock *sk)
 	/* We must wait here because, @lxdp may be reused before RCU synchs.*/
 	synchronize_rcu();
 	free_fxid_norcu(local_xtbl, &lxdp->fxid);
-	xtbl_put(local_xtbl);
 }
 
 static long sysctl_xdp_mem[3] __read_mostly;
@@ -1148,6 +1154,7 @@ static int __init xia_xdp_init(void)
 		pr_err("Can't obtain a virtual XID type for XDP\n");
 		goto out;
 	}
+	my_vxt = rc;
 
 	rc = xia_register_pernet_subsys(&xdp_net_ops);
 	if (rc)

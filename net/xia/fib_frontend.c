@@ -92,7 +92,7 @@ static int xip_rtm_froute(int to_add, struct sk_buff *skb,
 		return -EINVAL;
 
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, cfg.xfc_dst->xid_type);
+	ctx = xip_find_ppal_ctx_rcu(net, cfg.xfc_dst->xid_type);
 	if (!ctx) {
 		rcu_read_unlock();
 		return -EXTYNOSUPPORT;
@@ -147,7 +147,7 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 {
 	struct fib_xid_buckets *abranch;
 	long i, j = 0;
-	long first_j = cb->args[4];
+	long first_j = cb->args[3];
 	int dumped = 0;
 	int divisor, aindex;
 	int rc;
@@ -155,7 +155,7 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 	abranch = rcu_dereference(xtbl->fxt_active_branch);
 	divisor = abranch->divisor;
 	aindex = xtbl_branch_index(xtbl, abranch);
-	for (i = cb->args[3]; i < divisor; i++, first_j = 0) {
+	for (i = cb->args[2]; i < divisor; i++, first_j = 0) {
 		struct fib_xid *fxid;
 		struct hlist_head *head = &abranch->buckets[i];
 		j = 0;
@@ -164,7 +164,7 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 			if (j < first_j)
 				goto next;
 			if (dumped)
-				clear_cb_from(cb, 5);
+				clear_cb_from(cb, 4);
 			rc = xtbl->fxt_eops->dump_fxid(
 				fxid, xtbl, ctx, skb, cb);
 			if (rc < 0)
@@ -177,8 +177,8 @@ next:
 
 	rc = skb->len;
 out:
-	cb->args[3] = i;
-	cb->args[4] = j;
+	cb->args[2] = i;
+	cb->args[3] = j;
 	return rc;
 }
 
@@ -189,12 +189,12 @@ static int xip_fib_dump_tbls_rcu(struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	int dumped = 0;
 	int rc;
 
-	for (i = cb->args[2]; i < XRTABLE_MAX_INDEX; i++) {
+	for (i = cb->args[1]; i < XRTABLE_MAX_INDEX; i++) {
 		struct fib_xid_table *xtbl = ctx->xpc_xid_tables[i];
 		if (!xtbl)
 			continue;
 		if (dumped)
-			clear_cb_from(cb, 3);
+			clear_cb_from(cb, 2);
 		rc = xia_fib_dump_xtbl_rcu(xtbl, ctx, skb, cb);
 		if (rc < 0)
 			goto out;
@@ -203,40 +203,30 @@ static int xip_fib_dump_tbls_rcu(struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 
 	rc = skb->len;
 out:
-	cb->args[2] = i;
+	cb->args[1] = i;
 	return rc;
 }
 
 static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct net *net = sock_net(skb->sk);
-	long i, j = 0;
-	long first_j = cb->args[1];
+	long i;
 	int dumped = 0;
 
-	for (i = cb->args[0]; i < NUM_PRINCIPAL_HINT; i++, first_j = 0) {
-		struct xip_ppal_ctx *ctx;
-		struct hlist_head *head = &net->xia.fib_ctx.ppal[i];
-		j = 0;
-		rcu_read_lock();
-		hlist_for_each_entry_rcu(ctx, head, xpc_list) {
-			if (j < first_j)
-				goto next;
-			if (dumped)
-				clear_cb_from(cb, 2);
-			if (xip_fib_dump_tbls_rcu(ctx, skb, cb) < 0) {
-				rcu_read_unlock();
-				goto out;
-			}
-			dumped = 1;
-next:
-			j++;
-		}
-		rcu_read_unlock();
+	rcu_read_lock();
+	for (i = cb->args[0]; i < XIP_MAX_XID_TYPES; i++) {
+		struct xip_ppal_ctx *ctx = xip_find_ppal_ctx_vxt_rcu(net, i);
+		if (!ctx)
+			continue;
+		if (dumped)
+			clear_cb_from(cb, 1);
+		if (xip_fib_dump_tbls_rcu(ctx, skb, cb) < 0)
+			break;
+		dumped = 1;
 	}
-out:
+	rcu_read_unlock();
+
 	cb->args[0] = i;
-	cb->args[1] = j;
 	return skb->len;
 }
 
@@ -338,12 +328,12 @@ static int xip_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 
 static int __net_init fib_net_init(struct net *net)
 {
-	return init_fib_ppal_ctx(&net->xia.fib_ctx);
+	return init_fib_ppal_ctx(net);
 }
 
 static void __net_exit fib_net_exit(struct net *net)
 {
-	release_fib_ppal_ctx(&net->xia.fib_ctx);
+	release_fib_ppal_ctx(net);
 }
 
 static struct pernet_operations fib_net_ops __read_mostly = {

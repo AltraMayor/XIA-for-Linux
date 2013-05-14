@@ -179,7 +179,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 
 	ASSERT_RTNL();
 
-	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	ctx = xip_find_my_ppal_ctx_vxt(net, hid_vxt);
 	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
 
 	while (1) {
@@ -224,9 +224,10 @@ void hid_deferred_negdep(struct net *net, struct xia_xid *xid)
 {
 	struct xip_hid_ctx *hid_ctx;
 
+	BUG_ON(xid->xid_type != XIDTYPE_HID);
+
 	rcu_read_lock();
-	hid_ctx = ctx_hid(
-		xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, xid->xid_type));
+	hid_ctx = ctx_hid(xip_find_ppal_ctx_vxt_rcu(net, hid_vxt));
 	if (likely(hid_ctx)) {
 		/* Flush all @negdep due to XID redirects. */
 		xdst_free_anchor(&hid_ctx->negdep);
@@ -740,7 +741,7 @@ static void read_announcement(struct sk_buff *skb)
 	u8 *xid;
 
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
-	hid_ctx = ctx_hid(xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
+	hid_ctx = ctx_hid(xip_find_my_ppal_ctx_vxt(net, hid_vxt));
 	count = nwp->hid_count;
 	xid = skb->data;
 	while (count > 0) {
@@ -781,7 +782,7 @@ static int process_announcement(struct sk_buff *skb)
 	 */
 
 	/* Obtain @me. */
-	ctx = xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID);
+	ctx = xip_find_my_ppal_ctx_vxt(net, hid_vxt);
 	me = xia_get_fxid_count(ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX]);
 
 	hdev = hid_dev_get(dev);
@@ -811,7 +812,7 @@ static int process_neigh_list(struct sk_buff *skb)
 	nwp = (struct neighs_hdr *)skb_network_header(skb);
 	xid = skb_pull(skb, hdr_len);
 
-	hid_ctx = ctx_hid(xip_find_my_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
+	hid_ctx = ctx_hid(xip_find_my_ppal_ctx_vxt(net, hid_vxt));
 	hid_count = nwp->hid_count;
 	while (hid_count > 0) {
 		u8 *haddr_or_xid = skb_pull(skb, XIA_XID_MAX + 1);

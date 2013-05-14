@@ -4,6 +4,9 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_hid.h>
 
+/* HID's virtal XID type. */
+int hid_vxt __read_mostly = -1;
+
 /*
  *	Local HID table
  */
@@ -332,7 +335,7 @@ static int __net_init hid_net_init(struct net *net)
 	if (rc)
 		goto hid_ctx;
 
-	rc = xip_add_ppal_ctx(&net->xia.fib_ctx, &hid_ctx->ctx);
+	rc = xip_add_ppal_ctx(net, &hid_ctx->ctx);
 	if (rc)
 		goto release_state;
 	goto out;
@@ -348,7 +351,7 @@ out:
 static void __net_exit hid_net_exit(struct net *net)
 {
 	struct xip_hid_ctx *hid_ctx =
-		ctx_hid(xip_del_ppal_ctx(&net->xia.fib_ctx, XIDTYPE_HID));
+		ctx_hid(xip_del_ppal_ctx(net, XIDTYPE_HID));
 	hid_release_hid_state(hid_ctx);
 	free_hid_ctx(hid_ctx);
 }
@@ -492,7 +495,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct hrdw_addr *ha;
 
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(&net->xia.fib_ctx, XIDTYPE_HID);
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, hid_vxt);
 	BUG_ON(!ctx);
 
 	/* It is a local HID? */
@@ -564,6 +567,7 @@ static int __init xia_hid_init(void)
 		pr_err("Can't obtain a virtual XID type for HID\n");
 		goto out;
 	}
+	hid_vxt = rc;
 
 	rc = xia_lock_table_init(&localhid_locktbl, XIA_LTBL_SPREAD_SMALL);
 	if (rc < 0)

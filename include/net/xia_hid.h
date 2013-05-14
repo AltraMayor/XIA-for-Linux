@@ -59,6 +59,8 @@ static inline struct xip_hid_ctx *ctx_hid(struct xip_ppal_ctx *ctx)
 		: NULL;
 }
 
+extern int hid_vxt;
+
 /*
  *	Neighborhood Watch Protocol (NWP)
  *
