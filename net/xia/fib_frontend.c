@@ -75,8 +75,7 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 	return 0;
 }
 
-static int xip_rtm_froute(int to_add, struct sk_buff *skb,
-	struct nlmsghdr *nlh, void *arg)
+static int xip_rtm_froute(int to_add, struct sk_buff *skb, struct nlmsghdr *nlh)
 {
 	struct net *net = sock_net(skb->sk);
 	struct xia_fib_config cfg;
@@ -110,10 +109,9 @@ static int xip_rtm_froute(int to_add, struct sk_buff *skb,
 	return rc;
 }
 
-static int xip_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
-	void *arg)
+static int xip_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
-	return xip_rtm_froute(1, skb, nlh, arg);
+	return xip_rtm_froute(1, skb, nlh);
 }
 
 static inline int is_cloned(const struct nlmsghdr *nlh)
@@ -123,8 +121,7 @@ static inline int is_cloned(const struct nlmsghdr *nlh)
 			RTM_F_CLONED;
 }
 
-static int xip_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
-	void *arg)
+static int xip_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
 	if (is_cloned(nlh)) {
 		struct net *net = sock_net(skb->sk);
@@ -132,7 +129,7 @@ static int xip_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh,
 		return 0;
 	}
 
-	return xip_rtm_froute(0, skb, nlh, arg);
+	return xip_rtm_froute(0, skb, nlh);
 }
 
 static inline void clear_cb_from(struct netlink_callback *cb, int from)
