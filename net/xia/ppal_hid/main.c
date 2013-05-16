@@ -8,7 +8,7 @@
 int hid_vxt __read_mostly = -1;
 
 /*
- *	Local HID table
+ *	Local HIDs
  */
 
 struct fib_xid_hid_local {
@@ -30,83 +30,42 @@ static inline struct fib_xid_hid_local *fxid_lhid(struct fib_xid *fxid)
 }
 
 static int local_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *local_xtbl, struct xia_fib_config *cfg)
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
-	struct deferred_xip_update *def_upd;
 	struct fib_xid_hid_local *lhid;
-	const u8 *id;
-	struct fib_xid_table *main_xtbl;
-	u32 local_bucket, main_bucket;
-	struct xip_hid_ctx *hid_ctx;
-	int rc;
+	int rc, added;
 
-	/* XXX Once local and main tables are unified, the NLM_F_* flags
-	 * should be supported. Right now, the extra complexity is not
-	 * worth it given that there's no user for them.
-	 */
-	if (!(cfg->xfc_nlflags & NLM_F_CREATE) ||
-		!(cfg->xfc_nlflags & NLM_F_EXCL))
-		return -EOPNOTSUPP;
-
-	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
-	if (!def_upd)
-		return -ENOMEM;
-
-	/*
-	 * The sequence of locks in this function must be careful to avoid
-	 * deadlock with nwp.c:insert_neigh.
-	 *
-	 * This code requires that @local_bucket and @main_bucket don't
-	 * fall on the same lock table.
-	 */
-
-	/* Allocating @lhid before aquiring locks to be able to sleep if
-	 * necessary.
-	 */
 	lhid = kmalloc(sizeof(*lhid), GFP_KERNEL);
-	if (!lhid) {
-		rc = -ENOMEM;
-		goto def_upd;
-	}
-	id = cfg->xfc_dst->xid_id;
-	init_fxid(&lhid->xhl_common, id);
+	if (!lhid)
+		return -ENOMEM;
+	init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id,
+		XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lhid->xhl_anchor);
 
-	if (xia_find_xid_lock(&local_bucket, local_xtbl, id)) {
-		rc = -EEXIST;
-		goto unlock_local;
+	rc = fib_build_newroute(&lhid->xhl_common, xtbl, cfg, &added);
+	if (!rc) {
+		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
+		if (added)
+			atomic_inc(&hid_ctx->me);
+		atomic_inc(&hid_ctx->to_announce);
+	} else {
+		free_fxid_norcu(xtbl, &lhid->xhl_common);
 	}
+	return rc;
+}
 
-	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	if (xia_find_xid_lock(&main_bucket, main_xtbl, id)) {
-		rc = -EINVAL;
-		goto unlock_main;
+static int local_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	int rc = fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
+	if (!rc) {
+		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
+		atomic_dec(&hid_ctx->me);
+		/* XXX NWP should support negative announcements to speed up
+		 * detection of leaving HIDs.
+		 */
+		atomic_inc(&hid_ctx->to_announce);
 	}
-
-	rc = fib_add_fxid_locked(local_bucket, local_xtbl, &lhid->xhl_common);
-	if (rc)
-		goto unlock_main;
-
-	fib_unlock_bucket(main_xtbl, main_bucket);
-	fib_unlock_bucket(local_xtbl, local_bucket);
-	hid_ctx = ctx_hid(ctx);
-	atomic_inc(&hid_ctx->to_announce);
-
-	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @lhid, wait an RCU synchronization to make sure that
-	 * every thread see @lhid.
-	 */
-	fib_defer_xip_upd(def_upd, hid_deferred_negdep, hid_ctx->net,
-		XIDTYPE_HID, id);
-	return 0;
-
-unlock_main:
-	fib_unlock_bucket(main_xtbl, main_bucket);
-unlock_local:
-	fib_unlock_bucket(local_xtbl, local_bucket);
-	free_fxid(local_xtbl, &lhid->xhl_common);
-def_upd:
-	fib_free_xip_upd(def_upd);
 	return rc;
 }
 
@@ -159,28 +118,13 @@ static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(lhid);
 }
 
-static const struct xia_ppal_rt_eops hid_rt_eops_local = {
-	.newroute = local_newroute,
-	.delroute = fib_default_delroute,
-	.dump_fxid = local_dump_hid,
-	.free_fxid = local_free_hid,
-};
-
 /*
- *	Main HID table
+ *	Main HIDs
  */
 
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
-	/* XXX Once local and main tables are unified, the NLM_F_* flags
-	 * should be supported. Right now, the extra complexity is not
-	 * worth it given that there's no user for them.
-	 */
-	if (!(cfg->xfc_nlflags & NLM_F_CREATE) ||
-		!(cfg->xfc_nlflags & NLM_F_EXCL))
-		return -EOPNOTSUPP;
-
 	if (!cfg->xfc_odev)
 		return -EINVAL;
 	if (!cfg->xfc_lladdr)
@@ -189,7 +133,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		return -EINVAL;
 
 	return insert_neigh(ctx_hid(ctx), cfg->xfc_dst->xid_id, cfg->xfc_odev,
-		cfg->xfc_lladdr);
+		cfg->xfc_lladdr, cfg->xfc_nlflags);
 }
 
 static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
@@ -271,11 +215,20 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-static const struct xia_ppal_rt_eops hid_rt_eops_main = {
-	.newroute = main_newroute,
-	.delroute = main_delroute,
-	.dump_fxid = main_dump_hid,
-	.free_fxid = main_free_hid,
+static const xia_ppal_all_rt_eops_t hid_all_rt_eops = {
+	[XRTABLE_LOCAL_INDEX] = {
+		.newroute = local_newroute,
+		.delroute = local_delroute,
+		.dump_fxid = local_dump_hid,
+		.free_fxid = local_free_hid,
+	},
+
+	[XRTABLE_MAIN_INDEX] = {
+		.newroute = main_newroute,
+		.delroute = main_delroute,
+		.dump_fxid = main_dump_hid,
+		.free_fxid = main_free_hid,
+	},
 };
 
 /*
@@ -290,26 +243,17 @@ static struct xip_hid_ctx *create_hid_ctx(struct net *net)
 	xip_init_ppal_ctx(&hid_ctx->ctx, XIDTYPE_HID);
 	hid_ctx->net = net;
 	hold_net(net);
-	xdst_init_anchor(&hid_ctx->negdep);
 	return hid_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_hid_ctx(struct xip_hid_ctx *hid_ctx)
 {
-	/* It's assumed that synchronize_rcu() has been called before. */
-	xdst_free_anchor(&hid_ctx->negdep);
-
 	release_net(hid_ctx->net);
 	hid_ctx->net = NULL;
 	xip_release_ppal_ctx(&hid_ctx->ctx);
 	kfree(hid_ctx);
 }
-
-/* See function local_newroute to understand
- * why @localhid_locktbl is necessary.
- */
-static struct xia_lock_table localhid_locktbl __read_mostly;
 
 static int __net_init hid_net_init(struct net *net)
 {
@@ -322,12 +266,8 @@ static int __net_init hid_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = init_xid_table(&hid_ctx->ctx, XRTABLE_LOCAL_INDEX, net,
-		&localhid_locktbl, &hid_rt_eops_local);
-	if (rc)
-		goto hid_ctx;
-	rc = init_xid_table(&hid_ctx->ctx, XRTABLE_MAIN_INDEX, net,
-		&xia_main_lock_table, &hid_rt_eops_main);
+	rc = init_xid_table(&hid_ctx->ctx, net, &xia_main_lock_table,
+		hid_all_rt_eops);
 	if (rc)
 		goto hid_ctx;
 
@@ -488,21 +428,18 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
-	struct fib_xid_hid_local *lhid;
-	struct fib_xid_table *main_xtbl;
-	struct fib_xid_hid_main *mhid;
-	struct hrdw_addr *ha;
+	struct fib_xid *fxid;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, hid_vxt);
-	BUG_ON(!ctx);
 
-	/* It is a local HID? */
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
-	lhid = fxid_lhid(xia_find_xid_rcu(local_xtbl, xid));
-	if (lhid) {
+	fxid = xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	if (!fxid)
+		goto out;
+
+	switch (fxid->fx_table_id) {
+	case XRTABLE_LOCAL_INDEX: {
+		struct fib_xid_hid_local *lhid = fxid_lhid(fxid);
 		xdst->passthrough_action = XDA_DIG;
 		xdst->sink_action = XDA_ERROR; /* An HID cannot be a sink. */
 		xdst_attach_to_anchor(xdst, anchor_index, &lhid->xhl_anchor);
@@ -510,41 +447,43 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_FORWARD;
 	}
 
-	/* Is it a main HID (i.e. a neighbor)? */
-	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	BUG_ON(!main_xtbl);
-	mhid = fxid_mhid(xia_find_xid_rcu(main_xtbl, xid));
-	if (!mhid)
-		goto out;
+	case XRTABLE_MAIN_INDEX: {
+		struct fib_xid_hid_main *mhid = fxid_mhid(fxid);
+		struct hrdw_addr *ha =
+			list_first_or_null_rcu(&mhid->xhm_haddrs,
+				struct hrdw_addr, ha_list);
 
-	ha = list_first_or_null_rcu(&mhid->xhm_haddrs, struct hrdw_addr,
-		ha_list);
-	if (unlikely(!ha)) {
-		/* @ha may be NULL because we don't have a lock over @mhid,
-		 * we're just browsing under RCU protection.
-		 */
-		goto out;
+		if (unlikely(!ha)) {
+			/* @ha may be NULL because we don't have a lock over
+			 * @mhid, we're just browsing under RCU protection.
+			 */
+			goto out;
+		}
+
+		xdst->passthrough_action = XDA_METHOD;
+		xdst->sink_action = XDA_METHOD;
+		xdst->info = ha;
+		BUG_ON(xdst->dst.dev);
+		xdst->dst.dev = ha->dev;
+		dev_hold(xdst->dst.dev);
+		if (xdst->input) {
+			xdst->dst.input = main_input_input;
+			xdst->dst.output = main_input_output;
+		} else {
+			xdst->dst.input = main_output_input;
+			xdst->dst.output = main_output_output;
+		}
+		xdst_attach_to_anchor(xdst, anchor_index, &ha->anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
 	}
 
-	xdst->passthrough_action = XDA_METHOD;
-	xdst->sink_action = XDA_METHOD;
-	xdst->info = ha;
-	BUG_ON(xdst->dst.dev);
-	xdst->dst.dev = ha->dev;
-	dev_hold(xdst->dst.dev);
-	if (xdst->input) {
-		xdst->dst.input = main_input_input;
-		xdst->dst.output = main_input_output;
-	} else {
-		xdst->dst.input = main_output_input;
-		xdst->dst.output = main_output_output;
 	}
-	xdst_attach_to_anchor(xdst, anchor_index, &ha->anchor);
 	rcu_read_unlock();
-	return XRP_ACT_FORWARD;
+	BUG();
 
 out:
-	xdst_attach_to_anchor(xdst, anchor_index, &ctx_hid(ctx)->negdep);
+	xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 	rcu_read_unlock();
 	return XRP_ACT_NEXT_EDGE;
 }
@@ -569,13 +508,9 @@ static int __init xia_hid_init(void)
 	}
 	hid_vxt = rc;
 
-	rc = xia_lock_table_init(&localhid_locktbl, XIA_LTBL_SPREAD_SMALL);
-	if (rc < 0)
-		goto vxt;
-
 	rc = xia_register_pernet_subsys(&hid_net_ops);
 	if (rc)
-		goto locktbl;
+		goto vxt;
 
 	rc = hid_nwp_init();
 	if (rc)
@@ -598,8 +533,6 @@ nwp:
 	hid_nwp_exit();
 net:
 	xia_unregister_pernet_subsys(&hid_net_ops);
-locktbl:
-	xia_lock_table_finish(&localhid_locktbl);
 vxt:
 	BUG_ON(vxt_unregister_xidty(XIDTYPE_HID));
 out:
@@ -619,7 +552,6 @@ static void __exit xia_hid_exit(void)
 	rcu_barrier();
 	flush_scheduled_work();
 
-	xia_lock_table_finish(&localhid_locktbl);
 	BUG_ON(vxt_unregister_xidty(XIDTYPE_HID));
 	pr_alert("XIA Principal HID UNloaded\n");
 }
