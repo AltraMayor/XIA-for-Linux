@@ -13,6 +13,7 @@
 #include <net/net_namespace.h>
 #include <net/xia.h>
 #include <net/xia_locktbl.h>
+#include <net/xia_route.h>
 
 struct xia_fib_config {
 	u8			xfc_dst_len;
@@ -39,9 +40,9 @@ struct xia_fib_config {
 	struct nl_info		xfc_nlinfo;
 };
 
-/* This structure is principal independent.
- * A bucket list for a give principal should define a struct that has it
- * as fist element.
+/* This structure should be the first element of a struct that specializes
+ * for a given principal.
+ * This structure is principal independent.
  */
 struct fib_xid {
 	/* Pointers to add this struct in bucket lists of an XID table. */
@@ -49,6 +50,20 @@ struct fib_xid {
 
 	/* XID */
 	u8			fx_xid[XIA_XID_MAX];
+
+	/* Identifies the routing table this entry belongs. For example,
+	 * local (XRTABLE_LOCAL_INDEX), or main (XRTABLE_MAIN_INDEX).
+	 * See XRTABLE_*_INDEX constants.
+	 */
+	u8			fx_table_id;
+
+	/* Type of this entry.
+	 * This type field is meant to help principals to have different
+	 * kinds of entries in a same XID tabel. 
+	 */
+	u8			fx_entry_type;
+
+	/* FREE 2 bytes. */
 
 	/* Once function free_fxid is called the following struct is used
 	 * to support function call_rcu instead of synchronize_rcu.
@@ -90,7 +105,7 @@ struct fib_xid_table {
 	/* Avoid writers while rehashing table. */
 	rwlock_t			fxt_writers_lock;
 
-	const struct xia_ppal_rt_eops	*fxt_eops;
+	const struct xia_ppal_rt_eops	*all_eops;
 };
 
 /* Return index of @branch. One must use it to scan buckets. */
@@ -105,6 +120,11 @@ static inline int xtbl_branch_index(struct fib_xid_table *xtbl,
 		BUG();
 }
 
+static inline xid_type_t xtbl_ppalty(const struct fib_xid_table *xtbl)
+{
+	return xtbl->fxt_ppal_type;
+}
+
 static inline struct net *xtbl_net(const struct fib_xid_table *xtbl)
 {
 	return xtbl->fxt_net;
@@ -115,7 +135,8 @@ struct xip_ppal_ctx {
 	/* Principal type. */
 	xid_type_t		xpc_ppal_type;
 
-	struct fib_xid_table	*xpc_xid_tables[XRTABLE_MAX_INDEX];
+	struct fib_xid_table	*xpc_xtbl;
+	struct xip_dst_anchor	negdep;
 };
 
 typedef void (*free_fxid_t)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
@@ -151,12 +172,32 @@ struct xia_ppal_rt_eops {
 	free_fxid_t free_fxid;
 };
 
-/* This function is meant to be a used in field delroute of
+typedef struct xia_ppal_rt_eops xia_ppal_all_rt_eops_t[XRTABLE_MAX_INDEX];
+
+/* This function is meant to help writing functions for field newroute of
+ * struct xia_ppal_rt_eops. It deals with NLM_F_* flags and flushes negative
+ * anchors when a new entry is added. 
+ *
+ * IMPORTANT
+ *	This function may sleep.
+ */
+int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg, int *padded);
+
+/* NOTE
+ *	If it returns ZERO, that is, success, the entry was deleted.
+ */
+int fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg);
+
+/* These functions are meant to be a used in field delroute of
  * struct xia_ppal_rt_eops when all that is needed is to remove the entry from
  * @xtbl, and free it.
  */
-int fib_default_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg);
+int fib_default_local_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
+int fib_default_main_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
 
 /*
  * Exported by fib_frontend.c
@@ -206,12 +247,19 @@ int init_fib_ppal_ctx(struct net *net);
 void release_fib_ppal_ctx(struct net *net);
 
 /** xip_init_ppal_ctx - initialize a struct xip_ppal_ctx.
+ *
  * RETURN
  *	It returns 0 on success.
  */
 int xip_init_ppal_ctx(struct xip_ppal_ctx *ctx, xid_type_t ty);
 
 /** xip_release_ppal_ctx - release resources held by @ctx.
+ *
+ * IMPORTANT
+ *	Caller must RCU synch before calling this function.
+ *	This usually is not a problem because @ctx is often obtained as
+ *	the return of xip_del_ppal_ctx(), which always synchronizes.
+ *
  * NOTE
  *	@ctx cannot be in a list, and must not be active, that is, the caller
  *	must hold the only reference available to @ctx.
@@ -247,15 +295,15 @@ int xip_add_ppal_ctx(struct net *net, struct xip_ppal_ctx *ctx);
  */
 struct xip_ppal_ctx *xip_del_ppal_ctx(struct net *net, xid_type_t ty);
 
-/** init_xid_table - create a new XID table of id @tbl_id in @ctx.
+/** init_xid_table - create a new XID table in @ctx.
  * RETURN
- *	-EEXIST in case an XID table of id @tbl_id already exists.
+ *	-EEXIST in case an XID table already exists.
  *	0 on success.
  * NOTE
- *	@ctx should be in no struct fib_xip_ppal_ctx!
+ *	@ctx should not haven been added to @net yet; see xip_add_ppal_ctx().
  */
-int init_xid_table(struct xip_ppal_ctx *ctx, u32 tbl_id, struct net *net,
-	struct xia_lock_table *locktbl, const struct xia_ppal_rt_eops *eops);
+int init_xid_table(struct xip_ppal_ctx *ctx, struct net *net,
+	struct xia_lock_table *locktbl, const xia_ppal_all_rt_eops_t all_eops);
 
 /** xip_find_ppal_ctx_vxt_rcu - Find context of principal of virtual type @vxt.
  *
@@ -325,7 +373,8 @@ static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
 	return atomic_read(&xtbl->fxt_count);
 }
 
-void init_fxid(struct fib_xid *fxid, const u8 *xid);
+void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
+	int entry_type);
 
 /* NOTE
  *	@fxid must not be in any XID table!
@@ -344,7 +393,7 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 static inline void free_fxid_norcu(struct fib_xid_table *xtbl,
 	struct fib_xid *fxid)
 {
-	xtbl->fxt_eops->free_fxid(xtbl, fxid);
+	xtbl->all_eops[fxid->fx_table_id].free_fxid(xtbl, fxid);
 }
 
 /** xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
@@ -456,8 +505,7 @@ static inline void fib_free_xip_upd(struct deferred_xip_update *def_upd)
 	kfree(def_upd);
 }
 
-/** xip_defer_update - Defer the execution of
- *			@f(@net, &{copy(@type), copy(@id)}) for
+/** xip_defer_update - Defer the execution of @f(@net, @ty) for
  *			an RCU synchronization.
  * NODE
  *	@f may (likely) be called from an atomic context.
@@ -467,10 +515,10 @@ static inline void fib_free_xip_upd(struct deferred_xip_update *def_upd)
  *
  *	@def_upd is consumed once this function returns.
  */
-typedef void (*fib_deferred_xid_upd_t)(struct net *net, struct xia_xid *xid);
+typedef void (*fib_deferred_xid_upd_t)(struct net *net, xid_type_t ty);
+void fib_deferred_negdep_flush(struct net *net, xid_type_t ty);
 void fib_defer_xip_upd(struct deferred_xip_update *def_upd,
-	fib_deferred_xid_upd_t f, struct net *net,
-	xid_type_t type, const u8 *id);
+	fib_deferred_xid_upd_t f, struct net *net, xid_type_t ty);
 
 #endif /* __KERNEL__ */
 #endif /* _NET_XIA_FIB_H */

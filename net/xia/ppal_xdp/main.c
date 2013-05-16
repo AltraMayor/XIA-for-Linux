@@ -15,7 +15,8 @@
  */
 struct xip_xdp_ctx {
 	struct xip_ppal_ctx	ctx;
-	struct xip_dst_anchor	negdep;
+
+	/* No extra field. */
 };
 
 static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
@@ -28,7 +29,7 @@ static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
 static int my_vxt __read_mostly = -1;
 
 /*
- *	Local XDP table
+ *	Local XDPs
  */
 
 struct fib_xid_xdp_local {
@@ -147,15 +148,8 @@ static void local_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	 */
 }
 
-static const struct xia_ppal_rt_eops xdp_rt_eops_local = {
-	.newroute = local_newroute_delroute,
-	.delroute = local_newroute_delroute,
-	.dump_fxid = local_dump_xdp,
-	.free_fxid = local_free_xdp,
-};
-
 /*
- *	Main XDP table
+ *	Main XDPs
  */
 
 struct fib_xid_xdp_main {
@@ -170,99 +164,25 @@ static inline struct fib_xid_xdp_main *fxid_mxdp(struct fib_xid *fxid)
 		: NULL;
 }
 
-static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
-{
-	struct xip_xdp_ctx *xdp_ctx;
-
-	BUG_ON(xid->xid_type != XIDTYPE_XDP);
-
-	rcu_read_lock();
-	xdp_ctx = ctx_xdp(xip_find_ppal_ctx_vxt_rcu(net, my_vxt));
-	if (likely(xdp_ctx)) {
-		/* Flush all @negdep due to XID redirects. */
-		xdst_free_anchor(&xdp_ctx->negdep);
-	}
-	rcu_read_unlock();
-}
-
 static int main_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *main_xtbl, struct xia_fib_config *cfg)
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
-	struct deferred_xip_update *def_upd;
-	struct fib_xid_xdp_main *new_mxdp, *cur_mxdp;
-	const u8 *id;
-	u32 main_bucket;
+	struct fib_xid_xdp_main *new_mxdp;
 	int rc;
 
 	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_XDP)
 		return -EINVAL;
 
-	/* Allocate memory before acquiring lock because we can sleep now. */
-
-	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
-	if (!def_upd)
-		return -ENOMEM;
-
 	new_mxdp = kmalloc(sizeof(*new_mxdp), GFP_KERNEL);
-	if (!new_mxdp) {
-		rc = -ENOMEM;
-		goto def_upd;
-	}
-	id = cfg->xfc_dst->xid_id;
-	init_fxid(&new_mxdp->common, id);
+	if (!new_mxdp)
+		return -ENOMEM;
+	init_fxid(&new_mxdp->common, cfg->xfc_dst->xid_id,
+		XRTABLE_MAIN_INDEX, 0);
 	new_mxdp->gw = *cfg->xfc_gw;
 
-	/* Acquire lock. */
-	cur_mxdp = fxid_mxdp(xia_find_xid_lock(&main_bucket, main_xtbl, id));
-
-	if (cur_mxdp) {
-		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
-			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
-			rc = -EEXIST;
-			goto unlock_main;
-		}
-
-		/* Replace entry. */
-
-		rc = 0;
-		if (!memcmp(&cur_mxdp->gw, &new_mxdp->gw,
-			sizeof(cur_mxdp->gw))) {
-			/* Since main entries are identical,
-			 * there's nothing to do here.
-			 */
-			goto unlock_main;
-		} else {
-			fib_replace_fxid_locked(main_xtbl, &cur_mxdp->common,
-				&new_mxdp->common);
-			fib_unlock_bucket(main_xtbl, main_bucket);
-			free_fxid(main_xtbl, &cur_mxdp->common);
-			goto def_upd;
-		}
-	}
-
-	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
-		rc = -ENOENT;
-		goto unlock_main;
-	}
-
-	/* Add new entry. */
-
-	BUG_ON(fib_add_fxid_locked(main_bucket, main_xtbl, &new_mxdp->common));
-	fib_unlock_bucket(main_xtbl, main_bucket);
-
-	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @new_mxdp, wait an RCU synchronization to make sure that
-	 * every thread see @new_mxdp.
-	 */
-	fib_defer_xip_upd(def_upd, main_deferred_negdep,
-		xtbl_net(main_xtbl), XIDTYPE_XDP, id);
-	return 0;
-
-unlock_main:
-	fib_unlock_bucket(main_xtbl, main_bucket);
-	free_fxid(main_xtbl, &new_mxdp->common);
-def_upd:
-	fib_free_xip_upd(def_upd);
+	rc = fib_build_newroute(&new_mxdp->common, xtbl, cfg, NULL);
+	if (rc)
+		free_fxid_norcu(xtbl, &new_mxdp->common);
 	return rc;
 }
 
@@ -320,11 +240,20 @@ static void main_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(mxdp);
 }
 
-static const struct xia_ppal_rt_eops xdp_rt_eops_main = {
-	.newroute = main_newroute,
-	.delroute = fib_default_delroute,
-	.dump_fxid = main_dump_xdp,
-	.free_fxid = main_free_xdp,
+static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
+	[XRTABLE_LOCAL_INDEX] = {
+		.newroute = local_newroute_delroute,
+		.delroute = local_newroute_delroute,
+		.dump_fxid = local_dump_xdp,
+		.free_fxid = local_free_xdp,
+	},
+
+	[XRTABLE_MAIN_INDEX] = {
+		.newroute = main_newroute,
+		.delroute = fib_default_main_delroute,
+		.dump_fxid = main_dump_xdp,
+		.free_fxid = main_free_xdp,
+	},
 };
 
 /*
@@ -337,16 +266,12 @@ static struct xip_xdp_ctx *create_xdp_ctx(void)
 	if (!xdp_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&xdp_ctx->ctx, XIDTYPE_XDP);
-	xdst_init_anchor(&xdp_ctx->negdep);
 	return xdp_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_xdp_ctx(struct xip_xdp_ctx *xdp_ctx)
 {
-	/* It's assumed that synchronize_rcu() has been called before. */
-	xdst_free_anchor(&xdp_ctx->negdep);
-
 	xip_release_ppal_ctx(&xdp_ctx->ctx);
 	kfree(xdp_ctx);
 }
@@ -362,12 +287,8 @@ static int __net_init xdp_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = init_xid_table(&xdp_ctx->ctx, XRTABLE_LOCAL_INDEX, net,
-		&xia_main_lock_table, &xdp_rt_eops_local);
-	if (rc)
-		goto xdp_ctx;
-	rc = init_xid_table(&xdp_ctx->ctx, XRTABLE_MAIN_INDEX, net,
-		&xia_main_lock_table, &xdp_rt_eops_main);
+	rc = init_xid_table(&xdp_ctx->ctx, net, &xia_main_lock_table,
+		xdp_all_rt_eops);
 	if (rc)
 		goto xdp_ctx;
 
@@ -459,22 +380,23 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
-	struct fib_xid_xdp_local *lxdp;
-	struct fib_xid_table *main_xtbl;
-	struct fib_xid_xdp_main *mxdp;
+	struct fib_xid *fxid;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	BUG_ON(!ctx);
 
-	/* Is it a local XDP (i.e. a listening socket)?
-	 * If so, deliver to the socket.
-	 */
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
-	lxdp = fxid_lxdp(xia_find_xid_rcu(local_xtbl, xid));
-	if (lxdp) {
+	fxid = xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	if (!fxid) {
+		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
+
+	switch (fxid->fx_table_id) {
+	case XRTABLE_LOCAL_INDEX: {
+		/* It's a local XDP (i.e. a listening socket). */
+		struct fib_xid_xdp_local *lxdp = fxid_lxdp(fxid);
+
 		/* An XDP cannot be a passthrough. */
 		xdst->passthrough_action = XDA_ERROR;
 
@@ -495,19 +417,16 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_FORWARD;
 	}
 
-	/* Is it a main XDP? If so, redirect it. */
-	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	BUG_ON(!main_xtbl);
-	mxdp = fxid_mxdp(xia_find_xid_rcu(main_xtbl, xid));
-	if (mxdp) {
+	case XRTABLE_MAIN_INDEX: {
+		struct fib_xid_xdp_main *mxdp = fxid_mxdp(fxid);
 		memmove(next_xid, &mxdp->gw, sizeof(*next_xid));
 		rcu_read_unlock();
 		return XRP_ACT_REDIRECT;
 	}
 
-	xdst_attach_to_anchor(xdst, anchor_index, &ctx_xdp(ctx)->negdep);
+	}
 	rcu_read_unlock();
-	return XRP_ACT_NEXT_EDGE;
+	BUG();
 }
 
 static struct xip_route_proc xdp_rt_proc __read_mostly = {
@@ -940,33 +859,6 @@ out_free:
 	return rc;
 }
 
-static void local_deferred_negdep(struct net *net, struct xia_xid *xid)
-{
-	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *main_xtbl;
-	struct fib_xid_xdp_main *mxdp;
-
-	BUG_ON(xid->xid_type != XIDTYPE_XDP);
-
-	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	if (unlikely(!ctx)) {
-		/* Principal is unloading. */
-		goto out;
-	}
-	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	mxdp = fxid_mxdp(xia_find_xid_rcu(main_xtbl, xid->xid_id));
-	if (mxdp) {
-		xdst_invalidate_redirect(net, xid->xid_type, xid->xid_id,
-			&mxdp->gw);
-	} else {
-		/* Flush all @negdep due to XID redirects. */
-		xdst_free_anchor(&ctx_xdp(ctx)->negdep);
-	}
-out:
-	rcu_read_unlock();
-}
-
 static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
@@ -975,7 +867,7 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	struct fib_xid_xdp_local *lxdp;
 	const u8 *id;
 	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
+	struct fib_xid_table *xtbl;
 	struct net *net;
 	int rc;
 
@@ -989,28 +881,23 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 
 	lxdp = sk_lxdp(sk);
 	id = ssink->s_xid.xid_id;
-	init_fxid(&lxdp->fxid, id);
+	init_fxid(&lxdp->fxid, id, XRTABLE_LOCAL_INDEX, 0);
 
 	net = sock_net(sk);
-	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	BUG_ON(!ctx);
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
+	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
+	xtbl = ctx->xpc_xtbl;
 
-	rc = fib_add_fxid(local_xtbl, &lxdp->fxid);
+	rc = fib_add_fxid(xtbl, &lxdp->fxid);
 	/* We don't sock_hold(sk) because @lxdp->fxid is always released
 	 * before @lxdp is freed.
 	 */
 	if (rc) {
-		free_fxid_norcu(local_xtbl, &lxdp->fxid);
-		rcu_read_unlock();
+		free_fxid_norcu(xtbl, &lxdp->fxid);
 		fib_free_xip_upd(def_upd);
 		return rc == -EEXIST ? -EADDRINUSE : rc;
 	}
 
-	rcu_read_unlock();
-	fib_defer_xip_upd(def_upd, local_deferred_negdep, net, XIDTYPE_XDP, id);
+	fib_defer_xip_upd(def_upd, fib_deferred_negdep_flush, net, XIDTYPE_XDP);
 	sock_prot_inuse_add(net, sk->sk_prot, 1);
 	return 0;
 }
@@ -1042,7 +929,7 @@ static void xdp_unhash(struct sock *sk)
 	struct xia_sock *xia = xia_sk(sk);
 	struct net *net;
 	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
+	struct fib_xid_table *xtbl;
 	struct fib_xid_xdp_local *lxdp;
 
 	if (!xia_sk_bound(xia))
@@ -1054,17 +941,15 @@ static void xdp_unhash(struct sock *sk)
 
 	/* Remove from routing table. */
 	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
-	BUG_ON(!ctx);
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
+	xtbl = ctx->xpc_xtbl;
 	lxdp = xiask_lxdp(xia);
-	fib_rm_fxid(local_xtbl, &lxdp->fxid);
+	fib_rm_fxid(xtbl, &lxdp->fxid);
 
 	/* Free DST entries. */
 
 	/* We must wait here because, @lxdp may be reused before RCU synchs.*/
 	synchronize_rcu();
-	free_fxid_norcu(local_xtbl, &lxdp->fxid);
+	free_fxid_norcu(xtbl, &lxdp->fxid);
 }
 
 static long sysctl_xdp_mem[3] __read_mostly;

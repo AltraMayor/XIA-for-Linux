@@ -13,7 +13,8 @@
 
 struct xip_ad_ctx {
 	struct xip_ppal_ctx	ctx;
-	struct xip_dst_anchor	negdep;
+
+	/* No extra field. */
 };
 
 static inline struct xip_ad_ctx *ctx_ad(struct xip_ppal_ctx *ctx)
@@ -26,7 +27,7 @@ static inline struct xip_ad_ctx *ctx_ad(struct xip_ppal_ctx *ctx)
 static int my_vxt __read_mostly = -1;
 
 /*
- *	Local AD table
+ *	Local ADs
  */
 
 struct fib_xid_ad_local {
@@ -42,73 +43,22 @@ static inline struct fib_xid_ad_local *fxid_lad(struct fib_xid *fxid)
 		: NULL;
 }
 
-static void local_deferred_negdep(struct net *net, struct xia_xid *xid);
-
 static int local_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *local_xtbl, struct xia_fib_config *cfg)
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
-	struct deferred_xip_update *def_upd;
-	struct fib_xid_ad_local *new_lad, *cur_lad;
-	const u8 *id;
-	u32 local_bucket;
+	struct fib_xid_ad_local *new_lad;
 	int rc;
 
-	/* Allocate memory before acquiring lock because we can sleep now. */
-
-	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
-	if (!def_upd)
-		return -ENOMEM;
-
 	new_lad = kmalloc(sizeof(*new_lad), GFP_KERNEL);
-	if (!new_lad) {
-		rc = -ENOMEM;
-		goto def_upd;
-	}
-	id = cfg->xfc_dst->xid_id;
-	init_fxid(&new_lad->common, id);
+	if (!new_lad)
+		return -ENOMEM;
+	init_fxid(&new_lad->common, cfg->xfc_dst->xid_id,
+		XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&new_lad->anchor);
 
-	/* Acquire lock. */
-	cur_lad = fxid_lad(xia_find_xid_lock(&local_bucket, local_xtbl, id));
-
-	if (cur_lad) {
-		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
-			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
-			rc = -EEXIST;
-			goto unlock_local;
-		}
-
-		/* Replace entry.
-		 * Since local entries are identical, there's nothing to
-		 * do here.
-		 */
-		rc = 0;
-		goto unlock_local;
-	}
-
-	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
-		rc = -ENOENT;
-		goto unlock_local;
-	}
-
-	/* Add new entry. */
-
-	BUG_ON(fib_add_fxid_locked(local_bucket, local_xtbl, &new_lad->common));
-	fib_unlock_bucket(local_xtbl, local_bucket);
-
-	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @new_lad, wait an RCU synchronization to make sure that
-	 * every thread see @new_lad.
-	 */
-	fib_defer_xip_upd(def_upd, local_deferred_negdep,
-		xtbl_net(local_xtbl), XIDTYPE_AD, id);
-	return 0;
-
-unlock_local:
-	fib_unlock_bucket(local_xtbl, local_bucket);
-	free_fxid(local_xtbl, &new_lad->common);
-def_upd:
-	fib_free_xip_upd(def_upd);
+	rc = fib_build_newroute(&new_lad->common, xtbl, cfg, NULL);
+	if (rc)
+		free_fxid_norcu(xtbl, &new_lad->common);
 	return rc;
 }
 
@@ -164,15 +114,8 @@ static void local_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(lad);
 }
 
-static const struct xia_ppal_rt_eops ad_rt_eops_local = {
-	.newroute = local_newroute,
-	.delroute = fib_default_delroute,
-	.dump_fxid = local_dump_ad,
-	.free_fxid = local_free_ad,
-};
-
 /*
- *	Main AD table
+ *	Main ADs
  */
 
 struct fib_xid_ad_main {
@@ -187,125 +130,25 @@ static inline struct fib_xid_ad_main *fxid_mad(struct fib_xid *fxid)
 		: NULL;
 }
 
-static void local_deferred_negdep(struct net *net, struct xia_xid *xid)
-{
-	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *main_xtbl;
-	struct fib_xid_ad_main *mad;
-
-	BUG_ON(xid->xid_type != XIDTYPE_AD);
-
-	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	if (unlikely(!ctx)) {
-		/* Principal is unloading. */
-		goto out;
-	}
-	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	mad = fxid_mad(xia_find_xid_rcu(main_xtbl, xid->xid_id));
-	if (mad) {
-		xdst_invalidate_redirect(net, xid->xid_type, xid->xid_id,
-			&mad->gw);
-	} else {
-		/* Flush all @negdep due to XID redirects. */
-		xdst_free_anchor(&ctx_ad(ctx)->negdep);
-	}
-out:
-	rcu_read_unlock();
-}
-
-static void main_deferred_negdep(struct net *net, struct xia_xid *xid)
-{
-	struct xip_ad_ctx *ad_ctx;
-
-	BUG_ON(xid->xid_type != XIDTYPE_AD);
-
-	rcu_read_lock();
-	ad_ctx = ctx_ad(xip_find_ppal_ctx_vxt_rcu(net, my_vxt));
-	if (likely(ad_ctx)) {
-		/* Flush all @negdep due to XID redirects. */
-		xdst_free_anchor(&ad_ctx->negdep);
-	}
-	rcu_read_unlock();
-}
-
 static int main_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *main_xtbl, struct xia_fib_config *cfg)
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
-	struct deferred_xip_update *def_upd;
-	struct fib_xid_ad_main *new_mad, *cur_mad;
-	const u8 *id;
-	u32 main_bucket;
+	struct fib_xid_ad_main *new_mad;
 	int rc;
 
 	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_AD)
 		return -EINVAL;
 
-	/* Allocate memory before acquiring lock because we can sleep now. */
-
-	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
-	if (!def_upd)
-		return -ENOMEM;
-
 	new_mad = kmalloc(sizeof(*new_mad), GFP_KERNEL);
-	if (!new_mad) {
-		rc = -ENOMEM;
-		goto def_upd;
-	}
-	id = cfg->xfc_dst->xid_id;
-	init_fxid(&new_mad->common, id);
+	if (!new_mad)
+		return -ENOMEM;
+	init_fxid(&new_mad->common, cfg->xfc_dst->xid_id,
+		XRTABLE_MAIN_INDEX, 0);
 	new_mad->gw = *cfg->xfc_gw;
 
-	/* Acquire lock. */
-	cur_mad = fxid_mad(xia_find_xid_lock(&main_bucket, main_xtbl, id));
-
-	if (cur_mad) {
-		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
-			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
-			rc = -EEXIST;
-			goto unlock_main;
-		}
-
-		/* Replace entry. */
-
-		rc = 0;
-		if (!memcmp(&cur_mad->gw, &new_mad->gw, sizeof(cur_mad->gw))) {
-			/* Since main entries are identical,
-			 * there's nothing to do here.
-			 */
-			goto unlock_main;
-		} else {
-			fib_replace_fxid_locked(main_xtbl, &cur_mad->common,
-				&new_mad->common);
-			fib_unlock_bucket(main_xtbl, main_bucket);
-			free_fxid(main_xtbl, &cur_mad->common);
-			goto def_upd;
-		}
-	}
-
-	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
-		rc = -ENOENT;
-		goto unlock_main;
-	}
-
-	/* Add new entry. */
-
-	BUG_ON(fib_add_fxid_locked(main_bucket, main_xtbl, &new_mad->common));
-	fib_unlock_bucket(main_xtbl, main_bucket);
-
-	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @new_mad, wait an RCU synchronization to make sure that
-	 * every thread see @new_mad.
-	 */
-	fib_defer_xip_upd(def_upd, main_deferred_negdep,
-		xtbl_net(main_xtbl), XIDTYPE_AD, id);
-	return 0;
-
-unlock_main:
-	fib_unlock_bucket(main_xtbl, main_bucket);
-	free_fxid(main_xtbl, &new_mad->common);
-def_upd:
-	fib_free_xip_upd(def_upd);
+	rc = fib_build_newroute(&new_mad->common, xtbl, cfg, NULL);
+	if (rc)
+		free_fxid_norcu(xtbl, &new_mad->common);
 	return rc;
 }
 
@@ -363,11 +206,20 @@ static void main_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(mad);
 }
 
-static const struct xia_ppal_rt_eops ad_rt_eops_main = {
-	.newroute = main_newroute,
-	.delroute = fib_default_delroute,
-	.dump_fxid = main_dump_ad,
-	.free_fxid = main_free_ad,
+static const xia_ppal_all_rt_eops_t ad_all_rt_eops = {
+	[XRTABLE_LOCAL_INDEX] = {
+		.newroute = local_newroute,
+		.delroute = fib_default_local_delroute,
+		.dump_fxid = local_dump_ad,
+		.free_fxid = local_free_ad,
+	},
+
+	[XRTABLE_MAIN_INDEX] = {
+		.newroute = main_newroute,
+		.delroute = fib_default_main_delroute,
+		.dump_fxid = main_dump_ad,
+		.free_fxid = main_free_ad,
+	},
 };
 
 /*
@@ -380,16 +232,12 @@ static struct xip_ad_ctx *create_ad_ctx(void)
 	if (!ad_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&ad_ctx->ctx, XIDTYPE_AD);
-	xdst_init_anchor(&ad_ctx->negdep);
 	return ad_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_ad_ctx(struct xip_ad_ctx *ad_ctx)
 {
-	/* It's assumed that synchronize_rcu() has been called before. */
-	xdst_free_anchor(&ad_ctx->negdep);
-
 	xip_release_ppal_ctx(&ad_ctx->ctx);
 	kfree(ad_ctx);
 }
@@ -405,12 +253,8 @@ static int __net_init ad_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = init_xid_table(&ad_ctx->ctx, XRTABLE_LOCAL_INDEX, net,
-		&xia_main_lock_table, &ad_rt_eops_local);
-	if (rc)
-		goto ad_ctx;
-	rc = init_xid_table(&ad_ctx->ctx, XRTABLE_MAIN_INDEX, net,
-		&xia_main_lock_table, &ad_rt_eops_main);
+	rc = init_xid_table(&ad_ctx->ctx, net, &xia_main_lock_table,
+		ad_all_rt_eops);
 	if (rc)
 		goto ad_ctx;
 
@@ -446,20 +290,21 @@ static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 	struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
-	struct fib_xid_table *local_xtbl;
-	struct fib_xid_ad_local *lad;
-	struct fib_xid_table *main_xtbl;
-	struct fib_xid_ad_main *mad;
+	struct fib_xid *fxid;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	BUG_ON(!ctx);
 
-	/* Is it a local AD? */
-	local_xtbl = ctx->xpc_xid_tables[XRTABLE_LOCAL_INDEX];
-	BUG_ON(!local_xtbl);
-	lad = fxid_lad(xia_find_xid_rcu(local_xtbl, xid));
-	if (lad) {
+	fxid = xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	if (!fxid) {
+		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
+
+	switch (fxid->fx_table_id) {
+	case XRTABLE_LOCAL_INDEX: {
+		struct fib_xid_ad_local *lad = fxid_lad(fxid);
 		xdst->passthrough_action = XDA_DIG;
 		xdst->sink_action = XDA_ERROR; /* An AD cannot be a sink. */
 		xdst_attach_to_anchor(xdst, anchor_index, &lad->anchor);
@@ -467,19 +312,16 @@ static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_FORWARD;
 	}
 
-	/* Is it a main AD? */
-	main_xtbl = ctx->xpc_xid_tables[XRTABLE_MAIN_INDEX];
-	BUG_ON(!main_xtbl);
-	mad = fxid_mad(xia_find_xid_rcu(main_xtbl, xid));
-	if (mad) {
+	case XRTABLE_MAIN_INDEX: {
+		struct fib_xid_ad_main *mad = fxid_mad(fxid);
 		memmove(next_xid, &mad->gw, sizeof(*next_xid));
 		rcu_read_unlock();
 		return XRP_ACT_REDIRECT;
 	}
 
-	xdst_attach_to_anchor(xdst, anchor_index, &ctx_ad(ctx)->negdep);
+	}
 	rcu_read_unlock();
-	return XRP_ACT_NEXT_EDGE;
+	BUG();
 }
 
 static struct xip_route_proc ad_rt_proc __read_mostly = {

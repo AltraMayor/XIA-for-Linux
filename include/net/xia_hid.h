@@ -44,11 +44,10 @@ struct xip_hid_ctx {
 	/* Simplify scanning network devices. */
 	struct net		*net;
 
-	struct xip_dst_anchor	negdep;
-
  	/* NWP's state per struct net. */
 	atomic_t	to_announce;
 	atomic_t	announced;
+	atomic_t	me; /* Number of local HIDs in ctx.xpc_xtbl. */
 	struct timer_list announce_timer;
 };
 
@@ -115,10 +114,8 @@ static inline void mhid_put(struct fib_xid_hid_main *mhid)
 		mhid_finish_destroy(mhid);
 }
 
-void hid_deferred_negdep(struct net *net, struct xia_xid *xid);
-
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr);
+	struct net_device *dev, const u8 *lladdr, u32 rtnl_flags);
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	struct net_device *dev, const u8 *lladdr);
