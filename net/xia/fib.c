@@ -52,21 +52,23 @@ int init_fib_ppal_ctx(struct net *net)
 int xip_init_ppal_ctx(struct xip_ppal_ctx *ctx, xid_type_t ty)
 {
 	ctx->xpc_ppal_type = ty;
-	memset(ctx->xpc_xid_tables, 0, sizeof(ctx->xpc_xid_tables));
+	ctx->xpc_xtbl = NULL;
+	xdst_init_anchor(&ctx->negdep);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xip_init_ppal_ctx);
 
 void xip_release_ppal_ctx(struct xip_ppal_ctx *ctx)
 {
-	int i;
+	struct fib_xid_table *xtbl;
 
-	for (i = 0; i < XRTABLE_MAX_INDEX; i++) {
-		struct fib_xid_table *xtbl = ctx->xpc_xid_tables[i];
-		if (xtbl) {
-			ctx->xpc_xid_tables[i] = NULL;
-			xtbl_put(xtbl);
-		}
+	/* It's assumed that synchronize_rcu() has been called before. */
+	xdst_free_anchor(&ctx->negdep);
+
+	xtbl = ctx->xpc_xtbl;
+	if (xtbl) {
+		ctx->xpc_xtbl = NULL;
+		xtbl_put(xtbl);
 	}
 }
 EXPORT_SYMBOL_GPL(xip_release_ppal_ctx);
@@ -153,14 +155,14 @@ static inline void free_buckets(struct fib_xid_buckets *branch)
 static void xtbl_death_work(struct work_struct *work);
 static void rehash_work(struct work_struct *work);
 
-int init_xid_table(struct xip_ppal_ctx *ctx, u32 tbl_id, struct net *net,
-	struct xia_lock_table *locktbl, const struct xia_ppal_rt_eops *eops)
+int init_xid_table(struct xip_ppal_ctx *ctx, struct net *net,
+	struct xia_lock_table *locktbl, const xia_ppal_all_rt_eops_t all_eops)
 {
 	struct fib_xid_table *new_xtbl;
 	struct fib_xid_buckets *abranch;
 	int rc;
 
-	if (ctx->xpc_xid_tables[tbl_id]) {
+	if (ctx->xpc_xtbl) {
 		rc = -EEXIST;
 		goto out; /* Duplicate. */
 	}
@@ -183,11 +185,11 @@ int init_xid_table(struct xip_ppal_ctx *ctx, u32 tbl_id, struct net *net,
 	get_random_bytes(&new_xtbl->fxt_seed, sizeof(new_xtbl->fxt_seed));
 	INIT_WORK(&new_xtbl->fxt_rehash_work, rehash_work);
 	rwlock_init(&new_xtbl->fxt_writers_lock);
-	new_xtbl->fxt_eops = eops;
+	new_xtbl->all_eops = all_eops;
 
 	atomic_set(&new_xtbl->refcnt, 1);
 	INIT_WORK(&new_xtbl->fxt_death_work, xtbl_death_work);
-	ctx->xpc_xid_tables[tbl_id] = new_xtbl;
+	ctx->xpc_xtbl = new_xtbl;
 
 	rc = 0;
 	goto out;
@@ -199,20 +201,30 @@ out:
 }
 EXPORT_SYMBOL_GPL(init_xid_table);
 
-void init_fxid(struct fib_xid *fxid, const u8 *xid)
+void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
+	int entry_type)
 {
 	INIT_HLIST_NODE(&fxid->fx_branch_list[0]);
 	INIT_HLIST_NODE(&fxid->fx_branch_list[1]);
 	memmove(fxid->fx_xid, xid, XIA_XID_MAX);
+
+	BUILD_BUG_ON(XRTABLE_MAX_INDEX > 0x100);
+	BUG_ON(table_id >= XRTABLE_MAX_INDEX);
+	fxid->fx_table_id = table_id;
+
+	BUG_ON(entry_type > 0xff);
+	fxid->fx_entry_type = entry_type;
+
+	fxid->dead.xtbl = NULL;
 }
 EXPORT_SYMBOL_GPL(init_fxid);
 
-static void free_fxid_rcu(struct rcu_head *head)
+static void __free_fxid(struct rcu_head *head)
 {
 	struct fib_xid *fxid =
 		container_of(head, struct fib_xid, dead.rcu_head);
 	struct fib_xid_table *xtbl = fxid->dead.xtbl;
-	xtbl->fxt_eops->free_fxid(xtbl, fxid);
+	free_fxid_norcu(xtbl, fxid);
 	xtbl_put(xtbl);
 }
 
@@ -220,7 +232,7 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	fxid->dead.xtbl = xtbl;
 	xtbl_hold(xtbl);
-	call_rcu(&fxid->dead.rcu_head, free_fxid_rcu);
+	call_rcu(&fxid->dead.rcu_head, __free_fxid);
 }
 EXPORT_SYMBOL_GPL(free_fxid);
 
@@ -582,22 +594,53 @@ void fib_replace_fxid_locked(struct fib_xid_table *xtbl,
 }
 EXPORT_SYMBOL_GPL(fib_replace_fxid_locked);
 
-int fib_default_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+int fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg)
 {
-	struct fib_xid *fxid = fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
-	if (!fxid)
-		return -ENOENT;
+	struct fib_xid *fxid;
+	u32 bucket;
+	int rc;
+
+	fxid = xia_find_xid_lock(&bucket, xtbl, cfg->xfc_dst->xid_id);
+	if (!fxid) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+	if (fxid->fx_table_id != tbl_id) {
+		rc = -EINVAL;
+		goto unlock_bucket;
+	}
+
+	fib_rm_fxid_locked(bucket, xtbl, fxid);
+	fib_unlock_bucket(xtbl, bucket);
 	free_fxid(xtbl, fxid);
 	return 0;
+
+unlock_bucket:
+	fib_unlock_bucket(xtbl, bucket);
+	return rc;
 }
-EXPORT_SYMBOL_GPL(fib_default_delroute);
+EXPORT_SYMBOL_GPL(fib_build_delroute);
+
+int fib_default_local_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	return fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
+}
+EXPORT_SYMBOL_GPL(fib_default_local_delroute);
+
+int fib_default_main_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	return fib_build_delroute(XRTABLE_MAIN_INDEX, xtbl, cfg);
+}
+EXPORT_SYMBOL_GPL(fib_default_main_delroute);
 
 struct deferred_xip_update {
 	struct rcu_head		rcu_head;
 	fib_deferred_xid_upd_t	f;
 	struct net		*net;
-	struct xia_xid		xid;
+	xid_type_t		ty;
 };
 
 struct deferred_xip_update *fib_alloc_xip_upd(gfp_t flags)
@@ -610,20 +653,104 @@ static void do_deferred_update(struct rcu_head *head)
 {
 	struct deferred_xip_update *def_upd =
 		container_of(head, struct deferred_xip_update, rcu_head);
-	def_upd->f(def_upd->net, &def_upd->xid);
+	def_upd->f(def_upd->net, def_upd->ty);
 	release_net(def_upd->net);
 	fib_free_xip_upd(def_upd);
 }
 
 void fib_defer_xip_upd(struct deferred_xip_update *def_upd,
-	fib_deferred_xid_upd_t f, struct net *net,
-	xid_type_t type, const u8 *id)
+	fib_deferred_xid_upd_t f, struct net *net, xid_type_t ty)
 {
 	def_upd->f = f;
 	def_upd->net = net;
 	hold_net(net);
-	def_upd->xid.xid_type = type;
-	memmove(def_upd->xid.xid_id, id, sizeof(def_upd->xid.xid_id));
+	def_upd->ty = ty;
 	call_rcu(&def_upd->rcu_head, do_deferred_update);
 }
 EXPORT_SYMBOL_GPL(fib_defer_xip_upd);
+
+void fib_deferred_negdep_flush(struct net *net, xid_type_t ty)
+{
+	struct xip_ppal_ctx *ctx;
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_rcu(net, ty);
+	if (likely(ctx)) { /* Principal could be unloading. */
+		/* Flush @negdep. */
+		xdst_free_anchor(&ctx->negdep);
+	}
+	rcu_read_unlock();
+}
+EXPORT_SYMBOL_GPL(fib_deferred_negdep_flush);
+
+int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg, int *padded)
+{
+	struct deferred_xip_update *def_upd;
+	struct fib_xid *cur_fxid;
+	const u8 *id;
+	u32 bucket;
+	int rc;
+
+	if (padded)
+		*padded = 0;
+
+	/* Allocate memory before acquiring lock because we can sleep now. */
+	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
+	if (!def_upd)
+		return -ENOMEM;
+
+	/* Acquire lock. */
+	id = cfg->xfc_dst->xid_id;
+	cur_fxid = xia_find_xid_lock(&bucket, xtbl, id);
+
+	if (cur_fxid) {
+		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
+			!(cfg->xfc_nlflags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock_bucket;
+		}
+
+		if (cur_fxid->fx_table_id != new_fxid->fx_table_id) {
+			rc = -EINVAL;
+			goto unlock_bucket;
+		}
+
+		/* Replace entry.
+		 * Notice that @cur_fxid and @new_fxid may be of different
+		 * types
+		 */
+		rc = 0;
+		fib_replace_fxid_locked(xtbl, cur_fxid,	new_fxid);
+		fib_unlock_bucket(xtbl, bucket);
+		free_fxid(xtbl, cur_fxid);
+		goto def_upd;
+	}
+
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+
+	/* Add new entry. */
+	BUG_ON(fib_add_fxid_locked(bucket, xtbl, new_fxid));
+	fib_unlock_bucket(xtbl, bucket);
+
+	/* Before invalidating old anchors to force dependencies to
+	 * migrate to @new_fxid, wait an RCU synchronization to make sure that
+	 * every thread see @new_fxid.
+	 */
+	fib_defer_xip_upd(def_upd, fib_deferred_negdep_flush,
+		xtbl_net(xtbl), xtbl_ppalty(xtbl));
+
+	if (padded)
+		*padded = 1;
+	return 0;
+
+unlock_bucket:
+	fib_unlock_bucket(xtbl, bucket);
+def_upd:
+	fib_free_xip_upd(def_upd);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(fib_build_newroute);

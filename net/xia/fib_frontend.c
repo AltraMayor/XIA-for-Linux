@@ -96,15 +96,15 @@ static int xip_rtm_froute(int to_add, struct sk_buff *skb, struct nlmsghdr *nlh)
 		rcu_read_unlock();
 		return -EXTYNOSUPPORT;
 	}
-	xtbl = ctx->xpc_xid_tables[cfg.xfc_table];
+	xtbl = ctx->xpc_xtbl;
 	if (!xtbl) {
 		rcu_read_unlock();
 		return -EINVAL;
 	}
 
 	rc = to_add
-		? xtbl->fxt_eops->newroute(ctx, xtbl, &cfg)
-		: xtbl->fxt_eops->delroute(ctx, xtbl, &cfg);
+		? xtbl->all_eops[cfg.xfc_table].newroute(ctx, xtbl, &cfg)
+		: xtbl->all_eops[cfg.xfc_table].delroute(ctx, xtbl, &cfg);
 	rcu_read_unlock();
 	return rc;
 }
@@ -144,15 +144,14 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 {
 	struct fib_xid_buckets *abranch;
 	long i, j = 0;
-	long first_j = cb->args[3];
-	int dumped = 0;
+	long first_j = cb->args[2];
 	int divisor, aindex;
 	int rc;
 
 	abranch = rcu_dereference(xtbl->fxt_active_branch);
 	divisor = abranch->divisor;
 	aindex = xtbl_branch_index(xtbl, abranch);
-	for (i = cb->args[2]; i < divisor; i++, first_j = 0) {
+	for (i = cb->args[1]; i < divisor; i++, first_j = 0) {
 		struct fib_xid *fxid;
 		struct hlist_head *head = &abranch->buckets[i];
 		j = 0;
@@ -160,47 +159,19 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 			fx_branch_list[aindex]) {
 			if (j < first_j)
 				goto next;
-			if (dumped)
-				clear_cb_from(cb, 4);
-			rc = xtbl->fxt_eops->dump_fxid(
+			rc = xtbl->all_eops[fxid->fx_table_id].dump_fxid(
 				fxid, xtbl, ctx, skb, cb);
 			if (rc < 0)
 				goto out;
-			dumped = 1;
 next:
 			j++;
 		}
 	}
+	rc = 0;
 
-	rc = skb->len;
-out:
-	cb->args[2] = i;
-	cb->args[3] = j;
-	return rc;
-}
-
-static int xip_fib_dump_tbls_rcu(struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
-{
-	long i;
-	int dumped = 0;
-	int rc;
-
-	for (i = cb->args[1]; i < XRTABLE_MAX_INDEX; i++) {
-		struct fib_xid_table *xtbl = ctx->xpc_xid_tables[i];
-		if (!xtbl)
-			continue;
-		if (dumped)
-			clear_cb_from(cb, 2);
-		rc = xia_fib_dump_xtbl_rcu(xtbl, ctx, skb, cb);
-		if (rc < 0)
-			goto out;
-		dumped = 1;
-	}
-
-	rc = skb->len;
 out:
 	cb->args[1] = i;
+	cb->args[2] = j;
 	return rc;
 }
 
@@ -213,11 +184,11 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 	rcu_read_lock();
 	for (i = cb->args[0]; i < XIP_MAX_XID_TYPES; i++) {
 		struct xip_ppal_ctx *ctx = xip_find_ppal_ctx_vxt_rcu(net, i);
-		if (!ctx)
+		if (!ctx || !ctx->xpc_xtbl)
 			continue;
 		if (dumped)
 			clear_cb_from(cb, 1);
-		if (xip_fib_dump_tbls_rcu(ctx, skb, cb) < 0)
+		if (xia_fib_dump_xtbl_rcu(ctx->xpc_xtbl, ctx, skb, cb) < 0)
 			break;
 		dumped = 1;
 	}
