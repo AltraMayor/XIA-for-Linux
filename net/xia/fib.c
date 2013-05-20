@@ -636,57 +636,50 @@ int fib_default_main_delroute(struct xip_ppal_ctx *ctx,
 }
 EXPORT_SYMBOL_GPL(fib_default_main_delroute);
 
-struct deferred_xip_update {
+struct xip_deferred_negdep_flush {
 	struct rcu_head		rcu_head;
-	fib_deferred_xid_upd_t	f;
 	struct net		*net;
 	xid_type_t		ty;
 };
 
-struct deferred_xip_update *fib_alloc_xip_upd(gfp_t flags)
+struct xip_deferred_negdep_flush *fib_alloc_dnf(gfp_t flags)
 {
-	return kmalloc(sizeof(struct deferred_xip_update), flags);
+	return kmalloc(sizeof(struct xip_deferred_negdep_flush), flags);
 }
-EXPORT_SYMBOL_GPL(fib_alloc_xip_upd);
+EXPORT_SYMBOL_GPL(fib_alloc_dnf);
 
-static void do_deferred_update(struct rcu_head *head)
+static void __fib_defer_dnf(struct rcu_head *head)
 {
-	struct deferred_xip_update *def_upd =
-		container_of(head, struct deferred_xip_update, rcu_head);
-	def_upd->f(def_upd->net, def_upd->ty);
-	release_net(def_upd->net);
-	fib_free_xip_upd(def_upd);
-}
-
-void fib_defer_xip_upd(struct deferred_xip_update *def_upd,
-	fib_deferred_xid_upd_t f, struct net *net, xid_type_t ty)
-{
-	def_upd->f = f;
-	def_upd->net = net;
-	hold_net(net);
-	def_upd->ty = ty;
-	call_rcu(&def_upd->rcu_head, do_deferred_update);
-}
-EXPORT_SYMBOL_GPL(fib_defer_xip_upd);
-
-void fib_deferred_negdep_flush(struct net *net, xid_type_t ty)
-{
+	struct xip_deferred_negdep_flush *dnf =
+		container_of(head, struct xip_deferred_negdep_flush, rcu_head);
 	struct xip_ppal_ctx *ctx;
 
 	rcu_read_lock();
-	ctx = xip_find_ppal_ctx_rcu(net, ty);
+	ctx = xip_find_ppal_ctx_rcu(dnf->net, dnf->ty);
 	if (likely(ctx)) { /* Principal could be unloading. */
 		/* Flush @negdep. */
 		xdst_free_anchor(&ctx->negdep);
 	}
 	rcu_read_unlock();
+
+	release_net(dnf->net);
+	fib_free_dnf(dnf);
 }
-EXPORT_SYMBOL_GPL(fib_deferred_negdep_flush);
+
+void fib_defer_dnf(struct xip_deferred_negdep_flush *dnf,
+	struct net *net, xid_type_t ty)
+{
+	dnf->net = net;
+	hold_net(net);
+	dnf->ty = ty;
+	call_rcu(&dnf->rcu_head, __fib_defer_dnf);
+}
+EXPORT_SYMBOL_GPL(fib_defer_dnf);
 
 int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg, int *padded)
 {
-	struct deferred_xip_update *def_upd;
+	struct xip_deferred_negdep_flush *dnf;
 	struct fib_xid *cur_fxid;
 	const u8 *id;
 	u32 bucket;
@@ -696,8 +689,8 @@ int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
 		*padded = 0;
 
 	/* Allocate memory before acquiring lock because we can sleep now. */
-	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
-	if (!def_upd)
+	dnf = fib_alloc_dnf(GFP_KERNEL);
+	if (!dnf)
 		return -ENOMEM;
 
 	/* Acquire lock. */
@@ -740,8 +733,7 @@ int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
 	 * migrate to @new_fxid, wait an RCU synchronization to make sure that
 	 * every thread see @new_fxid.
 	 */
-	fib_defer_xip_upd(def_upd, fib_deferred_negdep_flush,
-		xtbl_net(xtbl), xtbl_ppalty(xtbl));
+	fib_defer_dnf(dnf, xtbl_net(xtbl), xtbl_ppalty(xtbl));
 
 	if (padded)
 		*padded = 1;
@@ -750,7 +742,7 @@ int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
 unlock_bucket:
 	fib_unlock_bucket(xtbl, bucket);
 def_upd:
-	fib_free_xip_upd(def_upd);
+	fib_free_dnf(dnf);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(fib_build_newroute);

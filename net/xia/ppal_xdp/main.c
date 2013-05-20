@@ -863,7 +863,7 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
 	struct xia_row *ssink = &addr->sxia_addr.s_row[node_n - 1];
-	struct deferred_xip_update *def_upd;
+	struct xip_deferred_negdep_flush *dnf;
 	struct fib_xid_xdp_local *lxdp;
 	const u8 *id;
 	struct xip_ppal_ctx *ctx;
@@ -875,8 +875,8 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	if (ssink->s_xid.xid_type != XIDTYPE_XDP)
 		return -EXTYNOSUPPORT;
 
-	def_upd = fib_alloc_xip_upd(GFP_KERNEL);
-	if (!def_upd)
+	dnf = fib_alloc_dnf(GFP_KERNEL);
+	if (!dnf)
 		return -ENOMEM;
 
 	lxdp = sk_lxdp(sk);
@@ -893,11 +893,11 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	 */
 	if (rc) {
 		free_fxid_norcu(xtbl, &lxdp->fxid);
-		fib_free_xip_upd(def_upd);
+		fib_free_dnf(dnf);
 		return rc == -EEXIST ? -EADDRINUSE : rc;
 	}
 
-	fib_defer_xip_upd(def_upd, fib_deferred_negdep_flush, net, XIDTYPE_XDP);
+	fib_defer_dnf(dnf, net, XIDTYPE_XDP);
 	sock_prot_inuse_add(net, sk->sk_prot, 1);
 	return 0;
 }
