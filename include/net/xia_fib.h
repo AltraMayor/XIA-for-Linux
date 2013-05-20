@@ -490,35 +490,29 @@ void fib_replace_fxid_locked(struct fib_xid_table *xtbl,
 void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 	__releases(xip_bucket_lock);
 
-/** fib_alloc_xip_upd - allocate an struct deferred_xip_update.
+/** fib_alloc_dnf - allocate an struct xip_deferred_negdep_flush.
  * RETURN
  *	Return the struct on success; otherwise NULL.
  * NOTE
  *	The returned struct must be consumed by a call to either
- *	fib_free_xip_upd(), or fib_defer_xip_upd().
+ *	fib_free_dnf(), or fib_defer_dnf().
  */
-struct deferred_xip_update;
-struct deferred_xip_update *fib_alloc_xip_upd(gfp_t flags);
+struct xip_deferred_negdep_flush;
+struct xip_deferred_negdep_flush *fib_alloc_dnf(gfp_t flags);
 
-static inline void fib_free_xip_upd(struct deferred_xip_update *def_upd)
+static inline void fib_free_dnf(struct xip_deferred_negdep_flush *dnf)
 {
-	kfree(def_upd);
+	kfree(dnf);
 }
 
-/** xip_defer_update - Defer the execution of @f(@net, @ty) for
- *			an RCU synchronization.
- * NODE
- *	@f may (likely) be called from an atomic context.
+/** fib_defer_dnf - Defer the flush of negdep anchor in context of principal
+ *			of type @ty in @net for an RCU synchronization.
  *
- *	If caller of this function resides in a kernel module,
- *	it should consider to call rcu_barrier() while unloading its module.
- *
- *	@def_upd is consumed once this function returns.
+ * NOTE
+ *	@dnf is consumed once this function returns.
  */
-typedef void (*fib_deferred_xid_upd_t)(struct net *net, xid_type_t ty);
-void fib_deferred_negdep_flush(struct net *net, xid_type_t ty);
-void fib_defer_xip_upd(struct deferred_xip_update *def_upd,
-	fib_deferred_xid_upd_t f, struct net *net, xid_type_t ty);
+void fib_defer_dnf(struct xip_deferred_negdep_flush *dnf,
+	struct net *net, xid_type_t ty);
 
 #endif /* __KERNEL__ */
 #endif /* _NET_XIA_FIB_H */

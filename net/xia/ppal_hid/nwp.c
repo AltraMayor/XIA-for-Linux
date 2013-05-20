@@ -240,7 +240,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	struct hrdw_addr *ha;
 	struct fib_xid_table *xtbl;
 	struct fib_xid *cur_fxid;
-	struct deferred_xip_update *def_upd;
+	struct xip_deferred_negdep_flush *dnf;
 	struct fib_xid_hid_main *new_mhid;
 	u32 bucket;
 	int rc;
@@ -306,8 +306,8 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	 * an atomic context AND a spin lock is held at this point.
 	 */
 
-	def_upd = fib_alloc_xip_upd(GFP_ATOMIC);
-	if (!def_upd) {
+	dnf = fib_alloc_dnf(GFP_ATOMIC);
+	if (!dnf) {
 		rc = -ENOMEM;
 		goto unlock_bucket;
 	}
@@ -331,12 +331,11 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	 * migrate to @new_mhid, wait an RCU synchronization to make sure that
 	 * every thread see @new_mhid.
 	 */
-	fib_defer_xip_upd(def_upd, fib_deferred_negdep_flush, hid_ctx->net,
-		XIDTYPE_HID);
+	fib_defer_dnf(dnf, hid_ctx->net, XIDTYPE_HID);
 	return 0;
 
 def_upd:
-	fib_free_xip_upd(def_upd);
+	fib_free_dnf(dnf);
 unlock_bucket:
 	fib_unlock_bucket(xtbl, bucket);
 ha:
