@@ -9,4 +9,5 @@ xia-objs :=	main.o socket.o dag.o locktbl.o fib.o fib_frontend.o route.o \
 
 obj-$(CONFIG_XIA_PPAL_AD) += ppal_ad/
 obj-$(CONFIG_XIA_PPAL_HID) += ppal_hid/
+obj-$(CONFIG_XIA_PPAL_SERVAL) += ppal_serval/
 obj-$(CONFIG_XIA_PPAL_XDP) += ppal_xdp/
