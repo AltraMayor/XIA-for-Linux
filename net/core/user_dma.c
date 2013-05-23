@@ -129,3 +129,4 @@ end:
 fault:
 	return -EFAULT;
 }
+EXPORT_SYMBOL(dma_skb_copy_datagram_iovec);
