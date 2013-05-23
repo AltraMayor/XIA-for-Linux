@@ -2,7 +2,6 @@
 #ifndef _SERVAL_IPV4_H_
 #define _SERVAL_IPV4_H_
 
-#include <skbuff.h>
 #if defined(OS_LINUX_KERNEL)
 #include <linux/kernel.h>
 #include <linux/version.h>

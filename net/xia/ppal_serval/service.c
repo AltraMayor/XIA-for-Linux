@@ -13,19 +13,9 @@
  */
 #include <platform.h>
 #include <netdevice.h>
-#include <atomic.h>
 #include <debug.h>
-#include <list.h>
-#include <lock.h>
-#include <dst.h>
 #include <netinet_serval.h>
-#if defined(OS_USER)
-#include <stdlib.h>
-#include <errno.h>
-#endif
-#if defined(OS_LINUX_KERNEL)
 #include <serval_ipv4.h>
-#endif
 #include "service.h"
 #include "bst.h"
 
@@ -695,7 +685,6 @@ void __service_entry_free(struct service_entry *se)
                 target_set_free(set);
         }
 
-        rwlock_destroy(&se->lock);
         kfree(se);
 }
 

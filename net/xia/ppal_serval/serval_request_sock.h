@@ -3,9 +3,7 @@
 #define _SERVAL_REQUEST_SOCK_H_
 
 #include <platform.h>
-#include <list.h>
-#include <sock.h>
-#include <request_sock.h>
+#include <net/request_sock.h>
 #include <netinet_serval.h>
 #if defined(OS_USER)
 #include <string.h>

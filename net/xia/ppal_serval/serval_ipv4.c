@@ -11,82 +11,19 @@
  *	the License, or (at your option) any later version.
  */
 #include <platform.h>
-#include <skbuff.h>
 #include <debug.h>
 #include <netdevice.h>
-#include <checksum.h>
 #include <serval_sock.h>
 #include <serval_ipv4.h>
 #include <serval_sal.h>
 #include <input.h>
-#if defined(OS_LINUX_KERNEL)
 #include <linux/if_ether.h>
 #include <linux/inetdevice.h>
 #include <linux/netfilter_ipv4.h>
 #include <net/route.h>
 #include <net/ip.h>
-#elif !defined(OS_ANDROID)
-#include <netinet/if_ether.h>
-#endif
 
 extern int serval_sal_rcv(struct sk_buff *);
-
-#if defined(OS_USER)
-
-static inline void ip_send_check(struct iphdr *iph)
-{
-        iph->check = 0;
-        iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
-}
-
-int serval_ipv4_rcv(struct sk_buff *skb)
-{
-	struct iphdr *iph = ip_hdr(skb);
-	unsigned int hdr_len = iph->ihl << 2;
-	int ret = 0;
-
-	switch (iph->protocol) {
-        case IPPROTO_SERVAL:
-                break;
-	case IPPROTO_ICMP:
-		LOG_DBG("icmp packet\n");
-	case IPPROTO_UDP:
-	case IPPROTO_TCP:
-        default:
-                ret = INPUT_DELIVER;
-                goto out;
-	}
-
-#if defined(ENABLE_DEBUG)
-        {
-                char srcstr[18], dststr[18];
-                LOG_DBG("%s %s->%s hdr_len=%u tot_len=%u prot=%u\n",
-                        skb->dev->name,
-                        inet_ntop(AF_INET, &iph->saddr, srcstr, 18),
-                        inet_ntop(AF_INET, &iph->daddr, dststr, 18),
-                        hdr_len, ntohs(iph->tot_len), iph->protocol);
-        }
-#endif
-        if (!pskb_may_pull(skb, hdr_len)) {
-                LOG_ERR("pskb_may_pull failed! skb->len=%u hdr_len=%u\n",
-                        skb->len, hdr_len);
-                goto inhdr_error;
-        }
-        
-        pskb_pull(skb, hdr_len);                
-        skb_reset_transport_header(skb);
-        
-        ret = serval_sal_rcv(skb);
-out:
-	return ret;
-inhdr_error:
-        LOG_ERR("header error\n");
-        kfree_skb(skb);
-
-        return ret;
-}
-
-#endif
 
 int serval_ipv4_forward_out(struct sk_buff *skb)
 {
