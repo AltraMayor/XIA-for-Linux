@@ -12,7 +12,6 @@
 #define __SERVAL_UDP_H__
 
 #include <platform.h>
-#include <skbuff.h>
 #include <serval_udp_sock.h>
 
 #if defined(OS_LINUX_KERNEL)

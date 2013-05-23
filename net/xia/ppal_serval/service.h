@@ -2,12 +2,6 @@
 #ifndef _SERVICE_H_
 #define _SERVICE_H_
 
-#include <lock.h>
-#include <list.h>
-#include <atomic.h>
-#include <skbuff.h>
-#include <dst.h>
-#include <sock.h>
 #include <ctrlmsg.h>
 #include "bst.h"
 

@@ -2,44 +2,10 @@
 #ifndef _SERVAL_H
 #define _SERVAL_H
 
-#if defined(__linux__) && defined(__KERNEL__)
 #include <linux/kernel.h>
 #include <linux/socket.h>
 #include <linux/string.h>
 #include <linux/in.h>
-#else
-#include <stdint.h>
-#include <string.h>
-#include <stdio.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#if defined(__linux__)
-#include <asm/byteorder.h>
-#include <linux/types.h>
-#include <endian.h>
-#elif defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__)
-#include <machine/endian.h>
-#define HAS_SOCKADDR_LEN 1
-/* Setup byte order defines according to the Linux kernel */
-#if __BYTE_ORDER == __BIG_ENDIAN
-#ifdef __LITTLE_ENDIAN
-#undef __LITTLE_ENDIAN
-#endif
-#define __BIG_ENDIAN_BITFIELD
-#undef  __LITTLE_ENDIAN_BITFIELD
-#elif __BYTE_ORDER == __LITTLE_ENDIAN
-#ifdef __BIG_ENDIAN
-#undef __BIG_ENDIAN
-#endif
-#define __LITTLE_ENDIAN_BITFIELD
-#undef __BIG_ENDIAN_BITFIELD
-#else
-#error "Could not figure out the byte order of this platform!"
-#endif
-
-#endif
-#endif
 
 #define SERVAL_ASSERT(predicate) __ASSERT__(predicate, __LINE__)
 

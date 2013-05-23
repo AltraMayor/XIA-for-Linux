@@ -1,7 +1,6 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
 #include <platform.h>
 #include <debug.h>
-#include <sock.h>
 #include <serval_tcp.h>
 #include <serval_tcp_sock.h>
 

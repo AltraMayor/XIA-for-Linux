@@ -2,7 +2,7 @@
 # Makefile for Serval principal
 #
 
-ccflags-y += -I$(srctree)/net/xia/ppal_serval -DENABLE_SPLICE -D__linux__
+ccflags-y += -I$(srctree)/net/xia/ppal_serval -DENABLE_SPLICE
 
 obj-$(CONFIG_XIA_PPAL_SERVAL) += xia_ppal_serval.o
 

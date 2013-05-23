@@ -2,8 +2,6 @@
 #ifndef _SERVAL_SAL_H_
 #define _SERVAL_SAL_H_
 
-#include <skbuff.h>
-#include <sock.h>
 #include <netinet_serval.h>
 #include <serval_sock.h>
 #include <debug.h>

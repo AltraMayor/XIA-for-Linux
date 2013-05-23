@@ -10,15 +10,9 @@
  *	the License, or (at your option) any later version.
  */
 #include <platform.h>
-#include <list.h>
-#include <lock.h>
 #include <ctrlmsg.h>
-#include <skbuff.h>
 #include <debug.h>
-#include <sock.h>
-#if defined(OS_LINUX_KERNEL)
 #include <linux/netlink.h>
-#endif
 #include "ctrl.h"
 #include "delay_queue.h"
 #include "serval_sal.h"

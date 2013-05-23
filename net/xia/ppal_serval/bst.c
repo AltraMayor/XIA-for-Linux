@@ -16,16 +16,8 @@
  */
 #include <platform.h>
 #include <debug.h>
-#include <list.h>
-#if defined(OS_USER)
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#endif
-#if defined(OS_LINUX_KERNEL)
 #include <linux/kernel.h>
 #include <linux/string.h>
-#endif
 #include "bst.h"
 
 #define PREFIX_BYTE(bits) ((bits) / 8)
