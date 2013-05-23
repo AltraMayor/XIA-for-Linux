@@ -576,10 +576,6 @@ struct udp_splice_state {
 typedef int (*sk_read_actor_t)(read_descriptor_t *, struct sk_buff *,
                                unsigned int, size_t);
 
-extern int skb_splice_bits(struct sk_buff *skb, unsigned int offset,
-                           struct pipe_inode_info *pipe, unsigned int tlen,
-                           unsigned int flags);
-
 static int serval_udp_splice_data_recv(read_descriptor_t *rd_desc, 
                                        struct sk_buff *skb,
                                        unsigned int offset, size_t len)
