@@ -3,7 +3,6 @@
 #define _SERVAL_TCP_SOCK_H
 
 #include <platform.h>
-#include <skbuff.h>
 #include <serval_sock.h>
 
 struct tcp_congestion_ops;

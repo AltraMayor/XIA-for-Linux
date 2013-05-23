@@ -13,29 +13,18 @@
  *	the License, or (at your option) any later version.
  */
 #include <platform.h>
-#include <platform_tcpip.h>
-#include <skbuff.h>
 #include <debug.h>
 #include <serval_sock.h>
 #include <netdevice.h>
 #include <serval_sal.h>
 #include <serval_ipv4.h>
 #include <netinet_serval.h>
-#if defined(OS_LINUX_KERNEL)
 #include <linux/if_ether.h>
 #include <linux/if_ether.h>
 #include <linux/inetdevice.h>
 #include <linux/netfilter_ipv4.h>
 #include <net/route.h>
 #include <net/ip.h>
-#elif !defined(OS_ANDROID)
-#include <netinet/if_ether.h>
-#endif
-#if defined(OS_USER)
-#include <string.h>
-#include <signal.h>
-#include <arpa/inet.h>
-#endif
 #include <serval_request_sock.h>
 #include <service.h>
 #include <delay_queue.h>

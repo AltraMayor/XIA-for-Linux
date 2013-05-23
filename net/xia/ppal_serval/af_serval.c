@@ -37,13 +37,6 @@ extern void inet_to_serval_fini(void);
 
 /* Common includes */
 #include <debug.h>
-#include <list.h>
-#include <atomic.h>
-#include <wait.h>
-#include <sock.h>
-#include <net.h>
-#include <skbuff.h>
-#include <inet_sock.h>
 #include <netinet_serval.h>
 #include <serval_sock.h>
 #include <serval_request_sock.h>

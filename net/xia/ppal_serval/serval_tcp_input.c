@@ -2,10 +2,6 @@
 #include <platform.h>
 #include <debug.h>
 #include <netdevice.h>
-#include <skbuff.h>
-#include <sock.h>
-#include <bitops.h>
-#include <dst.h>
 #include <netinet_serval.h>
 #include <serval_tcp_sock.h>
 #include <serval_tcp.h>

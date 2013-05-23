@@ -2,8 +2,6 @@
 #ifndef _BST_H_
 #define _BST_H_
 
-#include <list.h>
-
 struct bst_node;
 
 struct bst {

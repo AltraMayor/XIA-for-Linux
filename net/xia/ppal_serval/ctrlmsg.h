@@ -346,20 +346,14 @@ enum {
         CTRL_MODE_HOST = 1
 };
 
-#if defined(__linux__)
 #include <linux/netlink.h>
 #define NETLINK_SERVAL 17
 #define NLMSG_SERVAL NLMSG_MIN_TYPE
 #define SVGRP_CTRL 0x1
-#endif /* __linux__ */
 
 /* Ancillary CMSG data types */
 #define CMSG_TYPE_CLIENT_PID 0x1
 
-#if defined(OS_ANDROID)
-#define SERVAL_STACK_CTRL_PATH "/data/local/tmp/serval-stack-ctrl.sock"
-#else
 #define SERVAL_STACK_CTRL_PATH "/tmp/serval-stack-ctrl.sock"
-#endif
 
 #endif /* _SERVAL_CTRLMSG_H */

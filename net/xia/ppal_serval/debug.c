@@ -66,30 +66,4 @@ void logme(log_level_t level, const char *func, const char *format, ...)
                 break;
         }
 #endif
-#if defined(OS_USER)
-	{
-		FILE *s = stdout;
-
-		switch (level) {
-		case LOG_LEVEL_DBG:
-		case LOG_LEVEL_INF:
-                case LOG_LEVEL_PKT:
-			s = stdout;
-			break;
-		case LOG_LEVEL_ERR:
-		case LOG_LEVEL_WARN:
-		case LOG_LEVEL_CRIT:
-			s = stderr;
-			break;
-		}
-
-                va_start(ap, format);
-		fprintf(s, "%s{0x%lx}[%3s]%s: ", 
-			get_strtime(), (unsigned long)pthread_self(), 
-                        log_level_str[level], func);
-		vfprintf(s, format, ap);
-                va_end(ap);
-		fflush(s);
-	}
-#endif
 }

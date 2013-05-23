@@ -11,26 +11,15 @@
  *	the License, or (at your option) any later version.
  */
 #include <platform.h>
-#include <skbuff.h>
-#include <list.h>
 #include <debug.h>
-#include <lock.h>
-#include <timer.h>
 #include <netdevice.h>
 #include <netinet_serval.h>
 #include <serval_sock.h>
 #include <serval_tcp_sock.h>
 #include <serval_sal.h>
 #include <service.h>
-#if defined(OS_LINUX_KERNEL)
 #include <linux/ip.h>
 #include <net/route.h>
-#else
-#include <netinet/ip.h>
-#if defined(OS_LINUX)
-#include <endian.h>
-#endif
-#endif
 #include "serval_ipv4.h"
 
 atomic_t serval_nr_socks = ATOMIC_INIT(0);
@@ -119,7 +108,7 @@ void serval_table_fini(struct serval_table *table)
                 spin_unlock_bh(&table->hash[i].lock);           
 	}
 
-        FREE(table->hash);
+        kfree(table->hash);
 }
 
 void serval_sock_migrate_iface(int old_dev, int new_dev)
@@ -276,6 +265,29 @@ void serval_sock_migrate_service(struct service_id *old_s, int new_dev)
                 release_sock(sk);
                 sock_put(sk);
         }
+}
+
+static unsigned long get_socket_inode(struct socket *socket)
+{
+        if (socket) {
+                struct address_space *faddr;
+                struct inode *inode;
+                if (!socket->file) {
+                        goto out;
+                }
+
+                faddr = socket->file->f_mapping;
+                if (!faddr) {
+                        goto out;
+                }
+        
+                inode = faddr->host;
+                if (inode) {
+                        return inode->i_ino;
+                }
+        }
+out:
+        return 0;
 }
 
 struct flow_info *serval_sock_stats_flow(struct flow_id *flow, 
