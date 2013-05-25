@@ -201,12 +201,10 @@ out:
 }
 EXPORT_SYMBOL_GPL(init_xid_table);
 
-void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
-	int entry_type)
+void __init_fxid(struct fib_xid *fxid, int table_id, int entry_type)
 {
 	INIT_HLIST_NODE(&fxid->fx_branch_list[0]);
 	INIT_HLIST_NODE(&fxid->fx_branch_list[1]);
-	memmove(fxid->fx_xid, xid, XIA_XID_MAX);
 
 	BUILD_BUG_ON(XRTABLE_MAX_INDEX > 0x100);
 	BUG_ON(table_id >= XRTABLE_MAX_INDEX);
@@ -217,7 +215,7 @@ void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
 
 	fxid->dead.xtbl = NULL;
 }
-EXPORT_SYMBOL_GPL(init_fxid);
+EXPORT_SYMBOL_GPL(__init_fxid);
 
 static void __free_fxid(struct rcu_head *head)
 {

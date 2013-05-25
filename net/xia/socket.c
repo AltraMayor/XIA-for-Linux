@@ -57,6 +57,27 @@ int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len)
 }
 EXPORT_SYMBOL_GPL(check_sockaddr_xia);
 
+int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty)
+{
+	int i;
+	int n = xia_test_addr(&addr->sxia_addr);
+
+	if (n < 1) {
+		/* Invalid address since it's empty. */
+		return -EINVAL;
+	}
+
+	/* Verify the type of all sinks. */
+	for (i = 0; i < n; i++) {
+		struct xia_row *row = &addr->sxia_addr.s_row[i];
+		if (is_it_a_sink(row, i, n) && row->s_xid.xid_type != ty)
+			return -EINVAL;
+	}
+
+	return n;
+}
+EXPORT_SYMBOL_GPL(check_type_of_all_sinks);
+
 static int check_valid_single_sink(struct sockaddr_xia *addr)
 {
 	int i;
@@ -158,14 +179,25 @@ void xia_reset_dest(struct xia_sock *xia)
 }
 EXPORT_SYMBOL_GPL(xia_reset_dest);
 
-int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n)
+void __xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n,
+	int last_node, struct xip_dst *xdst)
+{
+	xia->xia_dnum = n;
+	xia->xia_dlast_node = last_node;
+	copy_n_and_shade_xia_addr(&xia->xia_daddr, dest, n);
+	sk_dst_set(&xia->sk, &xdst->dst);
+	xia->xia_daddr_set = true;
+}
+EXPORT_SYMBOL_GPL(__xia_set_dest);
+
+int xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n)
 {
 	struct sock *sk = &xia->sk;
 	struct xip_dst *xdst;
 
 	xia->xia_dnum = n;
 	xia->xia_dlast_node = XIA_ENTRY_NODE_INDEX;
-	memmove(&xia->xia_daddr, dest, sizeof(xia->xia_daddr));
+	copy_n_and_shade_xia_addr(&xia->xia_daddr, dest, n);
 
 	xdst = xip_mark_addr_and_get_dst(sock_net(sk),
 		xia->xia_daddr.s_row, n, &xia->xia_dlast_node, 0);
@@ -173,7 +205,7 @@ int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n)
 		return PTR_ERR(xdst);
 
 	sk_dst_set(sk, &xdst->dst);
-	xia->xia_daddr_set = 1;
+	xia->xia_daddr_set = true;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xia_set_dest);

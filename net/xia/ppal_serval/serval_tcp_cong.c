@@ -1,14 +1,6 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
-#include <platform.h>
-#include <debug.h>
-#include <serval_tcp_sock.h>
-#include <serval_tcp.h>
-
-#if defined(OS_LINUX_KERNEL)
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0))
 #include <linux/export.h>
-#endif
-#endif /* OS_LINUX_KERNEL */
+#include "serval_tcp_sock.h"
+#include "serval_tcp.h"
 
 int sysctl_serval_tcp_max_ssthresh = 0;
 

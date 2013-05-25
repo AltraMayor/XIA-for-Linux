@@ -1,14 +1,47 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
 #ifndef _SERVAL_SAL_H_
 #define _SERVAL_SAL_H_
 
-#include <netinet_serval.h>
-#include <serval_sock.h>
-#include <debug.h>
+#include <net/xia_serval.h>
+#include <net/xia_route.h>
+
+/* Service Access Layer (SAL) socket states used for, e.g., migration. */
+enum {
+	SAL_RSYN_INITIAL = 0,
+	SAL_RSYN_SENT,
+	SAL_RSYN_RECV,
+	SAL_RSYN_SENT_RECV, /* Receive RSYN after having sent RSYN */
+	__SAL_RSYN_MAX_STATE,
+};
+
+struct serval_sock_af_ops {
+	int	(*receive)(struct sock *sk, struct sk_buff *skb);
+	void	(*send_check)(struct sock *sk, struct sk_buff *skb);
+	int	(*setsockopt)(struct sock *sk, int level, int optname,
+			char __user *optval, unsigned int optlen);
+	int	(*getsockopt)(struct sock *sk, int level, int optname,
+			char __user *optval, int __user *optlen);
+	int	(*conn_build_syn)(struct sock *sk, struct sk_buff *skb);
+	int	(*conn_build_synack)(struct sock *sk, struct dst_entry *dst,
+			struct request_sock *rsk, struct sk_buff *skb);
+	int	(*conn_build_ack)(struct sock *sk, struct sk_buff *skb);
+	int	(*conn_request)(struct sock *sk, struct request_sock *rsk,
+			struct sk_buff *skb);
+	int	(*conn_close)(struct sock *sk);
+	int	(*request_state_process)(struct sock *sk, struct sk_buff *skb);
+	int	(*respond_state_process)(struct sock *sk, struct sk_buff *skb);
+	int	(*conn_child_sock)(struct sock *sk, struct sk_buff *skb,
+			struct request_sock *rsk, struct sock *child,
+			struct dst_entry *dst);
+	int	(*migration_completed)(struct sock *sk);
+	int	(*freeze_flow)(struct sock *sk);
+	void	(*done)(struct sock *sk);
+	u16	net_header_len;
+	u16	sockaddr_len;
+};
+
+int serval_sock_refresh_dest(struct sock *sk);
 
 int serval_sal_xmit_skb(struct sk_buff *skb);
-
-struct service_entry;
 
 /* 
    NOTE:
@@ -32,24 +65,22 @@ struct service_entry;
    packets; i.e., we should always clone queued packets before we
    transmit.
  */
- struct sal_skb_cb {
-         u8 flags;
-         u32 verno;
-         u32 when;
-         struct service_id *srvid;
- };
+/* XXX Is this struct needed at all? Isn't there a simpler solution? */
+struct sal_skb_cb {
+	u8 flags;
+	u32 verno;
+	u32 when;
+};
 
 enum sal_ctrl_flags {
-        SVH_SYN       = 1 << 0,
-        SVH_RSYN      = 1 << 1,
-        SVH_ACK       = 1 << 2,
-        SVH_NACK      = 1 << 3,
-        SVH_RST       = 1 << 4,
-        SVH_FIN       = 1 << 5,
-        SVH_CONN_ACK  = 1 << 6, /* Only used internally to signal that
-                                   the ACK should carry a connection
-                                   extension (for SYN-ACKs). */
-        SVH_RETRANS   = 1 << 7,
+	SVH_SYN       = 1 << 0,
+	SVH_RSYN      = 1 << 1,
+	SVH_ACK       = 1 << 2,
+	SVH_NACK      = 1 << 3,
+	SVH_RST       = 1 << 4,
+	SVH_FIN       = 1 << 5,
+
+	SVH_RETRANS   = 1 << 6,
 };
 
 #define sal_time_stamp ((u32)(jiffies))
@@ -63,65 +94,60 @@ static inline struct sal_skb_cb *__sal_skb_cb(struct sk_buff *skb)
 
 extern int sysctl_tcp_fin_timeout;
 
-#define MAX_CTRL_QUEUE_LEN 20
+/* XXX Given that the control queue only holds a sk_buff at a time,
+ * couldn't it be just a pointer?
+ */
 
 /* control queue abstraction */
 static inline void serval_sal_ctrl_queue_purge(struct sock *sk)
 {
-    struct sk_buff *skb = serval_sk(sk)->ctrl_queue;
+    struct sk_buff *skb = sk_ssk(sk)->ctrl_queue;
     if (skb) {
             kfree_skb(skb);
-            serval_sk(sk)->ctrl_queue = NULL;
+            sk_ssk(sk)->ctrl_queue = NULL;
     }
 }
 
 static inline struct sk_buff *serval_sal_ctrl_queue_head(struct sock *sk)
 {
-    return serval_sk(sk)->ctrl_queue;
+    return sk_ssk(sk)->ctrl_queue;
 }
 
 static inline struct sk_buff *serval_sal_send_head(struct sock *sk)
 {
-	return serval_sk(sk)->ctrl_send_head;
+	return sk_ssk(sk)->ctrl_send_head;
 }
 
 static inline int serval_sal_skb_is_last(const struct sock *sk,
 					 const struct sk_buff *skb)
 {
-    return skb == serval_sk(sk)->ctrl_queue;
+    return skb == sk_ssk(sk)->ctrl_queue;
 }
 
 static inline void serval_sal_advance_send_head(struct sock *sk, 
 						struct sk_buff *skb)
 {
 	if (serval_sal_skb_is_last(sk, skb))
-		serval_sk(sk)->ctrl_send_head = NULL;
+		sk_ssk(sk)->ctrl_send_head = NULL;
 	else
-		serval_sk(sk)->ctrl_send_head = serval_sk(sk)->ctrl_queue;
-}
-
-static inline void serval_sal_check_send_head(struct sock *sk, 
-					      struct sk_buff *skb_unlinked)
-{
-	if (serval_sk(sk)->ctrl_send_head == skb_unlinked)
-		serval_sk(sk)->ctrl_send_head = NULL;
+		sk_ssk(sk)->ctrl_send_head = sk_ssk(sk)->ctrl_queue;
 }
 
 static inline void serval_sal_init_send_head(struct sock *sk)
 {
-	serval_sk(sk)->ctrl_send_head = NULL;
+	sk_ssk(sk)->ctrl_send_head = NULL;
 }
 
 static inline void serval_sal_init_ctrl_queue(struct sock *sk)
 {
-        serval_sk(sk)->ctrl_queue = NULL;
+        sk_ssk(sk)->ctrl_queue = NULL;
         serval_sal_init_send_head(sk);
 }
 
 static inline void __serval_sal_add_ctrl_queue_tail(struct sock *sk, 
 						    struct sk_buff *skb)
 {
-    serval_sk(sk)->ctrl_queue = skb;
+	sk_ssk(sk)->ctrl_queue = skb;
 }
 
 static inline void serval_sal_add_ctrl_queue_tail(struct sock *sk, 
@@ -129,42 +155,28 @@ static inline void serval_sal_add_ctrl_queue_tail(struct sock *sk,
 {
 	__serval_sal_add_ctrl_queue_tail(sk, skb);
 
-	if (serval_sk(sk)->ctrl_send_head == NULL) {
-		serval_sk(sk)->ctrl_send_head = skb;
-	}
+	if (sk_ssk(sk)->ctrl_send_head == NULL)
+		sk_ssk(sk)->ctrl_send_head = skb;
 }
 
 static inline void serval_sal_unlink_ctrl_queue(struct sk_buff *skb, 
 						struct sock *sk)
 {
-    if (skb == serval_sk(sk)->ctrl_queue) {
-        serval_sk(sk)->ctrl_queue = NULL;
-    }
-}
-
-static inline int serval_sal_ctrl_queue_empty(struct sock *sk)
-{
-    if (serval_sk(sk)->ctrl_queue)
-        return 0;
-    return 1;
-}
-static inline unsigned int serval_sal_ctrl_queue_len(struct sock *sk)
-{
-        if (serval_sk(sk)->ctrl_queue)
-                return 1;
-        return 0;
+	if (skb == sk_ssk(sk)->ctrl_queue)
+		sk_ssk(sk)->ctrl_queue = NULL;
 }
 
 int serval_sal_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len);
 void serval_sal_close(struct sock *sk, long timeout);
 int serval_sal_migrate(struct sock *sk);
-int serval_sal_do_rcv(struct sock *sk, struct sk_buff *skb);
 void serval_sal_rexmit_timeout(unsigned long data);
 void serval_sal_timewait_timeout(unsigned long data);
 int serval_sal_send_shutdown(struct sock *sk);
 int serval_sal_recv_shutdown(struct sock *sk);
 void serval_sal_done(struct sock *sk);
+
 int serval_sal_rcv(struct sk_buff *skb);
+int serval_sal_rsk_rcv(struct sk_buff *skb);
 
 void serval_sal_rcv_reset(struct sock *sk);
 void serval_sal_send_active_reset(struct sock *sk, gfp_t priority);
@@ -177,19 +189,17 @@ static inline struct sal_hdr *sal_hdr(struct sk_buff *skb)
 int serval_sal_send_fin(struct sock *sk);
 void serval_sal_update_rtt(struct sock *sk, const s32 seq_rtt);
 
-#define EXTRA_HDR_SIZE (20)
-#define IP_HDR_SIZE sizeof(struct iphdr)
-/* payload + LL + IP + extra */
-#define MAX_SAL_HDR (MAX_HEADER + IP_HDR_SIZE + EXTRA_HDR_SIZE + \
-                     sizeof(struct sal_hdr) +                    \
-                     sizeof(struct sal_control_ext) +            \
-                     2 * sizeof(struct sal_service_ext))
+/* These extra bytes are to accomodate the maximum minimum transport header.
+ * In the current implementation, TCP has the largest minimum header.
+ * XXX This size should be obtained automatically.
+ */
+#define EXTRA_HDR_SIZE 20
 
-#define SAL_NET_HEADER_LEN (sizeof(struct iphdr) +              \
-                            sizeof(struct sal_hdr))
+/* LL + XIP + SAL + SAL extensions + extra */
+#define MAX_SAL_HDR (MAX_HEADER + MAX_XIP_HEADER + sizeof(struct sal_hdr) + \
+	 sizeof(struct sal_control_ext) + EXTRA_HDR_SIZE)
 
-extern int serval_sal_forwarding;
-
+#define SAL_NET_HEADER_LEN (MAX_XIP_HEADER + sizeof(struct sal_hdr))
 
 #define SAL_RTO_MAX	((unsigned)(120*HZ))
 #define SAL_RTO_MIN	((unsigned)(HZ/5))

@@ -1,21 +1,13 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
-#include <platform.h>
-#include <debug.h>
-#include <netdevice.h>
-#include <netinet_serval.h>
-#include <serval_tcp_sock.h>
-#include <serval_tcp_request_sock.h>
-#include <serval_sal.h>
-#include <serval_ipv4.h>
-#include <serval_tcp.h>
-#include <af_serval.h>
-
 #include <asm/ioctls.h>
 #include <linux/sockios.h>
 #include <linux/swap.h>
 #include <linux/export.h>
 #include <net/netdma.h>
-#define ENABLE_PAGE 1
+#include "serval_tcp_sock.h"
+#include "serval_tcp_request_sock.h"
+#include "serval_sal.h"
+#include "af_serval.h"
+#include "serval_tcp.h"
 
 int sysctl_serval_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
 int sysctl_serval_tcp_low_latency __read_mostly = 0;
@@ -70,28 +62,11 @@ static int serval_tcp_disconnect(struct sock *sk, int flags)
         return err;
 }
 
-static void serval_tcp_shutdown(struct sock *sk, int how)
-{
-        LOG_SSK(sk, "\n");
-}
-
 __u32 serval_tcp_random_sequence_number(void)
 {
-   __u32 isn;
-
-#if defined(OS_LINUX_KERNEL)
-        get_random_bytes(&isn, sizeof(isn));
-#else
-        {
-                unsigned int i;
-                unsigned char *seqno = (unsigned char *)&isn;
-              
-                for (i = 0; i < sizeof(isn); i++) {
-                        seqno[i] = random() & 0xff;
-                }
-        }       
-#endif
-        return isn;
+	__u32 isn;
+	get_random_bytes(&isn, sizeof(isn));
+	return isn;
 }
 
 static inline __u32 serval_tcp_init_sequence(struct sk_buff *skb)
@@ -99,45 +74,35 @@ static inline __u32 serval_tcp_init_sequence(struct sk_buff *skb)
         return serval_tcp_random_sequence_number();
 }
 
-static inline void serval_tcp_openreq_init(struct request_sock *req,
-                                           struct serval_tcp_options_received *rx_opt,
-                                           struct sk_buff *skb)
+static void serval_tcp_openreq_init(struct serval_tcp_request_sock *trsk,
+	struct serval_tcp_options_received *rx_opt, struct sk_buff *skb)
 {
-	struct inet_request_sock *ireq = inet_rsk(req);
+	struct request_sock *req = &trsk->rsk.req;
 
-	req->rcv_wnd = 0;		/* So that tcp_send_synack() knows! */
+	req->rcv_wnd = 0;	/* So that tcp_send_synack() knows! */
 	req->cookie_ts = 0;
-	serval_tcp_rsk(req)->rcv_isn = ntohl(tcp_hdr(skb)->seq);
-
 	req->mss = rx_opt->mss_clamp;
 	req->ts_recent = rx_opt->saw_tstamp ? rx_opt->rcv_tsval : 0;
-	ireq->tstamp_ok = rx_opt->tstamp_ok;
-	ireq->sack_ok = rx_opt->sack_ok;
-	ireq->snd_wscale = rx_opt->snd_wscale;
-	ireq->wscale_ok = rx_opt->wscale_ok;
-      
-	ireq->tstamp_ok = rx_opt->tstamp_ok;
-	ireq->sack_ok = rx_opt->sack_ok;
-	ireq->snd_wscale = rx_opt->snd_wscale;
-	ireq->wscale_ok = rx_opt->wscale_ok;
-	ireq->acked = 0;
-	ireq->ecn_ok = 0;
-	ireq->rmt_port = tcp_hdr(skb)->source;
-	ireq->loc_port = tcp_hdr(skb)->dest;
+
+	trsk->rcv_isn = ntohl(tcp_hdr(skb)->seq);
+
+	trsk->snd_wscale	= rx_opt->snd_wscale;
+	trsk->rcv_wscale	= rx_opt->rcv_wscale;
+	trsk->tstamp_ok		= rx_opt->tstamp_ok;
+	trsk->sack_ok		= rx_opt->sack_ok;
+	trsk->wscale_ok		= rx_opt->wscale_ok;
 }
 
-static int serval_tcp_connection_request(struct sock *sk, 
-                                         struct request_sock *req,
-                                         struct sk_buff *skb)
+static int serval_tcp_connection_request(struct sock *sk,
+	struct request_sock *req, struct sk_buff *skb)
 {
         struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-        /* struct inet_request_sock *ireq = inet_rsk(req); */
         struct serval_tcp_request_sock *trsk = serval_tcp_rsk(req);
 	struct serval_tcp_options_received tmp_opt;
         u8 *hash_location;
 
         if (serval_tcp_rcv_checks(sk, skb, 1)) {                
-                LOG_ERR("packet failed receive checks!\n");
+                /* Packet failed receive checks! */
                 kfree_skb(skb);
                 return -1;
         }
@@ -148,24 +113,19 @@ static int serval_tcp_connection_request(struct sock *sk,
 	tmp_opt.user_mss  = tp->rx_opt.user_mss;
 	serval_tcp_parse_options(skb, &tmp_opt, &hash_location, 0);
 
-        serval_tcp_openreq_init(req, &tmp_opt, skb);
-
+        serval_tcp_openreq_init(trsk, &tmp_opt, skb);
         trsk->snt_isn = serval_tcp_init_sequence(skb);
-
         return 0;
 }
 
-static int serval_tcp_syn_recv_sock(struct sock *sk, 
-                                    struct sk_buff *skb,
-                                    struct request_sock *rsk,
-                                    struct sock *child,
-                                    struct dst_entry *dst);
+static int serval_tcp_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
+	struct request_sock *rsk, struct sock *child, struct dst_entry *dst);
 
 int serval_tcp_do_rcv(struct sock *sk, struct sk_buff *skb)
 {
         if (sk->sk_state == TCP_ESTABLISHED) { /* Fast path */
-		//sock_rps_save_rxhash(sk, skb->rxhash);
-                LOG_SSK(sk, "Established state receive\n");
+		/* sock_rps_save_rxhash(sk, skb->rxhash); */
+                /* Established state receive. */
               
 		if (serval_tcp_rcv_established(sk, skb, 
                                                tcp_hdr(skb), skb->len)) {
@@ -183,139 +143,109 @@ int serval_tcp_do_rcv(struct sock *sk, struct sk_buff *skb)
 	}
 
         return 0;
- reset:
-        /* send reset? */
-        LOG_SSK(sk, "TODO: send reset?\n");
- csum_err:
-        //LOG_WARN("Should handle RESET in non-established state\n");
+
+reset:
+	/* XXX Should we send a reset? */
+csum_err:
+	/* XXX Should handle RESET in non-established state. */
         kfree_skb(skb);
         return 0;
 }
 
 static __sum16 serval_tcp_v4_checksum_init(struct sk_buff *skb)
 {
-	const struct iphdr *iph = ip_hdr(skb);
+	/* These addresses don't make sense in XIA. */
+	const __be32 saddr = 0;
+	const __be32 daddr = 0;
 
 	if (skb->ip_summed == CHECKSUM_COMPLETE) {
-		if (!serval_tcp_v4_check(skb->len, iph->saddr,
-                                         iph->daddr, skb->csum)) {
+		if (!serval_tcp_v4_check(skb->len, skb->csum)) {
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 			return 0;
 		}
 	}
 
-	skb->csum = csum_tcpudp_nofold(iph->saddr, iph->daddr,
-				       skb->len, IPPROTO_TCP, 0);
+	skb->csum = csum_tcpudp_nofold(saddr, daddr, skb->len, IPPROTO_TCP, 0);
 
-	if (skb->len <= 76) {
-		return __skb_checksum_complete(skb);
-	}
-	return 0;
+	return skb->len <= 76 ? __skb_checksum_complete(skb) : 0;
 }
 
 int serval_tcp_rcv_checks(struct sock *sk, struct sk_buff *skb, int is_syn)
 {
         struct tcphdr *th;
-        struct iphdr *iph;
 
-#if defined(OS_LINUX_KERNEL)
 	if (is_syn) {
                 /* SYN packets can be broadcast and we should accept
-                   those packets. */
+                 * those packets. */
                 if (skb->pkt_type != PACKET_BROADCAST && 
                     skb->pkt_type != PACKET_HOST) {
-                        LOG_ERR("TCP packet not for this host (broadcast)!\n");
+                        /* TCP packet not for this host (broadcast)! */
                         goto bad_packet;
                 }
         } else if (skb->pkt_type != PACKET_HOST) {
-                LOG_ERR("TCP packet not for this host!\n");
+                /* TCP packet not for this host! */
                 goto bad_packet;
         }
-#endif
 
 	if (!pskb_may_pull(skb, sizeof(struct tcphdr))) {
-                LOG_SSK(sk, "No TCP header -- discarding\n");
+                /* No TCP header. */
                 goto bad_packet;
         }
 
 	th = tcp_hdr(skb);
 
 	if (th->doff < sizeof(struct tcphdr) / 4) {
-                LOG_SSK(sk, "TCP packet has bad data offset=%u!\n",
-                        th->doff << 2);
+                /* TCP packet has bad data offset. */
 		goto bad_packet;
         }
 
 	if (!pskb_may_pull(skb, th->doff << 2)) {
-                LOG_SSK(sk, "Cannot pull tcp header!\n");
+                /* Cannot pull tcp header. */
 		goto bad_packet;
         }
-
-	iph = ip_hdr(skb);
-
-#if defined(ENABLE_DEBUG)
-        {
-                char rmtstr[18], locstr[18], saddr[18], daddr[18];
-                LOG_SSK(sk, "iph->saddr=%s iph->daddr=%s "
-                        "inet_saddr=%s inet_daddr=%s\n",
-                        inet_ntop(AF_INET, &iph->saddr, 
-                                  rmtstr, 18),
-                        inet_ntop(AF_INET, &iph->daddr, 
-                                  locstr, 18),
-                        inet_ntop(AF_INET, &inet_sk(sk)->inet_saddr, 
-                                  saddr, 18),
-                        inet_ntop(AF_INET, &inet_sk(sk)->inet_daddr, 
-                                  daddr, 18));
-        }
-#endif
 
         /* An explanation is required here, I think. Packet length and
 	 * doff are validated by header prediction, provided case of
 	 * th->doff==0 is eliminated.  So, we defer the checks. */
 	if (!skb_csum_unnecessary(skb) && 
             serval_tcp_v4_checksum_init(skb)) {
-                LOG_ERR("Checksum error!\n");
+                /* Checksum error! */
                 goto bad_packet;
         }
 
 	TCP_SKB_CB(skb)->seq = ntohl(th->seq);
 	TCP_SKB_CB(skb)->end_seq = (TCP_SKB_CB(skb)->seq + 
-                                    th->syn + th->fin +
-				    skb->len - th->doff * 4);
+		th->syn + th->fin + skb->len - th->doff * 4);
 	TCP_SKB_CB(skb)->ack_seq = ntohl(th->ack_seq);
-	TCP_SKB_CB(skb)->when	 = 0;
-	TCP_SKB_CB(skb)->tcp_flags	 = iph->tos;
-	TCP_SKB_CB(skb)->sacked	 = 0;        
-        
-        LOG_PKT("Received TCP %s rcv_nxt=%u snd_wnd=%u end_seq=%u datalen=%u\n",
-                tcphdr_to_str(th),
-                serval_tcp_sk(sk)->rcv_nxt,
-                serval_tcp_sk(sk)->snd_wnd,
-                TCP_SKB_CB(skb)->end_seq,
-                skb->len - (th->doff << 2));
+	TCP_SKB_CB(skb)->when = 0;
+	TCP_SKB_CB(skb)->sacked = 0;        
+
+	/* Serval's original code copies IP's header's field TOS, that is,
+	 * ip_hdr(skb)->tos . XIA doesn't have equivalent field.
+	 */
+	TCP_SKB_CB(skb)->tcp_flags = 0;
 
         return 0;
+
 bad_packet:
         return -1;
 }
 
-/* 
-   Receive from network.
-
-   TODO/NOTE:
-
-   Since we are adding packets to the backlog in the SAL, and not here
-   in the transport receive function, we cannot drop packets with bad
-   transport headers before adding to the backlog. Ideally, we would
-   not bother queueing bad packets on the backlog, but this requires a
-   way to check transport headers before backlogging.
-
-   We could add an "early-packet-sanity-check" function in transport
-   that the SAL calls before adding packets to the backlog just to
-   make sure they are not bad. This function would basically have the
-   checks in the beginning of the function below.
-
-*/
+/* Receive from network.
+ *
+ * XXX
+ *
+ * Since we are adding packets to the backlog in the SAL, and not here
+ * in the transport receive function, we cannot drop packets with bad
+ * transport headers before adding to the backlog. Ideally, we would
+ * not bother queueing bad packets on the backlog, but this requires a
+ * way to check transport headers before backlogging.
+ *
+ * We could add an "early-packet-sanity-check" function in transport
+ * that the SAL calls before adding packets to the backlog just to
+ * make sure they are not bad. This function would basically have the
+ * checks in the beginning of the function below.
+ */
 static int serval_tcp_rcv(struct sock *sk, struct sk_buff *skb)
 {
         int err = 0;
@@ -339,17 +269,9 @@ static int serval_tcp_rcv(struct sock *sk, struct sk_buff *skb)
         } else {
                 /* We are processing the backlog in user/process
                    context */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0))
                 if (sk_add_backlog(sk, skb, 
                                    sk->sk_rcvbuf + sk->sk_sndbuf))
                         goto discard_it;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33))
-                if (sk_add_backlog(sk, skb)) {
-                        goto discard_it;
-                }
-#else
-                sk_add_backlog(sk, skb);
-#endif
         }
      
         return err;
@@ -359,9 +281,8 @@ discard_it:
         return 0;
 }
 
-void serval_tcp_done(struct sock *sk)
+static void serval_tcp_done(struct sock *sk)
 {
-        LOG_SSK(sk, "TCP done!\n");
 	serval_tcp_clear_xmit_timers(sk);
 }
 
@@ -370,12 +291,8 @@ void serval_tcp_init(void)
         unsigned long limit;
         int max_rshare, max_wshare;
         
-#if defined(OS_LINUX_KERNEL)
         limit = nr_free_buffer_pages() / 8;
         limit = max(limit, 128UL);
-#else
-        limit = 128UL;
-#endif
         sysctl_serval_tcp_mem[0] = limit / 4 * 3;
         sysctl_serval_tcp_mem[1] = limit;
         sysctl_serval_tcp_mem[2] = sysctl_serval_tcp_mem[0] * 2;
@@ -399,10 +316,10 @@ static int serval_tcp_connection_close(struct sock *sk)
 {
         struct sk_buff *skb;
 	int data_was_unread = 0;
-        
-	/*  We need to flush the recv. buffs.  We do this only on the
+
+	/*  We need to flush the receiving buffers.  We do this only on the
 	 *  descriptor close, not protocol-sourced closes, because the
-	 *  reader process may not have drained the data yet!
+	 *  reader process may not have drained the data yet.
 	 */
 	while ((skb = __skb_dequeue(&sk->sk_receive_queue)) != NULL) {
 		u32 len = TCP_SKB_CB(skb)->end_seq - TCP_SKB_CB(skb)->seq -
@@ -412,9 +329,7 @@ static int serval_tcp_connection_close(struct sock *sk)
 	}
 
 	sk_mem_reclaim(sk);
-        
         serval_tcp_send_fin(sk);
-
         return data_was_unread;
 }
 
@@ -428,8 +343,7 @@ static unsigned int serval_tcp_xmit_size_goal(struct sock *sk, u32 mss_now,
 
 	if (large_allowed && 0 /* sk_can_gso(sk) */) {
 		xmit_size_goal = ((sk->sk_gso_max_size - 1) -
-				  serval_sk(sk)->af_ops->net_header_len -
-                                  serval_sk(sk)->ext_hdr_len -
+				  sk_ssk(sk)->af_ops->net_header_len -
 				  tp->tcp_header_len);
 
 		xmit_size_goal = 
@@ -474,7 +388,7 @@ static inline int forced_push(struct serval_tcp_sock *tp)
 
 static void serval_tcp_skb_free(struct sk_buff *skb)
 {
-        /* LOG_PKT("Freeing skb data packet, skb->len=%u\n", skb->len); */
+        /* Freeing skb data packet. */
 }
 
 static inline void skb_serval_tcp_set_owner(struct sk_buff *skb, 
@@ -610,7 +524,6 @@ static void serval_tcp_service_net_dma(struct sock *sk, bool wait)
 }
 #endif
 
-#if defined(OS_LINUX_KERNEL)
 /*
  *	Wait for a TCP event.
  *
@@ -629,7 +542,7 @@ unsigned int serval_tcp_poll(struct file *file,
 	sock_poll_wait(file, sk_sleep(sk), wait);
         
         if (sk->sk_state == TCP_LISTEN) {
-                struct serval_sock *ssk = serval_sk(sk);
+                struct serval_sock *ssk = sk_ssk(sk);
                 return list_empty(&ssk->accept_queue) ? 0 :
                         (POLLIN | POLLRDNORM);
         }
@@ -668,13 +581,10 @@ unsigned int serval_tcp_poll(struct file *file,
 	 * NOTE. Check for TCP_CLOSE is added. The goal is to prevent
 	 * blocking on fresh not-connected or disconnected socket. --ANK
 	 */
-	if (sk->sk_shutdown == SHUTDOWN_MASK || sk->sk_state == TCP_CLOSE) {
+	if (sk->sk_shutdown == SHUTDOWN_MASK || sk->sk_state == TCP_CLOSE)
 		mask |= POLLHUP;
-                LOG_SSK(sk, "POLLHUP\n");
-        }
-	if (sk->sk_shutdown & RCV_SHUTDOWN) {
+	if (sk->sk_shutdown & RCV_SHUTDOWN)
 		mask |= POLLIN | POLLRDNORM | POLLRDHUP;
-        }
 
 	/* Connected? */
 	if ((1 << sk->sk_state) & ~(TCPF_SYN_SENT | TCPF_SYN_RECV)) {
@@ -715,7 +625,7 @@ unsigned int serval_tcp_poll(struct file *file,
 	/* This barrier is coupled with smp_wmb() in serval_sal_rcv_reset() */
 	smp_rmb();
 	if (sk->sk_err) {
-                LOG_SSK(sk, "POLLERR returned\n");
+                /* POLLERR returned. */
 		mask |= POLLERR;
         }
 	return mask;
@@ -811,7 +721,7 @@ int serval_tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 
 		if (tcp_hdr(skb)->fin) {
                         tp->fin_found = 1;
-                        LOG_SSK(sk, "Read FIN\n");
+                        /* Read FIN. */
 			sk_eat_skb(sk, skb, 0);
 			++seq;
 			break;
@@ -1096,11 +1006,7 @@ int serval_tcp_sendpage(struct sock *sk, struct page *page, int offset,
 }
 
 #endif /* ENABLE_SPLICE */
-#endif /* OS_LINUX_KERNEL */
 
-
-/* # if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0) */
-#if 1
 int serval_tcp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
                        size_t size)
 {
@@ -1337,245 +1243,6 @@ out_err:
 	release_sock(sk);
 	return err;
 }
-#else
-
-static int serval_tcp_sendmsg(struct kiocb *iocb, struct sock *sk, 
-                              struct msghdr *msg, size_t len)
-{
-	struct iovec *iov;
-	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-	struct sk_buff *skb;
-	int iovlen, flags;
-	int mss_now, size_goal;
-	int sg, err, copied;
-	long timeo;
-
-        LOG_SSK(sk, "Sending tcp message, len=%zu\n", len);
-
-	lock_sock(sk);
-
-	flags = msg->msg_flags;
-	timeo = sock_sndtimeo(sk, flags & MSG_DONTWAIT);
-
-	/* Wait for a connection to finish. */
-	if ((1 << sk->sk_state) & ~(TCPF_ESTABLISHED | TCPF_CLOSE_WAIT))
-		if ((err = sk_stream_wait_connect(sk, &timeo)) != 0)
-			goto out_err;
-
-	/* This should be in poll */
-	clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags);
-
-	mss_now = serval_tcp_send_mss(sk, &size_goal, flags);
-
-	/* Ok commence sending. */
-	iovlen = msg->msg_iovlen;
-	iov = msg->msg_iov;
-	copied = 0;
-
-	err = -EPIPE;
-	if (sk->sk_err || (sk->sk_shutdown & SEND_SHUTDOWN))
-		goto out_err;
-
-        /* Check scatter/gather I/O capability */
-	sg = sk->sk_route_caps & NETIF_F_SG;
-
-	while (--iovlen >= 0) {
-		int seglen = iov->iov_len;
-		char *from = iov->iov_base;
-
-		iov++;
-
-		while (seglen > 0) {
-			int copy = 0;
-			int max = size_goal;
-
-			skb = serval_tcp_write_queue_tail(sk);
-
-			if (serval_tcp_send_head(sk)) {
-				if (skb->ip_summed == CHECKSUM_NONE)
-					max = mss_now;
-				copy = max - skb->len;
-			}
-
-			if (copy <= 0) {
-#if defined(OS_LINUX_KERNEL)
-new_segment:
-#endif
-				/* Allocate new segment. If the interface is SG,
-				 * allocate skb fitting to single page.
-				 */
-				if (!sk_stream_memory_free(sk))
-					goto wait_for_sndbuf;
-
-				skb = sk_stream_alloc_skb(sk,
-							  select_size(sk, sg),
-							  sk->sk_allocation);
-				if (!skb)
-					goto wait_for_memory;
-
-				/*
-				 * Check whether we can use HW checksum.
-				 */
-				if (sk->sk_route_caps & NETIF_F_ALL_CSUM)
-                                        skb->ip_summed = CHECKSUM_PARTIAL;
-
-				skb_entail(sk, skb);
-				copy = size_goal;
-				max = size_goal;
-			}
-
-			/* Try to append data to the end of skb. */
-			if (copy > seglen)
-				copy = seglen;
-
-			/* Where to copy to? */
-			if (skb_tailroom(skb) > 0) {
-				/* We have some space in skb head. Superb! */
-				if (copy > skb_tailroom(skb))
-					copy = skb_tailroom(skb);
-
-				if ((err = skb_add_data(skb, from, copy)) != 0) {
-					goto do_fault;
-                                }
-			} else {
-#if defined(ENABLE_PAGE)
-				int merge = 0;
-				int i = skb_shinfo(skb)->nr_frags;
-				struct page *page = TCP_PAGE(sk);
-				int off = TCP_OFF(sk);
-
-				if (skb_can_coalesce(skb, i, page, off) &&
-				    off != PAGE_SIZE) {
-					/* We can extend the last page
-					 * fragment. */
-					merge = 1;
-				} else if (i == MAX_SKB_FRAGS || !sg) {
-					/* Need to add new fragment and cannot
-					 * do this because interface is non-SG,
-					 * or because all the page slots are
-					 * busy. */
-					serval_tcp_mark_push(tp, skb);
-					goto new_segment;
-				} else if (page) {
-					if (off == PAGE_SIZE) {
-						put_page(page);
-						TCP_PAGE(sk) = page = NULL;
-						off = 0;
-					}
-				} else
-					off = 0;
-
-				if (copy > PAGE_SIZE - off)
-					copy = PAGE_SIZE - off;
-
-				if (!sk_wmem_schedule(sk, copy))
-					goto wait_for_memory;
-
-				if (!page) {
-					/* Allocate new cache page. */
-					if (!(page = sk_stream_alloc_page(sk)))
-						goto wait_for_memory;
-				}
-
-				/* Time to copy data. We are close to
-				 * the end! */
-				err = skb_copy_to_page(sk, from, skb, page,
-						       off, copy);
-				if (err) {
-					/* If this page was new, give it to the
-					 * socket so it does not get leaked.
-					 */
-					if (!TCP_PAGE(sk)) {
-						TCP_PAGE(sk) = page;
-						TCP_OFF(sk) = 0;
-					}
-					goto do_error;
-				}
-
-				/* Update the skb. */
-				if (merge) {
-					skb_shinfo(skb)->frags[i - 1].size +=
-									copy;
-				} else {
-					skb_fill_page_desc(skb, i, page, off, copy);
-					if (TCP_PAGE(sk)) {
-						get_page(page);
-					} else if (off + copy < PAGE_SIZE) {
-						get_page(page);
-						TCP_PAGE(sk) = page;
-					}
-				}
-
-				TCP_OFF(sk) = off + copy;
-#endif /* ENABLE_PAGE */
-			}
-
-			if (!copied)
-				TCP_SKB_CB(skb)->tcp_flags &= ~TCPH_PSH;
-
-			tp->write_seq += copy;
-			TCP_SKB_CB(skb)->end_seq += copy;
-			skb_shinfo(skb)->gso_segs = 0;
-
-			from += copy;
-			copied += copy;
-			if ((seglen -= copy) == 0 && iovlen == 0)
-				goto out;
-
-			if (skb->len < max || (flags & MSG_OOB))
-				continue;
-
-			if (forced_push(tp)) {
-				serval_tcp_mark_push(tp, skb);
-				__serval_tcp_push_pending_frames(sk, 
-                                                                 mss_now, 
-                                                                 TCP_NAGLE_PUSH);
-			} else if (skb == serval_tcp_send_head(sk))
-				serval_tcp_push_one(sk, mss_now);
-			continue;
-
-wait_for_sndbuf:
-			set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-wait_for_memory:
-			if (copied)
-				serval_tcp_push(sk, flags & ~MSG_MORE, 
-                                                mss_now, TCP_NAGLE_PUSH);
-                        
-                        if ((err = sk_stream_wait_memory(sk, &timeo)) != 0)
-				goto do_error;
-
-			mss_now = serval_tcp_send_mss(sk, &size_goal, flags);
-		}
-	}
-
-out:
-	if (copied)
-		serval_tcp_push(sk, flags, mss_now, tp->nonagle);
-
-	release_sock(sk);
-
-	return copied;
-
-do_fault:
-	if (!skb->len) {
-		serval_tcp_unlink_write_queue(skb, sk);
-		/* It is the one place in all of TCP, except connection
-		 * reset, where we can be unlinking the send_head.
-		 */
-		serval_tcp_check_send_head(sk, skb);
-		sk_wmem_free_skb(sk, skb);
-	}
-
-do_error:
-	if (copied)
-		goto out;
-out_err:
-	err = sk_stream_error(sk, flags, err);
-
-	release_sock(sk);
-	return err;
-}
-#endif
 
 /*
  *	Handle reading urgent data. BSD has very simple semantics for
@@ -1782,8 +1449,6 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 			if (signal_pending(current)) {
 				copied = timeo ? sock_intr_errno(timeo) : 
                                         -EAGAIN;
-                                LOG_SSK(sk, "Signal is pending, copied=%d\n",
-                                        copied);
 				break;
 			}
 		}
@@ -1836,8 +1501,6 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 				break;
 
 			if (sk->sk_err) {
-                                LOG_SSK(sk, "socket has error %d\n", 
-                                        sock_error(sk));
 				copied = sock_error(sk);
 				break;
 			}
@@ -1863,14 +1526,9 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 
 			if (signal_pending(current)) {
 				copied = sock_intr_errno(timeo);
-                                LOG_SSK(sk, "sock_intr_errno=%d\n",
-                                        copied);
 				break;
 			}
 		}
-
-                LOG_DBG("tp->copied_seq=%u tp->rcv_nxt=%u\n",
-                        tp->copied_seq, tp->rcv_nxt);
 
 		serval_tcp_cleanup_rbuf(sk, copied);
 
@@ -1930,7 +1588,7 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 			lock_sock(sk);
 		} else {
 			sk_wait_data(sk, &timeo);
-                        LOG_SSK(sk, "woke up after waiting for data\n");
+                        /* Woke up after waiting for data. */
                 }
 #ifdef CONFIG_NET_DMA
 		serval_tcp_service_net_dma(sk, false);  /* Don't block */
@@ -2069,18 +1727,15 @@ skip_copy:
         found_fin_ok:
                 ++*seq;
 
-                LOG_SSK(sk, "Received FIN (MSG_PEEK=%d)\n",
-                        (flags & MSG_PEEK) > 0);
-                /*
-                  Serval-specific FIN processing:
-
-                  Since Serval does not actually close a connection
-                  upon receiving a TCP FIN (closing is handled in the
-                  SAL), this FIN is simply treated as a end of stream
-                  marker. Instead of returning to the user, we
-                  continue to hang/wait in this function until the SAL
-                  closes (SOCK_DONE), and only then return 0. 
-                */
+		/* Serval-specific FIN processing:
+		 *
+		 * Since Serval does not actually close a connection
+		 * upon receiving a TCP FIN (closing is handled in the
+		 * SAL), this FIN is simply treated as a end of stream
+		 * marker. Instead of returning to the user, we
+		 * continue to hang/wait in this function until the SAL
+		 * closes (SOCK_DONE), and only then return 0. 
+		 */
 
                 if (!(flags & MSG_PEEK)) {
                         tp->fin_found = 1;
@@ -2131,12 +1786,10 @@ skip_copy:
 	serval_tcp_cleanup_rbuf(sk, copied);
 
 	release_sock(sk);
-        LOG_SSK(sk, "copied=%d\n", copied);
 	return copied;
 
 out:
 	release_sock(sk);
-        LOG_SSK(sk, "err=%d\n", err);
 	return err;
 
 recv_urg:
@@ -2146,8 +1799,7 @@ recv_urg:
 
 extern int checksum_mode;
 
-void __serval_tcp_v4_send_check(struct sk_buff *skb,
-                                __be32 saddr, __be32 daddr)
+void __serval_tcp_v4_send_check(struct sk_buff *skb)
 {
 	struct tcphdr *th = tcp_hdr(skb);
         unsigned long len = skb_tail_pointer(skb) - skb_transport_header(skb);
@@ -2155,31 +1807,22 @@ void __serval_tcp_v4_send_check(struct sk_buff *skb,
         if (!checksum_mode) {
                 /* Force checksum calculation by protocol */
                 skb->ip_summed = CHECKSUM_NONE;
-                th->check = serval_tcp_v4_check(len, saddr, daddr,
-                                                csum_partial(th,
-                                                             len,
-                                                             0));
+                th->check = serval_tcp_v4_check(len, csum_partial(th, len, 0));
         } else if (skb->ip_summed == CHECKSUM_PARTIAL) {
-		th->check = ~serval_tcp_v4_check(len, saddr, daddr, 0);
+		th->check = ~serval_tcp_v4_check(len, 0);
 		skb->csum_start = skb_transport_header(skb) - skb->head;
 		skb->csum_offset = offsetof(struct tcphdr, check);
 	} else {
-		th->check = serval_tcp_v4_check(len, saddr, daddr,
-                                                csum_partial(th,
-                                                             th->doff << 2,
-                                                             skb->csum));
+		th->check = serval_tcp_v4_check(len,
+			csum_partial(th, th->doff << 2, skb->csum));
       	}
 }
 
 /* This routine computes an IPv4 TCP checksum. */
-void serval_tcp_v4_send_check(struct sock *sk, struct sk_buff *skb)
+static void serval_tcp_v4_send_check(struct sock *sk, struct sk_buff *skb)
 {
-	struct inet_sock *inet = inet_sk(sk);
-
-	__serval_tcp_v4_send_check(skb, inet->inet_saddr, inet->inet_daddr);
+	__serval_tcp_v4_send_check(skb);
 }
-
-#if defined(OS_LINUX_KERNEL)
 
 /*
  *	Socket option code for TCP.
@@ -2189,11 +1832,9 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
                                     unsigned int optlen)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-        //struct serval_sock *ssk = serval_sk(sk);
+        //struct serval_sock *ssk = sk_ssk(sk);
 	int val;
 	int err = 0;
-
-        LOG_SSK(sk, "level=SOL_TCP optname=%d\n", optname);
 
 	/* These are data/string values, all the others are ints */
 	switch (optname) {
@@ -2330,7 +1971,6 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 		break;
 
 	case TCP_NODELAY:
-                LOG_SSK(sk, "Setting TCP_NODELAY\n");
 		if (val) {
 			/* TCP_NODELAY is weaker than TCP_CORK, so that
 			 * this option on corked socket is remembered, but
@@ -2618,42 +2258,31 @@ static int serval_do_tcp_getsockopt(struct sock *sk, int level,
 	return 0;
 }
 
-#endif /* OS_LINUX_KERNEL */
-
 int serval_tcp_setsockopt(struct sock *sk, int level, int optname, 
                           char __user *optval, unsigned int optlen)
 {
-#if defined(OS_LINUX_KERNEL)
-        struct serval_sock *ssk = serval_sk(sk);
+        struct serval_sock *ssk = sk_ssk(sk);
 
 	if (level != SOL_TCP)
 		return ssk->af_ops->setsockopt(sk, level, optname,
                                                optval, optlen);
 
 	return serval_do_tcp_setsockopt(sk, level, optname, optval, optlen);
-#else
-        return -EOPNOTSUPP;
-#endif
 }
 
 int serval_tcp_getsockopt(struct sock *sk, int level, 
                           int optname, char __user *optval,
                           int __user *optlen)
 {
-#if defined(OS_LINUX_KERNEL)
-        struct serval_sock *ssk = serval_sk(sk);
+        struct serval_sock *ssk = sk_ssk(sk);
 
 	if (level != SOL_TCP)
 		return  ssk->af_ops->getsockopt(sk, level, optname,
 						     optval, optlen);
 
 	return serval_do_tcp_getsockopt(sk, level, optname, optval, optlen);
-#else
-        return -EOPNOTSUPP;
-#endif
 }
 
-#if defined(OS_LINUX_KERNEL)
 int serval_tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 {
         struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -2711,14 +2340,10 @@ int serval_tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
         
         return put_user(answ, (int __user *)arg);
 }
-#endif /* OS_LINUX_KERNEL */
 
 static int serval_tcp_freeze_flow(struct sock *sk)
 {
-        LOG_SSK(sk, "Freezing TCP flow %s\n", 
-                flow_id_to_str(&serval_sk(sk)->local_flowid));
         serval_tsk_clear_xmit_timer(sk, STSK_TIME_RETRANS);
-        
         return 0;
 }
 
@@ -2727,27 +2352,21 @@ static int serval_tcp_migration_completed(struct sock *sk)
         struct serval_tcp_sock *tp = serval_tcp_sk(sk);
         unsigned long t = jiffies;
 
-        LOG_SSK(sk, "Unfreezing TCP flow %s\n", 
-                flow_id_to_str(&serval_sk(sk)->local_flowid));
+        /* Unfreezing TCP flow. */
         tp->snd_mig_last = tp->snd_nxt;
-        LOG_SSK(sk, "Last sequence number on old link: %lu\n", 
-                tp->snd_mig_last, tp->snd_nxt);
 
         /* Restart retransmission timer */
         if (tp->packets_out) {
                 t = 1; //tp->rto;
-
-                LOG_SSK(sk, "Resetting rexmit timer to %lu\n", t);
-                
                 serval_tsk_reset_xmit_timer(sk, STSK_TIME_RETRANS, t,
                                             SERVAL_TCP_RTO_MAX);
         }
 
         if (tp->snd_wnd == 0) {
-                LOG_SSK(sk, "Zero snd_wnd, sending probe\n");
+                /* Zero snd_wnd, sending probe. */
                 serval_tcp_send_probe0(sk);
         } else {
-                LOG_SSK(sk, "Non-zero snd_wnd, pushing frames\n");
+                /* Non-zero snd_wnd, pushing frames. */
                 serval_tcp_push_pending_frames(sk);
         }
 
@@ -2755,14 +2374,10 @@ static int serval_tcp_migration_completed(struct sock *sk)
 }
 
 static struct serval_sock_af_ops serval_tcp_af_ops = {
-        .queue_xmit = serval_ipv4_xmit,
         .receive = serval_tcp_rcv,
         .send_check = serval_tcp_v4_send_check,
-        .rebuild_header = serval_sock_rebuild_header,
-#if defined(OS_LINUX_KERNEL)
         .setsockopt = ip_setsockopt,
         .getsockopt = ip_getsockopt,
-#endif
         .conn_build_syn = serval_tcp_connection_build_syn,
         .conn_build_synack = serval_tcp_connection_build_synack,
         .conn_build_ack = serval_tcp_connection_build_ack,
@@ -2777,17 +2392,12 @@ static struct serval_sock_af_ops serval_tcp_af_ops = {
         .done = serval_tcp_done,
 };
 
-/*
-  Adapted from tcp_minisocks.c 
-*/
-static struct sock *serval_tcp_create_openreq_child(struct sock *sk, 
-                                                    struct request_sock *req,
-                                                    struct sock *newsk,
-                                                    struct sk_buff *skb)
+/* Adapted from tcp_minisocks.c. */
+static void serval_tcp_create_openreq_child(struct sock *sk,
+	struct request_sock *req, struct sock *newsk, struct sk_buff *skb)
 {
-        const struct inet_request_sock *ireq = inet_rsk(req);
         struct serval_tcp_request_sock *treq = serval_tcp_rsk(req);
-        struct serval_sock *newssk = serval_sk(newsk);
+        struct serval_sock *newssk = sk_ssk(newsk);
         struct serval_tcp_sock *newtp = serval_tcp_sk(newsk);
         struct serval_tcp_sock *oldtp = serval_tcp_sk(sk);
 
@@ -2849,10 +2459,10 @@ static struct sock *serval_tcp_create_openreq_child(struct sock *sk,
                 serval_tsk_reset_keepalive_timer(newsk,
                                                  serval_keepalive_time_when(newtp));
         
-        newtp->rx_opt.tstamp_ok = ireq->tstamp_ok;
+        newtp->rx_opt.tstamp_ok = treq->tstamp_ok;
 
 #if defined(ENABLE_TCP_SACK)
-        if ((newtp->rx_opt.sack_ok = ireq->sack_ok) != 0) {
+        if ((newtp->rx_opt.sack_ok = treq->sack_ok) != 0) {
                 if (sysctl_serval_tcp_fack)
                         serval_tcp_enable_fack(newtp);
         }
@@ -2860,13 +2470,13 @@ static struct sock *serval_tcp_create_openreq_child(struct sock *sk,
         newtp->window_clamp = req->window_clamp;
         newtp->rcv_ssthresh = req->rcv_wnd;
         newtp->rcv_wnd = req->rcv_wnd;
-        newtp->rx_opt.wscale_ok = ireq->wscale_ok;
+        newtp->rx_opt.wscale_ok = treq->wscale_ok;
         if (newtp->rx_opt.wscale_ok) {
-                LOG_SSK(sk, "TCP window scaling OK!\n");
-                newtp->rx_opt.snd_wscale = ireq->snd_wscale;
-                newtp->rx_opt.rcv_wscale = ireq->rcv_wscale;
+                /* TCP window scaling OK. */
+                newtp->rx_opt.snd_wscale = treq->snd_wscale;
+                newtp->rx_opt.rcv_wscale = treq->rcv_wscale;
         } else {
-                LOG_SSK(sk, "No TCP window scaling!\n");
+                /* No TCP window scaling! */
                 newtp->rx_opt.snd_wscale = newtp->rx_opt.rcv_wscale = 0;
                 newtp->window_clamp = min(newtp->window_clamp, 65535U);
         }
@@ -2894,65 +2504,21 @@ static struct sock *serval_tcp_create_openreq_child(struct sock *sk,
         if (skb->len >= SERVAL_TCP_MSS_DEFAULT + newtp->tcp_header_len)
                 newtp->tp_ack.last_seg_size = skb->len - newtp->tcp_header_len;
         newtp->rx_opt.mss_clamp = req->mss;
-
-        return newsk;
 }
 
-/**
-   Called when a child sock is created in response to a successful
-   three-way handshake on the server side.
+/* Called when a child sock is created in response to a successful
+ * three-way handshake on the server side.
  */
-int serval_tcp_syn_recv_sock(struct sock *sk, 
-                             struct sk_buff *skb,
-                             struct request_sock *req,
-                             struct sock *newsk,
-                             struct dst_entry *dst)
+static int serval_tcp_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
+	struct request_sock *req, struct sock *newsk, struct dst_entry *dst)
 {
-        struct inet_sock *newinet = inet_sk(newsk);
         struct serval_tcp_sock *newtp = serval_tcp_sk(newsk);
 
-        LOG_SSK(sk, "New TCP sock based on pkt %s\n", 
-                tcphdr_to_str(tcp_hdr(skb)));
-
-#if defined(OS_LINUX_KERNEL)
-        if (!dst) {
-                struct inet_request_sock *ireq = inet_rsk(req);
-                struct rtable *rt;
-                
-                rt = serval_ip_route_output(sock_net(sk),
-                                            ireq->rmt_addr,
-                                            ireq->loc_addr,
-                                            0, sk->sk_bound_dev_if);
-                
-                if (!rt) {
-                        LOG_ERR("SYN-ACK not routable\n");
-                        goto exit;
-                }
-                
-                dst = route_dst(rt);
-        }
-#endif
-
-        newsk = serval_tcp_create_openreq_child(sk, req, newsk, skb);
-
-        /* FIXME: can we support GSO with Serval? */
-	newsk->sk_gso_type = 0 /* SKB_GSO_TCPV4 */;
-	sk_setup_caps(newsk, dst);
-	
-	newinet->inet_id = newtp->write_seq ^ jiffies;
+        serval_tcp_create_openreq_child(sk, req, newsk, skb);
 
 	serval_tcp_mtup_init(newsk);
-#if defined(OS_LINUX_KERNEL)
         serval_tcp_sync_mss(newsk, dst_mtu(dst));
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,38))
-	newtp->advmss = dst_metric(dst, RTAX_ADVMSS);
-#else
         newtp->advmss = dst_metric_advmss(dst);
-#endif
-#else
-        serval_tcp_sync_mss(newsk, SERVAL_TCP_MSS_DEFAULT);
-	newtp->advmss = SERVAL_TCP_MSS_DEFAULT;
-#endif
 
 	if (serval_tcp_sk(sk)->rx_opt.user_mss &&
 	    serval_tcp_sk(sk)->rx_opt.user_mss < newtp->advmss)
@@ -2961,25 +2527,18 @@ int serval_tcp_syn_recv_sock(struct sock *sk,
 	serval_tcp_initialize_rcv_mss(newsk);
 
         newtp->bytes_queued = 0;
-
-        LOG_PKT("snd_wnd=%u rcv_wnd=%u rcv_nxt=%u snd_nxt=%u\n", 
-                newtp->snd_wnd, newtp->rcv_wnd, 
-                newtp->rcv_nxt, newtp->snd_nxt);
-        
         return 0;
-#if defined(OS_LINUX_KERNEL)
-exit:
-        dst_release(dst);
-        return -1;
-#endif
 }
 
+/* Initialize new TCP socks. */
 static int serval_tcp_init_sock(struct sock *sk)
 {
-        struct serval_sock *ssk = serval_sk(sk);
+        struct serval_sock *ssk = sk_ssk(sk);
         struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 
-        LOG_SSK(sk, "Initializing new TCP sock\n");
+	/* Initialize serval sock part of socket. */
+	serval_sock_init(ssk);
+	serval_sock_init_seeds(ssk);
 
         skb_queue_head_init(&tp->out_of_order_queue);
 	serval_tcp_init_xmit_timers(sk);
@@ -3022,27 +2581,17 @@ static int serval_tcp_init_sock(struct sock *sk)
 
         tp->bytes_queued = 0;
         
-        LOG_SSK(sk, "sockinit: snd_ssthresh=%u snd_cwnd_clamp=%u snd_cwnd=%u\n",
-                tp->snd_ssthresh, tp->snd_cwnd_clamp, tp->snd_cwnd);
-
-#if defined(OS_LINUX_KERNEL)
 	local_bh_disable();
+	/* XXX Should we really use this counter? It's in IP stack. */
 	percpu_counter_inc(&tcp_sockets_allocated);
 	local_bh_enable();
-#endif
         return 0;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 25)
-static int serval_tcp_destroy_sock(struct sock *sk)
-#else
 static void serval_tcp_destroy_sock(struct sock *sk)
-#endif
 {
         struct serval_tcp_sock *tp = serval_tcp_sk(sk);
    
-        LOG_SSK(sk, "destroying TCP sock\n");
-
 	serval_tcp_clear_xmit_timers(sk);
 
 	serval_tcp_cleanup_congestion_control(sk);
@@ -3060,18 +2609,7 @@ static void serval_tcp_destroy_sock(struct sock *sk)
 	/* Clean prequeue, it must be empty really */
 	__skb_queue_purge(&tp->ucopy.prequeue);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,7,0)) && defined(OS_LINUX_KERNEL)
-	if (sk->sk_sndmsg_page) {
-		__free_page(sk->sk_sndmsg_page);
-		sk->sk_sndmsg_page = NULL;
-	}
-#endif
-        
-	//percpu_counter_dec(&tcp_sockets_allocated);
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
-        return 0;
-#endif
+	/* percpu_counter_dec(&tcp_sockets_allocated); */
 }
 
 static void serval_tcp_request_sock_destructor(struct request_sock *req)
@@ -3085,23 +2623,22 @@ struct request_sock_ops serval_tcp_request_sock_ops __read_mostly = {
 };
 
 struct proto serval_tcp_proto = {
-	.name			= "SERVAL_TCP",
+	.name			= "Serval/TCP",
 	.owner			= THIS_MODULE,
         .init                   = serval_tcp_init_sock,
         .destroy                = serval_tcp_destroy_sock,
-	.close  		= serval_sal_close,   
+	.close  		= serval_sal_close,
         .connect                = serval_sal_connect,
 	.disconnect		= serval_tcp_disconnect,
-	.shutdown		= serval_tcp_shutdown,
         .sendmsg                = serval_tcp_sendmsg,
         .recvmsg                = serval_tcp_recvmsg,
         .setsockopt             = serval_tcp_setsockopt,
         .getsockopt             = serval_tcp_getsockopt,
-#if defined(OS_LINUX_KERNEL) && defined(ENABLE_SPLICE)
+#if defined(ENABLE_SPLICE)
         .sendpage               = serval_tcp_sendpage,
 #endif
+	.bind			= serval_sock_bind,
 	.backlog_rcv		= serval_tcp_do_rcv,
-        .hash                   = serval_sock_hash,
         .unhash                 = serval_sock_unhash,
 	.enter_memory_pressure	= serval_tcp_enter_memory_pressure,
 	.memory_pressure	= &serval_tcp_memory_pressure,
@@ -3109,11 +2646,9 @@ struct proto serval_tcp_proto = {
 	.sysctl_mem		= sysctl_serval_tcp_mem,
 	.sysctl_wmem		= sysctl_serval_tcp_wmem,
 	.sysctl_rmem		= sysctl_serval_tcp_rmem,
-#if defined(OS_LINUX_KERNEL)
 	.sockets_allocated	= &tcp_sockets_allocated,
 	.orphan_count		= &tcp_orphan_count,
         .ioctl                  = serval_tcp_ioctl,
-#endif
 	.max_header		= MAX_SERVAL_TCP_HEADER,
 	.obj_size		= sizeof(struct serval_tcp_sock),
 	.rsk_prot		= &serval_tcp_request_sock_ops,

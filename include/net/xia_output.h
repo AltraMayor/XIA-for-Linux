@@ -42,4 +42,20 @@ struct sk_buff *xip_make_skb(struct sock *sk,
 	struct iovec *from, int length, int transhdrlen, struct xip_dst *xdst,
 	unsigned int flags);
 
+void xip_fill_in_hdr(struct sk_buff *skb, struct xip_dst *xdst,
+	const struct xia_row *src, int src_n,
+	const struct xia_row *dest, int dest_n, int dest_last_node);
+
+/* Fill in XIP header. Build the final source address as follows:
+ * @src has @src_n nodes, but the final node (a sink) will be replaced with
+ * @sink_type and @sink_id.
+ *
+ * NOTE
+ *	There's no equivalent function to build the destination address
+ *	on the fly because that requires to recompute @xdst accordingly.
+ */
+void xip_fill_in_hdr_bsrc(struct sk_buff *skb, struct xip_dst *xdst,
+	const struct xia_row *src, xid_type_t sink_type, const __u8 *sink_id,
+	int src_n, const struct xia_row *dest, int dest_n, int dest_last_node);
+
 #endif /* _NET_XIA_OUTPUT_H */

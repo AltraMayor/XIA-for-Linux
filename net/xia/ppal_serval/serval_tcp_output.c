@@ -1,12 +1,5 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
-#include <netdevice.h>
-#include <debug.h>
-#include <serval_tcp.h>
-#include <serval_request_sock.h>
-#include <serval_tcp_request_sock.h>
-#if defined(OS_USER)
-#include <userlevel/serval_tcp_user.h>
-#endif
+#include "serval_tcp.h"
+#include "serval_tcp_request_sock.h"
 
 /* People can turn this off for buggy TCP's found in printers etc. */
 int sysctl_serval_tcp_retrans_collapse __read_mostly = 0;
@@ -90,21 +83,13 @@ static inline int serval_tcp_urg_mode(const struct serval_tcp_sock *tp)
 static __u16 serval_tcp_advertise_mss(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-#if defined(OS_USER)
-        struct dst_entry *dst = NULL;
-#else
 	struct dst_entry *dst = __sk_dst_get(sk);
-#endif
 	int mss = tp->advmss;
 
 	if (dst) {
                 unsigned int metric;
                 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,38))
-                metric = dst_metric(dst, RTAX_ADVMSS);
-#else
                 metric = dst_metric_advmss(dst);
-#endif
 		if (metric < mss) {
 			mss = metric;
 			tp->advmss = mss;
@@ -199,19 +184,16 @@ static unsigned serval_tcp_syn_options(struct sock *sk, struct sk_buff *skb,
 		opts->ws = tp->rx_opt.rcv_wscale;
 		opts->options |= OPTION_WSCALE;
 		remaining -= TCPOLEN_WSCALE_ALIGNED;
-                LOG_SSK(sk, "Adding window scale option ws=%u\n", opts->ws);
+                /* Added window scale option. */
 	}
 	return MAX_SERVAL_TCP_OPTION_SPACE - remaining;
 }
 
 /* Set up TCP options for SYN-ACKs. */
 static unsigned serval_tcp_synack_options(struct sock *sk,
-					  struct request_sock *req,
-					  unsigned mss, struct sk_buff *skb,
-					  struct tcp_out_options *opts,
-					  struct tcp_md5sig_key **md5)
+	struct serval_tcp_request_sock *trsk, unsigned mss, struct sk_buff *skb,
+	struct tcp_out_options *opts, struct tcp_md5sig_key **md5)
 {
-	struct inet_request_sock *ireq = inet_rsk(req);
 	unsigned remaining = MAX_SERVAL_TCP_OPTION_SPACE;
 
 	*md5 = NULL;
@@ -220,16 +202,16 @@ static unsigned serval_tcp_synack_options(struct sock *sk,
 	opts->mss = mss;
 	remaining -= TCPOLEN_MSS_ALIGNED;
 
-	if (likely(ireq->wscale_ok)) {
-		opts->ws = ireq->rcv_wscale;
+	if (likely(trsk->wscale_ok)) {
+		opts->ws = trsk->rcv_wscale;
 		opts->options |= OPTION_WSCALE;
 		remaining -= TCPOLEN_WSCALE_ALIGNED;
 	}
 /*
-	if (likely(ireq->tstamp_ok)) {
+	if (likely(trsk->tstamp_ok)) {
 		opts->options |= OPTION_TS;
 		opts->tsval = TCP_SKB_CB(skb)->when;
-		opts->tsecr = req->ts_recent;
+		opts->tsecr = trsk->rsk.req.ts_recent;
 		remaining -= TCPOLEN_TSTAMP_ALIGNED;
 	}
 */
@@ -379,7 +361,6 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 {
 	unsigned int space = (__space < 0 ? 0 : __space);
 
-        LOG_DBG("1. space=%u mss=%u rcv_wnd=%u window_clamp=%u init_rcv_wnd=%u\n", space, mss, *rcv_wnd, *window_clamp, init_rcv_wnd);
 	/* If no clamp set the clamp to the max possible scaled window */
 	if (*window_clamp == 0)
 		(*window_clamp) = (65535 << 14);
@@ -404,11 +385,8 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 
 	(*rcv_wscale) = 0;
 	if (wscale_ok) {
-
-                LOG_DBG("space=%u sysctl_rcp_rmem[2]=%u window_clamp=%u\n",
-                        space, sysctl_serval_tcp_rmem[2], *window_clamp);
-		/* Set window scaling on max possible window
-		 * See RFC1323 for an explanation of the limit to 14
+		/* Set window scaling on max possible window.
+		 * See RFC1323 for an explanation of the limit to 14.
 		 */
 		space = max_t(u32, sysctl_serval_tcp_rmem[2], 
                               sysctl_serval_rmem_max);
@@ -419,8 +397,6 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 			(*rcv_wscale)++;
 		}
 	}
-
-        LOG_DBG("wscale_ok=%d window scaling=%u\n", wscale_ok, *rcv_wscale);
 
 	/* Set initial window to value enough for senders,
 	 * following RFC2414. Senders, not following this RFC,
@@ -444,8 +420,6 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 
 	/* Set the clamp no higher than max representable value */
 	(*window_clamp) = min(65535U << (*rcv_wscale), *window_clamp);
-        
-        LOG_DBG("2. space=%u mss=%u rcv_wnd=%u window_clamp=%u init_rcv_wnd=%u\n", space, mss, *rcv_wnd, *window_clamp, init_rcv_wnd);
 }
 
 
@@ -632,18 +606,9 @@ static inline int serval_tcp_snd_wnd_test(struct serval_tcp_sock *tp,
 					  unsigned int cur_mss)
 {
 	u32 end_seq = TCP_SKB_CB(skb)->end_seq;
-        int ret;
-
 	if (skb->len > cur_mss)
 		end_seq = TCP_SKB_CB(skb)->seq + cur_mss;
-
-	ret = !after(end_seq, serval_tcp_wnd_end(tp));
-
-        LOG_DBG("skb->len=%u cur_mss=%u end_seq=%u snd_una=%u wnd_end=%u\n", 
-                skb->len, cur_mss, end_seq, 
-                tp->snd_una, serval_tcp_wnd_end(tp));
-
-        return ret;
+	return !after(end_seq, serval_tcp_wnd_end(tp));
 }
 
 /* This checks if the data bearing packet SKB (usually tcp_send_head(sk))
@@ -722,9 +687,6 @@ static void serval_tcp_adjust_pcount(struct sock *sk,
 
 	tp->packets_out -= decr;
         
-        LOG_SSK(sk, "packets_out=%u tp->write_seq=%u tp->snd_una=%u\n", 
-                tp->packets_out, tp->write_seq, tp->snd_una);
-
 	if (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED)
 		tp->sacked_out -= decr;
 	if (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_RETRANS)
@@ -753,7 +715,6 @@ static void serval_tcp_adjust_pcount(struct sock *sk,
  */
 static void __pskb_trim_head(struct sk_buff *skb, int len)
 {
-#if defined(OS_LINUX_KERNEL)
 	int i, k, eat;
 
 	eat = len;
@@ -775,7 +736,6 @@ static void __pskb_trim_head(struct sk_buff *skb, int len)
                 }
         }
 	skb_shinfo(skb)->nr_frags = k;
-#endif
 	skb_reset_tail_pointer(skb);
 	skb->data_len -= len;
 	skb->len = skb->data_len;
@@ -921,7 +881,7 @@ int serval_tcp_trim_head(struct sock *sk, struct sk_buff *skb, u32 len)
 int serval_tcp_mtu_to_mss(struct sock *sk, int pmtu)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-        struct serval_sock *ssk = serval_sk(sk);
+        struct serval_sock *ssk = sk_ssk(sk);
 	int mss_now;
 
 	/* Calculate base mss without TCP options:
@@ -933,18 +893,12 @@ int serval_tcp_mtu_to_mss(struct sock *sk, int pmtu)
 	if (mss_now > tp->rx_opt.mss_clamp)
 		mss_now = tp->rx_opt.mss_clamp;
 
-	/* Now subtract optional transport overhead */
-	mss_now -= ssk->ext_hdr_len;
-
 	/* Then reserve room for full set of TCP options and 8 bytes of data */
 	if (mss_now < 48)
 		mss_now = 48;
 
 	/* Now subtract TCP options size, not including SACKs */
 	mss_now -= tp->tcp_header_len - sizeof(struct tcphdr);
-
-        LOG_SSK(sk, "pmtu=%d mss_now=%u mss_clamp=%u\n", 
-                pmtu, mss_now, tp->rx_opt.mss_clamp);
 
 	return mss_now;
 }
@@ -953,16 +907,8 @@ int serval_tcp_mtu_to_mss(struct sock *sk, int pmtu)
 int serval_tcp_mss_to_mtu(struct sock *sk, int mss)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-        struct serval_sock *ssk = serval_sk(sk);
-	int mtu;
-
-	mtu = mss +
-	      tp->tcp_header_len +
-	      ssk->ext_hdr_len +
-	      ssk->af_ops->net_header_len;
-        
-        
-	return mtu;
+        struct serval_sock *ssk = sk_ssk(sk);
+	return mss + tp->tcp_header_len + ssk->af_ops->net_header_len;
 }
 
 /* This routine actually transmits TCP packets queued in by
@@ -979,7 +925,7 @@ int serval_tcp_mss_to_mtu(struct sock *sk, int mss)
 static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, 
 				   int clone_it, gfp_t gfp_mask)
 {
-	struct serval_sock *ssk = serval_sk(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	struct tcp_skb_cb *tcb;
 	struct tcp_out_options opts;
@@ -1044,15 +990,6 @@ static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	th->check		= 0;
 	th->urg_ptr		= 0;
 
-        LOG_PKT("TCP XMIT %s datalen=%u bytes_queued=%u\n", 
-                tcphdr_to_str(th), skb->len - tcp_header_size,
-                tp->bytes_queued);
-
-        LOG_PKT("rcv_wnd=%u snd_wnd=%u max_window=%u window_clamp=%u\n",
-                tp->rcv_wnd, tp->snd_wnd, tp->max_window, tp->window_clamp);
-        LOG_PKT("snd_ssthresh=%u rcv_ssthresh=%u snd_cwnd=%u\n",
-                tp->snd_ssthresh, tp->rcv_ssthresh, tp->snd_cwnd);
-
 	/* The urg_mode check is necessary during a below snd_una win probe */
 	if (unlikely(serval_tcp_urg_mode(tp) && before(tcb->seq, tp->snd_up))) {
 		if (before(tp->snd_up, tcb->seq + 0x10000)) {
@@ -1094,15 +1031,6 @@ static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
                               serval_tcp_skb_pcount(skb));
 	}
         */
-#if defined(ENABLE_DEBUG)
-        {
-                char rmtstr[18];
-                LOG_PKT("queue_xmit dst=%s\n",
-                        inet_ntop(AF_INET, &inet_sk(sk)->inet_daddr, 
-                                  rmtstr, 18));
-
-        }
-#endif
 
 	err = serval_sal_xmit_skb(skb);
 
@@ -1168,14 +1096,14 @@ static int serval_tcp_can_collapse(struct sock *sk, struct sk_buff *skb)
 {
 	if (serval_tcp_skb_pcount(skb) > 1)
 		return 0;
-	/* TODO: SACK collapsing could be used to remove this condition */
+	/* XXX SACK collapsing could be used to remove this condition. */
 	if (skb_shinfo(skb)->nr_frags != 0)
 		return 0;
 	if (skb_cloned(skb))
 		return 0;
 	if (skb == serval_tcp_send_head(sk))
 		return 0;
-	/* Some heurestics for collapsing over SACK'd could be invented */
+	/* XXX Some heuristics for collapsing over SACK'd could be invented. */
 	if (TCP_SKB_CB(skb)->sacked & TCPCB_SACKED_ACKED)
 		return 0;
 
@@ -1249,17 +1177,14 @@ int serval_tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
 		return -EAGAIN;
 
 	if (before(TCP_SKB_CB(skb)->seq, tp->snd_una)) {
-		if (before(TCP_SKB_CB(skb)->end_seq, tp->snd_una)) {
-                        LOG_SSK(sk, "end_seq=%u snd_una=%u\n", 
-                                TCP_SKB_CB(skb)->end_seq, tp->snd_una);
+		if (before(TCP_SKB_CB(skb)->end_seq, tp->snd_una))
 			BUG();
-                }
 		if (serval_tcp_trim_head(sk, skb, 
                                          tp->snd_una - TCP_SKB_CB(skb)->seq))
 			return -ENOMEM;
 	}
-       
-	if (serval_sk(sk)->af_ops->rebuild_header(sk))
+
+	if (serval_sock_refresh_dest(sk))
 		return -EHOSTUNREACH; /* Routing failure or similar. */
         
 	cur_mss = serval_tcp_current_mss(sk);
@@ -1443,7 +1368,7 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 	probe_size = 2 * tp->mss_cache;
 	size_needed = probe_size + (tp->reordering + 1) * tp->mss_cache;
 	if (probe_size > serval_tcp_mtu_to_mss(sk, tp->tp_mtup.search_high)) {
-		/* TODO: set timer for probe_converge_event */
+		/* XXX Set timer for probe_converge_event. */
 		return -1;
 	}
 
@@ -1503,11 +1428,9 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 						   ~(TCPH_FIN|TCPH_PSH);
 			if (!skb_shinfo(skb)->nr_frags) {
 				skb_pull(skb, copy);
-#if defined(OS_LINUX_KERNEL)
 				if (skb->ip_summed != CHECKSUM_PARTIAL)
 					skb->csum = csum_partial(skb->data,
 								 skb->len, 0);
-#endif
 			} else {
 				__pskb_trim_head(skb, copy);
 				serval_tcp_set_skb_tso_segs(sk, skb, mss_now);
@@ -1613,7 +1536,6 @@ static int serval_tcp_write_xmit(struct sock *sk, unsigned int mss_now,
 		result = serval_tcp_mtu_probe(sk);
 
 		if (!result) {
-                        LOG_PKT("MTU probing result=%d\n", result);
 			return 0;
 		} else if (result > 0) {
 			sent_pkts = 1;
@@ -1628,20 +1550,17 @@ static int serval_tcp_write_xmit(struct sock *sk, unsigned int mss_now,
 
 		cwnd_quota = serval_tcp_cwnd_test(tp, skb);
 
-                LOG_PKT("cwnd_quota=%d\n", cwnd_quota);
-
 		if (!cwnd_quota)
                         break;
 
-		if (unlikely(!serval_tcp_snd_wnd_test(tp, skb, mss_now))) {
-                        LOG_PKT("tcp_snd_wnd_test failed!\n");
+		if (unlikely(!serval_tcp_snd_wnd_test(tp, skb, mss_now)))
 			break;
-                }
 
 		if (tso_segs == 1) {
 			if (unlikely(!serval_tcp_nagle_test(tp, skb, mss_now,
-                                                            (serval_tcp_skb_is_last(sk, skb) ?
-                                                             nonagle : TCP_NAGLE_PUSH))))
+				(serval_tcp_skb_is_last(sk, skb)
+					? nonagle
+					: TCP_NAGLE_PUSH))))
 				break;
 		} else {
 			if (!push_one && serval_tcp_tso_should_defer(sk, skb))
@@ -1707,14 +1626,9 @@ void __serval_tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 void serval_tcp_push_one(struct sock *sk, unsigned int mss_now)
 {
 	struct sk_buff *skb = serval_tcp_send_head(sk);
-
-        LOG_PKT("skb=%p skb->len=%u mss_now=%u\n",
-                skb, skb ? skb->len : 0, mss_now);
-
 	BUG_ON(!skb || skb->len < mss_now);
-
-	serval_tcp_write_xmit(sk, mss_now, 
-			      TCP_NAGLE_PUSH, 1, sk->sk_allocation);
+	serval_tcp_write_xmit(sk, mss_now,
+		TCP_NAGLE_PUSH, 1, sk->sk_allocation);
 }
 
 /* This function returns the amount that we can raise the
@@ -1771,7 +1685,6 @@ void serval_tcp_push_one(struct sock *sk, unsigned int mss_now)
  */
 u32 __serval_tcp_select_window(struct sock *sk)
 {
-	//struct inet_connection_sock *icsk = inet_csk(sk);
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	/* MSS for the peer's data.  Previous versions used mss_clamp
 	 * here.  I don't know if the value based on our guesses
@@ -1784,13 +1697,6 @@ u32 __serval_tcp_select_window(struct sock *sk)
 	int full_space = min_t(int, tp->window_clamp,
 			       serval_tcp_full_space(sk));
 	int window;
-
-        LOG_SSK(sk, "tp->tp_ack.rcv_mss=%u window_clamp=%d "
-                "free_space=%d tcp_full_space=%d\n", 
-                tp->tp_ack.rcv_mss, 
-                tp->window_clamp,
-                free_space,
-                serval_tcp_full_space(sk));
 
 	if (mss > full_space)
 		mss = full_space;
@@ -1808,8 +1714,6 @@ u32 __serval_tcp_select_window(struct sock *sk)
 
 	if (free_space > tp->rcv_ssthresh)
 		free_space = tp->rcv_ssthresh;
-
-        LOG_SSK(sk, "free_space=%d\n", free_space);
 
 	/* Don't do rounding if we are using window scaling, since the
 	 * scaled window will not line up with the MSS boundary anyway.
@@ -1835,10 +1739,6 @@ u32 __serval_tcp_select_window(struct sock *sk)
 		 * We also don't do any window rounding when the free space
 		 * is too small.
 		 */
-
-                LOG_SSK(sk, "window=%u free_space=%u mss=%u\n",
-                        window, free_space, mss);
-
 		if (window <= free_space - mss || window > free_space)
 			window = (free_space / mss) * mss;
 		else if (mss == full_space &&
@@ -1857,33 +1757,28 @@ void serval_tcp_mtup_init(struct sock *sk)
 	tp->tp_mtup.enabled = sysctl_serval_tcp_mtu_probing > 1;
 	tp->tp_mtup.search_high = 
                 tp->rx_opt.mss_clamp + sizeof(struct tcphdr) +
-                serval_sk(sk)->af_ops->net_header_len;
+                sk_ssk(sk)->af_ops->net_header_len;
 	tp->tp_mtup.search_low = 
                 serval_tcp_mss_to_mtu(sk, sysctl_serval_tcp_base_mss);
 	tp->tp_mtup.probe_size = 0;
 }
 
-/* This function synchronize snd mss to current pmtu/exthdr set.
-
-   tp->rx_opt.user_mss is mss set by user by TCP_MAXSEG. It does NOT counts
-   for TCP options, but includes only bare TCP header.
-
-   tp->rx_opt.mss_clamp is mss negotiated at connection setup.
-   It is minimum of user_mss and mss received with SYN.
-   It also does not include TCP options.
-
-   inet_csk(sk)->icsk_pmtu_cookie is last pmtu, seen by this function.
-
-   tp->mss_cache is current effective sending mss, including
-   all tcp options except for SACKs. It is evaluated,
-   taking into account current pmtu, but never exceeds
-   tp->rx_opt.mss_clamp.
-
-   NOTE1. rfc1122 clearly states that advertised MSS
-   DOES NOT include either tcp or ip options.
-
-   NOTE2. inet_csk(sk)->icsk_pmtu_cookie and tp->mss_cache
-   are READ ONLY outside this function.		--ANK (980731)
+/* This function synchronizes snd mss to current pmtu/exthdr set.
+ *
+ * tp->rx_opt.user_mss is mss set by user by TCP_MAXSEG. It does NOT counts
+ * for TCP options, but includes only bare TCP header.
+ *
+ * tp->rx_opt.mss_clamp is mss negotiated at connection setup.
+ * It is minimum of user_mss and mss received with SYN.
+ * It also does not include TCP options.
+ *
+ * tp->mss_cache is current effective sending mss, including
+ * all tcp options except for SACKs. It is evaluated,
+ * taking into account current pmtu, but never exceeds
+ * tp->rx_opt.mss_clamp.
+ *
+ * NOTE1. rfc1122 clearly states that advertised MSS
+ * DOES NOT include either tcp or ip options.	--ANK (980731)
  */
 unsigned int serval_tcp_sync_mss(struct sock *sk, u32 pmtu)
 {
@@ -1945,28 +1840,22 @@ unsigned int serval_tcp_current_mss(struct sock *sk)
 	return mss_now;
 }
 
-/**
-   FIXME: Lots of hard coded stuff in this init function as the user
-   space version of the stack does not have dst cache
-   implemented. Therefore we cannot access the default dst_metrics.
-
-   Further, __sk_dst_get(sk) will return NULL here, even in the
-   kernel. This is because the normal TCP/IP stack always routes a SYN
-   before transmission (i.e., it associates the socket with a route
-   that contains metrics). However, we cannot really route here, since
-   we do not know the destination --- it is resolved on the SYN.
-
+/* XXX Lots of hard coded stuff in this init function as the user
+ * space version of the stack does not have dst cache
+ * implemented. Therefore we cannot access the default dst_metrics.
+ *
+ * Further, __sk_dst_get(sk) will return NULL here, even in the
+ * kernel. This is because the normal TCP/IP stack always routes a SYN
+ * before transmission (i.e., it associates the socket with a route
+ * that contains metrics). However, we cannot really route here, since
+ * we do not know the destination --- it is resolved on the SYN.
  */
 static void serval_tcp_connect_init(struct sock *sk)
 {
         struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	__u8 rcv_wscale;
 	struct dst_entry *dst = __sk_dst_get(sk);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34))
-        unsigned int initrwnd = dst ? dst_metric(dst, RTAX_INITRWND) : 65535;
-#else
         unsigned int initrwnd = dst ? dst_metric(dst, RTAX_WINDOW) : 65535;
-#endif
         tp->tcp_header_len = sizeof(struct tcphdr);
  
 	if (tp->rx_opt.user_mss)
@@ -1983,11 +1872,7 @@ static void serval_tcp_connect_init(struct sock *sk)
 	if (!tp->window_clamp)
 		tp->window_clamp = dst ? dst_metric(dst, RTAX_WINDOW) : 0;
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,38))
-	tp->advmss = dst ? dst_metric(dst, RTAX_ADVMSS) : SERVAL_TCP_MSS_INIT;
-#else
 	tp->advmss = dst ? dst_metric_advmss(dst) : SERVAL_TCP_MSS_INIT;
-#endif
 
 	if (tp->rx_opt.user_mss && tp->rx_opt.user_mss < tp->advmss)
 		tp->advmss = tp->rx_opt.user_mss;
@@ -1995,17 +1880,13 @@ static void serval_tcp_connect_init(struct sock *sk)
 	serval_tcp_initialize_rcv_mss(sk);
 
 	serval_tcp_select_initial_window(serval_tcp_full_space(sk),
-                                         tp->advmss - (tp->rx_opt.ts_recent_stamp ? tp->tcp_header_len - sizeof(struct tcphdr) : 0),
-                                         &tp->rcv_wnd,
-                                         &tp->window_clamp,
-                                         sysctl_serval_tcp_window_scaling,
-                                         &rcv_wscale,
-                                         initrwnd);
+		tp->advmss - (tp->rx_opt.ts_recent_stamp
+			? tp->tcp_header_len - sizeof(struct tcphdr)
+			: 0),
+		&tp->rcv_wnd, &tp->window_clamp,
+		sysctl_serval_tcp_window_scaling, &rcv_wscale, initrwnd);
 
 	tp->rx_opt.rcv_wscale = rcv_wscale;
-
-        LOG_SSK(sk, "rx_opt.rcv_wscale=%u\n", rcv_wscale);
-
 	tp->rcv_ssthresh = tp->rcv_wnd;
 
 	sk->sk_err = 0;
@@ -2023,41 +1904,6 @@ static void serval_tcp_connect_init(struct sock *sk)
 	tp->retransmits = 0;
 	serval_tcp_clear_retrans(tp);       
 }
-
-#if defined(__DISABLED__)
-static int serval_tcp_build_header(struct sock *sk, 
-                                   struct sk_buff *skb,
-                                   u32 seq)
-{
-        struct tcphdr *th = tcp_hdr(skb);
-	struct serval_tcp_sock *tp;
-	struct tcp_skb_cb *tcb;
-	unsigned tcp_options_size = 0, tcp_header_size;
-        
-        LOG_SSK(sk, "TCP build SYNACK\n");
-
-        tcp_header_size = tcp_options_size + sizeof(struct tcphdr);
-
-	tp = serval_tcp_sk(sk);
-
-	th->seq	       	= htonl(seq);
-	th->ack_seq		= htonl(tp->rcv_nxt);
-	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
-					tcb->tcp_flags);
-        if (0 /*unlikely(tcb->tcp_flags & TCPH_SYN) */) {
-		/* RFC1323: The window in SYN & SYN/ACK segments
-		 * is never scaled.
-		 */
-		th->window	= htons(min(tp->rcv_wnd, 65535U));
-	} else {
-		th->window	= htons(serval_tcp_select_window(sk));
-	}
-	th->check		= 0;
-	th->urg_ptr		= 0;
-
-        return 0;
-}
-#endif /* __DISABLED__ */
 
 int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 {
@@ -2079,13 +1925,10 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 	tcp_header_size = tcp_options_size + sizeof(struct tcphdr);
 
         th = (struct tcphdr *)skb_push(skb, tcp_header_size);
-
         if (!th)
                 return -1;
 
         skb_reset_transport_header(skb);
-
-        LOG_SSK(sk, "Transport header=%p\n", skb_transport_header(skb));
 
 	tp->snd_nxt = tp->write_seq;
 	serval_tcp_init_nondata_skb(skb, tp->write_seq++, TCPH_SYN);
@@ -2106,8 +1949,6 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 
 	serval_tcp_options_write((__be32 *)(th + 1), tp, &opts);
 
-        LOG_SSK(sk, "Sending TCP SYN %s\n", tcphdr_to_str(th));
-
         /* On SYN the checksum is deferred until after
            resolution. This is because we do not know the route and
            src,dst IP at this point, and these are needed for the
@@ -2116,68 +1957,39 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
         return 0;
 }
 
-int serval_tcp_connection_build_synack(struct sock *sk,
-                                       struct dst_entry *dst,
-                                       struct request_sock *req, 
-                                       struct sk_buff *skb)
+int serval_tcp_connection_build_synack(struct sock *sk, struct dst_entry *dst,
+	struct request_sock *req, struct sk_buff *skb)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-        struct inet_request_sock *ireq = inet_rsk(req);
+        struct serval_tcp_request_sock *trsk = serval_tcp_rsk(req);
 	unsigned tcp_options_size, tcp_header_size;
 	struct tcp_out_options opts;
 	struct tcp_md5sig_key *md5 = NULL;
 	struct tcphdr *th;
         int mss;
 
-#if defined(OS_LINUX_KERNEL)
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,38))
-	mss = dst_metric(dst, RTAX_ADVMSS);
-#else
 	mss = dst_metric_advmss(dst);
-#endif
-#else
-	mss = SERVAL_TCP_MSS_INIT; 
-#endif
-        LOG_SSK(sk, "1. req->window_clamp=%u tp->window_clamp=%u\n",
-                req->window_clamp, tp->window_clamp);
 
 	if (req->rcv_wnd == 0) { /* ignored for retransmitted syns */
 		__u8 rcv_wscale;
 		/* Set this up on the first call only */
 
-#if defined(OS_LINUX_KERNEL)
-		req->window_clamp = tp->window_clamp ? : dst_metric(dst, RTAX_WINDOW);
-#else
-                req->window_clamp = 0;
-#endif
+		req->window_clamp = tp->window_clamp ? :
+			dst_metric(dst, RTAX_WINDOW);
 		/* tcp_full_space because it is guaranteed to be the
                  * first packet */
 		serval_tcp_select_initial_window(serval_tcp_full_space(sk),
-                                                 mss
-#if defined(OS_LINUX_KERNEL)
-                                                 - (ireq->tstamp_ok ? TCPOLEN_TSTAMP_ALIGNED : 0)
-#endif
-                                                 ,
-                                                 &req->rcv_wnd,
-                                                 &req->window_clamp,
-                                                 ireq->wscale_ok,
-                                                 &rcv_wscale,
-
-#if defined(OS_LINUX_KERNEL)
-                                                 dst_metric(dst, RTAX_INITRWND)
-#else
-                                                 0
-#endif
-                                                 );
-		ireq->rcv_wscale = rcv_wscale;
+			mss - (trsk->tstamp_ok ? TCPOLEN_TSTAMP_ALIGNED : 0),
+			&req->rcv_wnd, &req->window_clamp, trsk->wscale_ok,
+			&rcv_wscale, dst_metric(dst, RTAX_INITRWND));
+		trsk->rcv_wscale = rcv_wscale;
 	}
 
-	serval_tcp_init_nondata_skb(skb, serval_tcp_rsk(req)->snt_isn,
-                                     TCPH_SYN | TCPH_ACK);
+	serval_tcp_init_nondata_skb(skb, trsk->snt_isn, TCPH_SYN | TCPH_ACK);
 
 	memset(&opts, 0, sizeof(opts));
 	TCP_SKB_CB(skb)->when = tcp_time_stamp;
-	tcp_options_size = serval_tcp_synack_options(sk, req, mss,
+	tcp_options_size = serval_tcp_synack_options(sk, trsk, mss,
                                                      skb, &opts, &md5);
         tcp_header_size = tcp_options_size  + sizeof(struct tcphdr);
         
@@ -2189,8 +2001,8 @@ int serval_tcp_connection_build_synack(struct sock *sk,
         skb_reset_transport_header(skb);
 
 	memset(th, 0, tcp_header_size);
-        th->seq = htonl(serval_tcp_rsk(req)->snt_isn);
-	th->ack_seq = htonl(serval_tcp_rsk(req)->rcv_isn + 1);
+        th->seq = htonl(trsk->snt_isn);
+	th->ack_seq = htonl(trsk->rcv_isn + 1);
 	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
 					TCP_SKB_CB(skb)->tcp_flags);
         th->check = 0;
@@ -2198,18 +2010,11 @@ int serval_tcp_connection_build_synack(struct sock *sk,
 	th->window = htons(min(req->rcv_wnd, 65535U));
 	serval_tcp_options_write((__be32 *)(th + 1), tp, &opts);
 
-        LOG_SSK(sk, "TCP sending SYNACK %s optlen=%u\n", 
-                tcphdr_to_str(th), tcp_options_size);
+        __serval_tcp_v4_send_check(skb);
 
-        LOG_SSK(sk, "2. req->window_clamp=%u tp->window_clamp=%u\n",
-                req->window_clamp, tp->window_clamp);
-
-        __serval_tcp_v4_send_check(skb, serval_rsk(req)->reply_saddr, 
-                                   ireq->rmt_addr);
-
-        /*
-          FIXME: call serval_tcp_event_ack_sent? Not sure, since we
-          haven't sent any data at this point. */
+	/* XXX Call serval_tcp_event_ack_sent? Not sure, since we
+	 * haven't sent any data at this point.
+	 */
         /*
 	if (likely(tcb->tcp_flags & TCPH_ACK))
 		serval_tcp_event_ack_sent(sk, serval_tcp_skb_pcount(skb));
@@ -2218,8 +2023,7 @@ int serval_tcp_connection_build_synack(struct sock *sk,
         return 0;
 }
 
-int serval_tcp_connection_build_ack(struct sock *sk, 
-                                    struct sk_buff *skb)
+int serval_tcp_connection_build_ack(struct sock *sk, struct sk_buff *skb)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
         unsigned int tcp_header_size = sizeof(struct tcphdr);
@@ -2245,14 +2049,12 @@ int serval_tcp_connection_build_ack(struct sock *sk,
 
 	TCP_SKB_CB(skb)->when = tcp_time_stamp;
 
-        LOG_SSK(sk, "Built ACK %s\n", tcphdr_to_str(th));                
+        if (sk_ssk(sk)->af_ops->send_check)
+                sk_ssk(sk)->af_ops->send_check(sk, skb);
 
-        if (serval_sk(sk)->af_ops->send_check)
-                serval_sk(sk)->af_ops->send_check(sk, skb);
-
-        /*
-          FIXME: call serval_tcp_event_ack_sent? Not sure, since we
-          haven't sent any data at this point. */
+	/* XXX Call serval_tcp_event_ack_sent? Not sure, since we
+	 * haven't sent any data at this point.
+	 */
         /*
 	if (likely(tcb->tcp_flags & TCPH_ACK))
 		serval_tcp_event_ack_sent(sk, serval_tcp_skb_pcount(skb));
@@ -2280,10 +2082,7 @@ void serval_tcp_send_delayed_ack(struct sock *sk)
 
 		/* Slow path, intersegment interval is "high". */
 
-		/* If some rtt estimate is known, use it to bound delayed ack.
-		 * Do not use inet_csk(sk)->icsk_rto here, use results of rtt measurements
-		 * directly.
-		 */
+		/* If some rtt estimate is known, use it to bound delayed ack.*/
 		if (tp->srtt) {
 			int rtt = max(tp->srtt >> 3, TCP_DELACK_MIN);
 
@@ -2469,14 +2268,14 @@ void serval_tcp_send_fin(struct sock *sk)
 		/* Reserve space for headers and prepare control bits. */
 		skb_reserve(skb, MAX_SERVAL_TCP_HEADER);
 		/* FIN eats a sequence byte, write_seq advanced by
-                   tcp_queue_skb(). */
+                 * tcp_queue_skb().
+		 */
 		serval_tcp_init_nondata_skb(skb, tp->write_seq,
                                             TCPH_ACK | TCPH_FIN);
 		serval_tcp_queue_skb(sk, skb);
 	}
 	__serval_tcp_push_pending_frames(sk, mss_now, TCP_NAGLE_OFF);
 }
-
 
 /* This routine sends an ack and also updates the window. */
 void serval_tcp_send_ack(struct sock *sk)

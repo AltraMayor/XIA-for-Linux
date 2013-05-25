@@ -4,6 +4,7 @@
 #include <linux/net.h>
 #include <net/sock.h>
 #include <net/xia.h>
+#include <net/xia_route.h>
 
 /*
  *	Register a principal with XIA socket
@@ -102,6 +103,7 @@ static inline int xip_getsockopt(struct sock *sk, int level, int optname,
 }
 
 int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len);
+int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty);
 
 /** copy_n_and_shade_xia_addr - Copy the first @n rows of @rsrc to @dst, and
  *				zero (shade) the not used rows in @dst.
@@ -208,9 +210,12 @@ void xia_reset_dest(struct xia_sock *xia);
  */
 void xia_set_src(struct xia_sock *xia, struct xia_addr *src, int n);
 
+void __xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n,
+	int last_node, struct xip_dst *xdst);
+
 /** xia_set_dest - Set destination of packets sent from @xia.
  *			@n is the number of nodes in @dest.
  */
-int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n);
+int xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n);
 
 #endif /* _NET_XIA_SOCKET_H */
