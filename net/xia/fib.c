@@ -636,6 +636,13 @@ int fib_default_main_delroute(struct xip_ppal_ctx *ctx,
 }
 EXPORT_SYMBOL_GPL(fib_default_main_delroute);
 
+int fib_no_newroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL_GPL(fib_no_newroute);
+
 struct xip_deferred_negdep_flush {
 	struct rcu_head		rcu_head;
 	struct net		*net;
