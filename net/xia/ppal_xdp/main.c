@@ -70,12 +70,6 @@ static inline struct fib_xid_xdp_local *sk_lxdp(struct sock *sk)
 	return xiask_lxdp(xia_sk(sk));
 }
 
-static int local_newroute_delroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
-{
-	return -EOPNOTSUPP;
-}
-
 static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
@@ -242,8 +236,8 @@ static void main_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 
 static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
-		.newroute = local_newroute_delroute,
-		.delroute = local_newroute_delroute,
+		.newroute = fib_no_newroute,
+		.delroute = fib_no_delroute,
 		.dump_fxid = local_dump_xdp,
 		.free_fxid = local_free_xdp,
 	},
