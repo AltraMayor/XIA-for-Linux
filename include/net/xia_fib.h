@@ -199,6 +199,11 @@ int fib_default_local_delroute(struct xip_ppal_ctx *ctx,
 int fib_default_main_delroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
 
+/* In case newroute and/or delroute are not supported, use these functions. */
+int fib_no_newroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
+#define fib_no_delroute	fib_no_newroute
+
 /*
  * Exported by fib_frontend.c
  */
