@@ -142,6 +142,14 @@ static inline void unmark_xia_addr(struct xia_addr *addr)
 		addr->s_row[i].s_edge.i &= ~XIA_CHOSEN_EDGES;
 }
 
+static inline void unmark_xia_rows(struct xia_row *addr, unsigned int n)
+{
+	int i;
+	BUG_ON(n >= XIA_NODES_MAX);
+	for (i = 0; i < n; i++)
+		addr[i].s_edge.i &= ~XIA_CHOSEN_EDGES;
+}
+
 #ifndef __KERNEL__
 /* XXX This section is only needed to make compiling applications with
  * old kernels' headers installed easier.

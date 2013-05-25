@@ -1,24 +1,15 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
 #ifndef _AF_SERVAL_H
 #define _AF_SERVAL_H
 
-#include <platform.h>
-
-int serval_init(void);
-void serval_fini(void);
-
 struct ctl_table_header;
 
+/* XXX It should be part of Serval's principal context per struct net. */
 /* Control variables for Serval. */
 struct netns_serval {
-	unsigned int sysctl_sal_forward;
-        unsigned int sysctl_auto_migrate;
-        unsigned int sysctl_debug;
         unsigned int sysctl_sal_max_retransmits;
-        unsigned int sysctl_resolution_mode;
 	struct ctl_table_header *ctl;
 };
 
 extern struct netns_serval net_serval;
 
-#endif /* AF_SERVAL_H */
+#endif /* _AF_SERVAL_H */

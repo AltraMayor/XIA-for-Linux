@@ -1,8 +1,5 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
-#include <platform.h>
-#include <debug.h>
-#include <serval_tcp.h>
-#include <serval_tcp_sock.h>
+#include "serval_tcp.h"
+#include "serval_tcp_sock.h"
 
 int sysctl_serval_tcp_keepalive_time __read_mostly = TCP_KEEPALIVE_TIME;
 int sysctl_serval_tcp_keepalive_probes __read_mostly = TCP_KEEPALIVE_PROBES;
@@ -14,21 +11,18 @@ int sysctl_serval_tcp_thin_linear_timeouts __read_mostly;
 
 static void serval_tcp_write_timer(unsigned long);
 static void serval_tcp_delack_timer(unsigned long);
-static void serval_tcp_keepalive_timer (unsigned long data);
+static void serval_tcp_keepalive_timer(unsigned long data);
 
 void serval_tcp_init_xmit_timers(struct sock *sk)
 {
-	serval_tsk_init_xmit_timers(sk, &serval_tcp_write_timer, 
-				    &serval_tcp_delack_timer,
-				    &serval_tcp_keepalive_timer);
+	serval_tsk_init_xmit_timers(sk,	serval_tcp_write_timer,
+		serval_tcp_delack_timer, serval_tcp_keepalive_timer);
 }
 
 static void serval_tcp_write_err(struct sock *sk)
 {
 	sk->sk_err = sk->sk_err_soft ? : ETIMEDOUT;
 	sk->sk_error_report(sk);
-
-        LOG_SSK(sk, "Write ERROR, socket DONE\n");
 	serval_sal_done(sk);
 }
 
@@ -71,7 +65,7 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 		if (do_reset)
 			serval_sal_send_active_reset(sk, GFP_ATOMIC);
 
-                LOG_SSK(sk, "Too many orphans, TCP done!\n");
+                /* Too many orphans, TCP done! */
 		serval_sal_done(sk);
 		//NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONMEMORY);
 		return 1;
@@ -139,7 +133,8 @@ static int retransmits_timed_out(struct sock *sk,
                 struct sk_buff *skb = serval_tcp_write_queue_head(sk);
                 
                 if (!skb) {
-                        LOG_ERR("BUG! transmit queue empty!\n");
+			LIMIT_NETDEBUG(KERN_ERR
+				pr_fmt("BUG! Transmit queue empty!\n"));
                         return 0;
                 }
                 start_ts = TCP_SKB_CB(skb)->when;
@@ -165,8 +160,6 @@ static int serval_tcp_write_timeout(struct sock *sk)
 	int retry_until = 0;
 	int do_reset, syn_set = 0;
 
-        LOG_SSK(sk, "write timeout\n");
-
 	if (!((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV))) {
 		if (retransmits_timed_out(sk, sysctl_serval_tcp_retries1, 0)) {
 			/* Black hole detection */
@@ -183,8 +176,6 @@ static int serval_tcp_write_timeout(struct sock *sk)
 			retry_until = serval_tcp_orphan_retries(sk, alive);
 			do_reset = alive ||
 				   !retransmits_timed_out(sk, retry_until, 0);
-                        
-                        LOG_SSK(sk, "do_reset=%d\n", do_reset);
 
 			if (serval_tcp_out_of_resources(sk, do_reset))
 				return 1;
@@ -203,8 +194,6 @@ static void serval_tcp_delack_timer(unsigned long data)
 {
 	struct sock *sk = (struct sock *)data;
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-
-        LOG_SSK(sk, "timeout\n");
 
 	bh_lock_sock(sk);
 
@@ -274,7 +263,7 @@ static void serval_tcp_probe_timer(struct sock *sk)
 	 *
 	 * It doesn't AFAIK, because we kill the retransmit timer -AK
 	 *
-	 * FIXME: We ought not to do it, Solaris 2.5 actually has fixing
+	 * XXX We ought not to do it, Solaris 2.5 actually has fixing
 	 * this behaviour in Solaris down as a bug fix. [AC]
 	 *
 	 * Let me to explain. icsk_probes_out is zeroed by incoming ACKs
@@ -312,8 +301,6 @@ static void serval_tcp_probe_timer(struct sock *sk)
 void serval_tcp_retransmit_timer(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-
-        LOG_SSK(sk, "timeout, packets_out=%u\n", tp->packets_out);
 
 	if (!tp->packets_out)
 		goto out;
@@ -435,8 +422,6 @@ static void serval_tcp_write_timer(unsigned long data)
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	int event;
 
-        LOG_SSK(sk, "timeout\n");
-
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {
 		/* Try again later */
@@ -470,20 +455,21 @@ out_unlock:
 	sock_put(sk);
 }
 
-static void serval_tcp_keepalive_timer (unsigned long data)
+static void serval_tcp_keepalive_timer(unsigned long data)
 {
-	struct sock *sk = (struct sock *) data;
-	//struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+	struct sock *sk = (struct sock *)data;
 
 	/* Only process if socket is not in use. */
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {
 		/* Try again later. */
-		serval_tsk_reset_keepalive_timer (sk, HZ/20);
+		serval_tsk_reset_keepalive_timer(sk, HZ/20);
 		goto out;
 	}
 
-	LOG_SSK(sk, "Keepalive timer not implemented!\n");
+	/* XXX Implement it or drop it. */
+	LIMIT_NETDEBUG(KERN_WARNING
+		pr_fmt("Keepalive timer not implemented!\n"));
 
 out:
 	bh_unlock_sock(sk);

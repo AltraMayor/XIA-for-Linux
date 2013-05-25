@@ -1,7 +1,5 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*-
- *
+/*
  * Authors: Erik Nordström <enordstr@cs.princeton.edu>
- * 
  *
  *	This program is free software; you can redistribute it and/or
  *	modify it under the terms of the GNU General Public License as
@@ -11,25 +9,20 @@
 #ifndef __SERVAL_UDP_H__
 #define __SERVAL_UDP_H__
 
-#include <platform.h>
-#include <serval_udp_sock.h>
-
-#if defined(OS_LINUX_KERNEL)
 #include <linux/ip.h>
 #include <net/udp.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0))
 #include <linux/export.h>
-#endif
-#endif
 
-#if defined(OS_USER)
-#include <netinet/ip.h>
-#if defined(OS_BSD)
-#include <serval/platform_tcpip.h>
-#else
-#include <netinet/udp.h>
-#endif
-#endif /* OS_USER */
+/* The AF_SERVAL socket */
+struct serval_udp_sock {
+	/* NOTE: serval_sock has to be the first member */
+	struct serval_sock ssk;
+};
+
+static inline struct serval_udp_sock *serval_udp_sk(const struct sock *sk)
+{
+	return (struct serval_udp_sock *)sk;
+}
 
 /*
  *	Generic checksumming routines for UDP(-Lite) v4 and v6
@@ -49,18 +42,18 @@ static inline int serval_udp_csum_init(struct sk_buff *skb,
                                        struct udphdr *uh,
                                        int proto)
 {
-        const struct iphdr *iph = ip_hdr(skb);
+	/* These addresses don't make sense in XIA. */
+	const __be32 saddr = 0;
+	const __be32 daddr = 0;
 
 	if (uh->check == 0) {
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	} else if (skb->ip_summed == CHECKSUM_COMPLETE) {
-		if (!csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len,
-                                       proto, skb->csum))
+		if (!csum_tcpudp_magic(saddr, daddr, skb->len, proto,skb->csum))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 	}
 	if (!skb_csum_unnecessary(skb))
-		skb->csum = csum_tcpudp_nofold(iph->saddr, iph->daddr,
-					       skb->len, proto, 0);
+		skb->csum = csum_tcpudp_nofold(saddr, daddr, skb->len, proto,0);
 	return 0;
 }
 

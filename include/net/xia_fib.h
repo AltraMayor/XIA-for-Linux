@@ -398,8 +398,14 @@ static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
 	return atomic_read(&xtbl->fxt_count);
 }
 
-void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
-	int entry_type);
+void __init_fxid(struct fib_xid *fxid, int table_id, int entry_type);
+
+static inline void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
+	int entry_type)
+{
+	__init_fxid(fxid, table_id, entry_type);
+	memmove(fxid->fx_xid, xid, XIA_XID_MAX);
+}
 
 /* NOTE
  *	@fxid must not be in any XID table!

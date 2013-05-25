@@ -40,7 +40,7 @@ struct sk_buff *xip_trim_packet_if_needed(struct sk_buff *skb, u32 mtu)
 }
 EXPORT_SYMBOL_GPL(xip_trim_packet_if_needed);
 
-static inline void copy_xia_addr_to(const struct xia_addr *addr, int n,
+static inline void copy_xia_addr_to(const struct xia_row *addr, int n,
 	struct xia_row *to)
 {
 	int len = sizeof(struct xia_row) * n;
@@ -57,6 +57,59 @@ void xip_flush_pending_frames(struct sock *sk)
 }
 EXPORT_SYMBOL_GPL(xip_flush_pending_frames);
 
+/* Fill in the XIP header.
+ *
+ * NOTE
+ *	This function doesn't set payload length field because it's meant to
+ *	be filled at transmission time to cope with different MTUs.
+ *
+ *	Although source address length is filled, the address itself is left
+ *	untouched to be filled by caller.
+ *
+ * RETURN
+ *	Address where source address should be filled.
+ */
+static inline struct xia_row *__xip_fill_in_hdr(struct sk_buff *skb,
+	struct xip_dst *xdst, int src_n, const struct xia_row *dest,
+	int dest_n, int dest_last_node)
+{
+	struct xiphdr *xiph = xip_hdr(skb);
+	BUG_ON(dest_n < 1);
+	xiph->version = 1;
+	xiph->next_hdr = 0;
+	xiph->hop_limit = xip_dst_hoplimit(&xdst->dst);
+	xiph->num_dst = dest_n;
+	xiph->num_src = src_n;
+	xiph->last_node = dest_last_node;
+	copy_xia_addr_to(dest, dest_n, &xiph->dst_addr[0]);
+	return &xiph->dst_addr[dest_n];
+}
+
+void xip_fill_in_hdr_bsrc(struct sk_buff *skb, struct xip_dst *xdst,
+	const struct xia_row *src, xid_type_t sink_type, const __u8 *sink_id,
+	int src_n, const struct xia_row *dest, int dest_n, int dest_last_node)
+{
+	struct xia_row *src_row = __xip_fill_in_hdr(skb, xdst, src_n,
+		dest, dest_n, dest_last_node);
+	int last = src_n - 1;
+	BUG_ON(src_n < 1);
+	copy_xia_addr_to(src,  last,  src_row);
+	src_row[last].s_xid.xid_type = sink_type;
+	memmove(src_row[last].s_xid.xid_id, sink_id, XIA_XID_MAX);
+	src_row[last].s_edge.i = src[last].s_edge.i;
+}
+EXPORT_SYMBOL_GPL(xip_fill_in_hdr_bsrc);
+
+void xip_fill_in_hdr(struct sk_buff *skb, struct xip_dst *xdst,
+	const struct xia_row *src, int src_n,
+	const struct xia_row *dest, int dest_n, int dest_last_node)
+{
+	struct xia_row *src_row = __xip_fill_in_hdr(skb, xdst, src_n,
+		dest, dest_n, dest_last_node);
+	copy_xia_addr_to(src, src_n, src_row);
+}
+EXPORT_SYMBOL_GPL(xip_fill_in_hdr);
+
 static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 	const struct xia_addr *src, int src_n,
 	const struct xia_addr *dest, int dest_n, u8 dest_last_node,
@@ -64,7 +117,6 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 {
 	struct net_device *dev = xdst->dst.dev;
 	struct sk_buff *skb;
-	struct xiphdr *xiph;
 	u32 mtu, alloclen;
 	int hh_len, xh_len, rc;
 
@@ -95,15 +147,9 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 	/* Fill XIP header. */
 	skb_reset_network_header(skb);
 	xh_len = xip_hdr_size(dest_n, src_n);
-	xiph = (struct xiphdr *)skb_put(skb, xh_len);
-	xiph->version = 1;
-	xiph->next_hdr = 0;
-	xiph->hop_limit = xip_dst_hoplimit(&xdst->dst);
-	xiph->num_dst = dest_n;
-	xiph->num_src = src_n;
-	xiph->last_node = dest_last_node;
-	copy_xia_addr_to(dest, dest_n, &xiph->dst_addr[0]);
-	copy_xia_addr_to(src,  src_n,  &xiph->dst_addr[dest_n]);
+	skb_put(skb, xh_len);
+	xip_fill_in_hdr(skb, xdst, src->s_row, src_n,
+		dest->s_row, dest_n, dest_last_node);
 
 	skb_set_transport_header(skb, xh_len);
 	skb_put(skb, transhdrlen);
