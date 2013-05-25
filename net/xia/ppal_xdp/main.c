@@ -142,98 +142,6 @@ static void local_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	 */
 }
 
-/*
- *	Main XDPs
- */
-
-struct fib_xid_xdp_main {
-	struct fib_xid		common;
-	struct xia_xid		gw;
-};
-
-static inline struct fib_xid_xdp_main *fxid_mxdp(struct fib_xid *fxid)
-{
-	return likely(fxid)
-		? container_of(fxid, struct fib_xid_xdp_main, common)
-		: NULL;
-}
-
-static int main_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
-{
-	struct fib_xid_xdp_main *new_mxdp;
-	int rc;
-
-	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_XDP)
-		return -EINVAL;
-
-	new_mxdp = kmalloc(sizeof(*new_mxdp), GFP_KERNEL);
-	if (!new_mxdp)
-		return -ENOMEM;
-	init_fxid(&new_mxdp->common, cfg->xfc_dst->xid_id,
-		XRTABLE_MAIN_INDEX, 0);
-	new_mxdp->gw = *cfg->xfc_gw;
-
-	rc = fib_build_newroute(&new_mxdp->common, xtbl, cfg, NULL);
-	if (rc)
-		free_fxid_norcu(xtbl, &new_mxdp->common);
-	return rc;
-}
-
-static int main_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
-{
-	struct nlmsghdr *nlh;
-	u32 portid = NETLINK_CB(cb->skb).portid;
-	u32 seq = cb->nlh->nlmsg_seq;
-	struct rtmsg *rtm;
-	struct fib_xid_xdp_main *mxdp = fxid_mxdp(fxid);
-	struct xia_xid dst;
-
-	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
-	if (nlh == NULL)
-		return -EMSGSIZE;
-
-	rtm = nlmsg_data(nlh);
-	rtm->rtm_family = AF_XIA;
-	rtm->rtm_dst_len = sizeof(struct xia_xid);
-	rtm->rtm_src_len = 0;
-	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
-	rtm->rtm_table = XRTABLE_MAIN_INDEX;
-	/* XXX One may want to vary here. */
-	rtm->rtm_protocol = RTPROT_UNSPEC;
-	/* XXX One may want to vary here. */
-	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rtm->rtm_type = RTN_UNICAST;
-	/* XXX One may want to put something here, like RTM_F_CLONED. */
-	rtm->rtm_flags = 0;
-
-	dst.xid_type = xtbl->fxt_ppal_type;
-	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-
-	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
-			nla_put(skb, RTA_GATEWAY, sizeof(mxdp->gw), &mxdp->gw)
-		))
-		goto nla_put_failure;
-
-	return nlmsg_end(skb, nlh);
-
-nla_put_failure:
-	nlmsg_cancel(skb, nlh);
-	return -EMSGSIZE;
-}
-
-/* Don't call this function! Use free_fxid instead. */
-static void main_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
-{
-	struct fib_xid_xdp_main *mxdp = fxid_mxdp(fxid);
-	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_XDP,
-		mxdp->common.fx_xid, &mxdp->gw);
-	kfree(mxdp);
-}
-
 static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = fib_no_newroute,
@@ -242,12 +150,7 @@ static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
 		.free_fxid = local_free_xdp,
 	},
 
-	[XRTABLE_MAIN_INDEX] = {
-		.newroute = main_newroute,
-		.delroute = fib_default_main_delroute,
-		.dump_fxid = main_dump_xdp,
-		.free_fxid = main_free_xdp,
-	},
+	XIP_FIB_REDIRECT_MAIN,
 };
 
 /*
@@ -411,12 +314,10 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_FORWARD;
 	}
 
-	case XRTABLE_MAIN_INDEX: {
-		struct fib_xid_xdp_main *mxdp = fxid_mxdp(fxid);
-		memmove(next_xid, &mxdp->gw, sizeof(*next_xid));
+	case XRTABLE_MAIN_INDEX:
+		fib_mrd_redirect(fxid, next_xid);
 		rcu_read_unlock();
 		return XRP_ACT_REDIRECT;
-	}
 
 	}
 	rcu_read_unlock();
