@@ -204,6 +204,26 @@ int fib_no_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
 #define fib_no_delroute	fib_no_newroute
 
+/* Do not call these functions, use macro XIP_FIB_REDIRECT_MAIN instead. */
+int fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg);
+int fib_mrd_dump(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+	struct netlink_callback *cb);
+void fib_mrd_free(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
+#define XIP_FIB_REDIRECT_MAIN [XRTABLE_MAIN_INDEX] = {			\
+	.newroute = fib_mrd_newroute,					\
+	.delroute = fib_default_main_delroute,				\
+	.dump_fxid = fib_mrd_dump,					\
+	.free_fxid = fib_mrd_free,					\
+}
+
+/* If the macro XIP_FIB_REDIRECT_MAIN is being used, call this function
+ * to redirect to @fxid.
+ */
+void fib_mrd_redirect(struct fib_xid *fxid, struct xia_xid *next_xid);
+
 /*
  * Exported by fib_frontend.c
  */

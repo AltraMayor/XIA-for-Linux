@@ -753,3 +753,104 @@ def_upd:
 	return rc;
 }
 EXPORT_SYMBOL_GPL(fib_build_newroute);
+
+/*
+ *	Main entries that only redirect.
+ */
+
+struct fib_xid_redirect_main {
+	struct fib_xid		common;
+	struct xia_xid		gw;
+};
+
+static inline struct fib_xid_redirect_main *fxid_mrd(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_redirect_main, common)
+		: NULL;
+}
+
+int fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg)
+{
+	struct fib_xid_redirect_main *new_mrd;
+	int rc;
+
+	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == xtbl_ppalty(xtbl))
+		return -EINVAL;
+
+	new_mrd = kmalloc(sizeof(*new_mrd), GFP_KERNEL);
+	if (!new_mrd)
+		return -ENOMEM;
+	init_fxid(&new_mrd->common, cfg->xfc_dst->xid_id,
+		XRTABLE_MAIN_INDEX, 0);
+	new_mrd->gw = *cfg->xfc_gw;
+
+	rc = fib_build_newroute(&new_mrd->common, xtbl, cfg, NULL);
+	if (rc)
+		free_fxid_norcu(xtbl, &new_mrd->common);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(fib_mrd_newroute);
+
+int fib_mrd_dump(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+	struct netlink_callback *cb)
+{
+	struct nlmsghdr *nlh;
+	u32 portid = NETLINK_CB(cb->skb).portid;
+	u32 seq = cb->nlh->nlmsg_seq;
+	struct rtmsg *rtm;
+	struct fib_xid_redirect_main *mrd = fxid_mrd(fxid);
+	struct xia_xid dst;
+
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+		NLM_F_MULTI);
+	if (nlh == NULL)
+		return -EMSGSIZE;
+
+	rtm = nlmsg_data(nlh);
+	rtm->rtm_family = AF_XIA;
+	rtm->rtm_dst_len = sizeof(struct xia_xid);
+	rtm->rtm_src_len = 0;
+	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
+	rtm->rtm_table = XRTABLE_MAIN_INDEX;
+	/* XXX One may want to vary here. */
+	rtm->rtm_protocol = RTPROT_UNSPEC;
+	/* XXX One may want to vary here. */
+	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+	rtm->rtm_type = RTN_UNICAST;
+	/* XXX One may want to put something here, like RTM_F_CLONED. */
+	rtm->rtm_flags = 0;
+
+	dst.xid_type = xtbl_ppalty(xtbl);
+	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
+
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
+			nla_put(skb, RTA_GATEWAY, sizeof(mrd->gw), &mrd->gw)
+		))
+		goto nla_put_failure;
+
+	return nlmsg_end(skb, nlh);
+
+nla_put_failure:
+	nlmsg_cancel(skb, nlh);
+	return -EMSGSIZE;
+}
+EXPORT_SYMBOL_GPL(fib_mrd_dump);
+
+/* Don't call this function! Use free_fxid instead. */
+void fib_mrd_free(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_redirect_main *mrd = fxid_mrd(fxid);
+	xdst_invalidate_redirect(xtbl_net(xtbl), xtbl_ppalty(xtbl),
+		mrd->common.fx_xid, &mrd->gw);
+	kfree(mrd);
+}
+EXPORT_SYMBOL_GPL(fib_mrd_free);
+
+void fib_mrd_redirect(struct fib_xid *fxid, struct xia_xid *next_xid)
+{
+	*next_xid = fxid_mrd(fxid)->gw;
+}
+EXPORT_SYMBOL_GPL(fib_mrd_redirect);
