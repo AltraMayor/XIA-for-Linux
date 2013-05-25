@@ -1,24 +1,9 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
 #ifndef _SERVAL_TCP_H_
 #define _SERVAL_TCP_H_
 
-#include <platform.h>
-#include <serval_tcp_sock.h>
-
-#if defined(OS_LINUX_KERNEL)
 #include <net/tcp.h>
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,2,0))
-#define tcp_flags flags
-#endif
-#endif /* OS_LINUX_KERNEL */
-
-#if defined(OS_USER)
-#include <userlevel/serval_tcp_user.h>
-#include <poll.h>
-#endif /* OS_USER */
-
-#include <serval_sal.h>
-#include <netinet_serval.h>
+#include "serval_tcp_sock.h"
+#include "serval_sal.h"
 
 /* TCP timestamps are only 32-bits, this causes a slight
  * complication on 64-bit systems since we store a snapshot
@@ -237,19 +222,11 @@ extern int sysctl_serval_tcp_max_ssthresh;
 extern int sysctl_serval_tcp_cookie_size;
 extern int sysctl_serval_tcp_thin_linear_timeouts;
 extern int sysctl_serval_tcp_thin_dupack;
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37))
-extern int sysctl_serval_tcp_mem[3];
-#else
 extern long sysctl_serval_tcp_mem[3];
-#endif
 extern int sysctl_serval_tcp_wmem[3];
 extern int sysctl_serval_tcp_rmem[3];
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37))
-extern atomic_t serval_tcp_memory_allocated;
-#else
 extern atomic_long_t serval_tcp_memory_allocated;
-#endif
 
 extern int serval_tcp_memory_pressure;
 extern void serval_tcp_enter_memory_pressure(struct sock *sk);
@@ -315,7 +292,6 @@ static inline void serval_tcp_dec_quickack_mode(struct sock *sk,
 
 static inline int serval_tcp_too_many_orphans(struct sock *sk, int shift)
 {
-#if defined(OS_LINUX_KERNEL)
 	struct percpu_counter *ocp = sk->sk_prot->orphan_count;
 	int orphans = percpu_counter_read_positive(ocp);
 
@@ -326,14 +302,10 @@ static inline int serval_tcp_too_many_orphans(struct sock *sk, int shift)
 	}
 
 	if (sk->sk_wmem_queued > SOCK_MIN_SNDBUF &&
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37))
-	    atomic_read(&serval_tcp_memory_allocated) > sysctl_serval_tcp_mem[2]
-#else
-	    atomic_long_read(&serval_tcp_memory_allocated) > sysctl_serval_tcp_mem[2]
-#endif
-            )
+		atomic_long_read(&serval_tcp_memory_allocated) >
+			sysctl_serval_tcp_mem[2])
 		return 1;
-#endif
+
 	return 0;
 }
 
@@ -341,14 +313,11 @@ static inline int serval_tcp_too_many_orphans(struct sock *sk, int shift)
 static inline u32 serval_tcp_rto_min(struct sock *sk)
 {
 	u32 rto_min = SERVAL_TCP_RTO_MIN;
-#if defined(OS_LINUX_KERNEL)
 	struct dst_entry *dst = __sk_dst_get(sk);
 	if (dst && dst_metric_locked(dst, RTAX_RTO_MIN))
 		rto_min = dst_metric_rtt(dst, RTAX_RTO_MIN);
-#endif
 	return rto_min;
 }
-
 
 /* Due to TSO, an SKB can be composed of multiple actual
  * packets.  To keep these tracked properly, we use this.
@@ -364,15 +333,14 @@ static inline int serval_tcp_skb_mss(const struct sk_buff *skb)
 	return skb_shinfo(skb)->gso_size;
 }
 
-static inline int 
-serval_tcp_paws_check(const struct serval_tcp_options_received *rx_opt, 
-                      int paws_win)
+static inline int serval_tcp_paws_check(
+	const struct serval_tcp_options_received *rx_opt, int paws_win)
 {
 	if ((s32)(rx_opt->ts_recent - rx_opt->rcv_tsval) <= paws_win)
 		return 1;
-	if (unlikely(get_seconds() >= rx_opt->ts_recent_stamp + TCP_PAWS_24DAYS))
+	if (unlikely(get_seconds() >= rx_opt->ts_recent_stamp +
+		TCP_PAWS_24DAYS))
 		return 1;
-
 	return 0;
 }
 
@@ -415,7 +383,7 @@ int serval_tcp_connection_build_synack(struct sock *sk,
 int serval_tcp_connection_build_ack(struct sock *sk,
 				    struct sk_buff *skb);
 
-#if defined(ENABLE_SPLICE) && defined(OS_LINUX_KERNEL)
+#if defined(ENABLE_SPLICE)
 
 #include <linux/seq_file.h>
 
@@ -823,14 +791,17 @@ static inline void serval_tcp_update_wl(struct serval_tcp_sock *tp, u32 seq)
 	tp->snd_wl1 = seq;
 }
 
-void __serval_tcp_v4_send_check(struct sk_buff *skb,
-                                __be32 saddr, __be32 daddr);
+void __serval_tcp_v4_send_check(struct sk_buff *skb);
+
 /*
  * Calculate(/check) TCP checksum
  */
-static inline __sum16 serval_tcp_v4_check(int len, __be32 saddr,
-                                          __be32 daddr, __wsum base)
+static inline __sum16 serval_tcp_v4_check(int len, __wsum base)
 {
+	/* These addresses don't make sense in XIA. */
+	const __be32 saddr = 0;
+	const __be32 daddr = 0;
+
 	return csum_tcpudp_magic(saddr, daddr, len, IPPROTO_TCP, base);
 }
 
@@ -910,6 +881,9 @@ extern void serval_tcp_init_congestion_control(struct sock *sk);
 void serval_tcp_cleanup_congestion_control(struct sock *sk);
 extern struct tcp_congestion_ops serval_tcp_init_congestion_ops;
 
+/* From serval_tcp_metrics.c. */
+int serval_tcp_net_metrics_init(struct xip_serval_ctx *ctx);
+void serval_tcp_net_metrics_exit(struct xip_serval_ctx *ctx);
 void serval_tcp_update_metrics(struct sock *sk);
 void serval_tcp_init_metrics(struct sock *sk);
 
@@ -937,8 +911,6 @@ static inline void serval_tcp_ca_event(struct sock *sk,
 }
 
 int serval_tcp_rcv_checks(struct sock *sk, struct sk_buff *skb, int is_syn);
-
-void serval_tcp_done(struct sock *sk);
 
 void serval_tcp_send_delayed_ack(struct sock *sk);
 void serval_tcp_send_ack(struct sock *sk);
@@ -1058,20 +1030,5 @@ union serval_tcp_word_hdr {
 }; 
 
 #define serval_tcp_flag_word(tp) ( ((union serval_tcp_word_hdr *)(tp))->words [3]) 
-
-
-#if defined(OS_LINUX_KERNEL)
-#include <linux/tcp.h>
-#include <linux/ip.h>
-#endif
-
-#if defined(OS_USER)
-#include <netinet/ip.h>
-#if defined(OS_BSD)
-#include <serval/platform_tcpip.h>
-#else
-#include <netinet/tcp.h>
-#endif
-#endif /* OS_USER */
 
 #endif /* _SERVAL_TCP_H_ */

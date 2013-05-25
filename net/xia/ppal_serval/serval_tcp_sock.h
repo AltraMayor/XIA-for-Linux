@@ -1,9 +1,7 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 8 -*- */
 #ifndef _SERVAL_TCP_SOCK_H
 #define _SERVAL_TCP_SOCK_H
 
-#include <platform.h>
-#include <serval_sock.h>
+#include <net/xia_serval.h>
 
 struct tcp_congestion_ops;
 
@@ -194,7 +192,7 @@ struct serval_tcp_sock {
 		u32     probe_seq_end;
 	} mtu_probe;
 
-        /* From inet_connection_sock */
+        /* From inet_connection_sock. */
         __u8			  ca_state;
 	__u8			  retransmits;
 	__u8			  pending;
@@ -279,7 +277,6 @@ static inline void serval_tsk_delack_init(struct sock *sk)
 	memset(&tp->tp_ack, 0, sizeof(tp->tp_ack));
 }
 
-void serval_tsk_delete_keepalive_timer(struct sock *sk);
 void serval_tsk_reset_keepalive_timer(struct sock *sk, unsigned long timeout);
 
 static inline void serval_tsk_clear_xmit_timer(struct sock *sk, const int what)
@@ -318,6 +315,5 @@ static inline void serval_tsk_reset_xmit_timer(struct sock *sk, const int what,
 		sk_reset_timer(sk, &tp->delack_timer, tp->tp_ack.timeout);
 	}
 }
-
 
 #endif /* _SERVAL_TCP_SOCK_H */

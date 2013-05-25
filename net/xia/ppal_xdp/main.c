@@ -338,41 +338,21 @@ static void xdp_close(struct sock *sk, long timeout)
 	sk_common_release(sk);
 }
 
-/* XDP isn't meant as a tool to poke other principals, thus
- * enforce that all sinks are XIDTYPE_XDP.
- */
-static int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty)
-{
-	int i;
-	int n = xia_test_addr(&addr->sxia_addr);
-
-	if (n < 1) {
-		/* Invalid address since it's empty. */
-		return -EINVAL;
-	}
-
-	/* Verify the type of all sinks. */
-	for (i = 0; i < n; i++) {
-		struct xia_row *row = &addr->sxia_addr.s_row[i];
-		if (is_it_a_sink(row, i, n) && row->s_xid.xid_type != ty)
-			return -EINVAL;
-	}
-
-	return n;
-}
-
 static int xdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, daddr, uaddr);
 	int rc, n;
 
+	/* XDP isn't meant as a tool to poke other principals, thus
+	 * enforce that all sinks are XIDTYPE_XDP.
+	 */
 	rc = check_type_of_all_sinks(daddr, XIDTYPE_XDP);
 	if (rc < 0)
 		return rc;
 	n = rc;
 
 	lock_sock(sk);
-	rc = xia_set_dest(xia_sk(sk), &daddr->sxia_addr, n);
+	rc = xia_set_dest(xia_sk(sk), daddr->sxia_addr.s_row, n);
 	release_sock(sk);
 	return rc;
 }
