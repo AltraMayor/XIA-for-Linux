@@ -11,7 +11,6 @@
  *	the License, or (at your option) any later version.
  */
 #include <platform.h>
-#if defined(OS_LINUX_KERNEL)
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/socket.h>
@@ -23,17 +22,7 @@
 #include <linux/fs.h>
 #include <linux/string.h>
 #include <net/protocol.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0))
 #include <linux/export.h>
-#endif
-
-extern int inet_to_serval_init(void);
-extern void inet_to_serval_fini(void);
-
-#elif defined(OS_USER)
-/* User-level declarations */
-#include <errno.h>
-#endif /* OS_LINUX_KERNEL */
 
 /* Common includes */
 #include <debug.h>
@@ -58,9 +47,9 @@ extern void delay_queue_fini(void);
 extern struct proto serval_udp_proto;
 extern struct proto serval_tcp_proto;
 
+/* TODO Move it to struct net. */
 struct netns_serval net_serval = {
         .sysctl_sal_forward = 0,
-        .sysctl_inet_to_serval = 0,
         .sysctl_auto_migrate = 0,
         .sysctl_debug = 0,
         .sysctl_udp_encap = 0,
@@ -1086,46 +1075,27 @@ int serval_init(void)
                 goto fail_sock_register;
         }
 
-#if defined(OS_LINUX_KERNEL)
-        err = inet_to_serval_init();
-
-        if (err != 0) {
-                LOG_CRIT("Cannot initialize INET to SERVAL support\n");
-                goto fail_inet_to_serval;
-        }
-#endif
         serval_tcp_init();
         
         delay_queue_init();
- out:
-        return err;
-#if defined(OS_LINUX_KERNEL)
- fail_inet_to_serval:
-        sock_unregister(PF_SERVAL);
-#endif
- fail_sock_register:
+out:
+	return err;
+fail_sock_register:
 	proto_unregister(&serval_tcp_proto);     
- fail_tcp_proto:
+fail_tcp_proto:
 	proto_unregister(&serval_udp_proto);     
- fail_udp_proto:
+fail_udp_proto:
         packet_fini();
- fail_packet:
+fail_packet:
         serval_sock_tables_fini();
- fail_sock:
+fail_sock:
         service_fini();
- fail_service:
+fail_service:
         goto out;      
 }
 
-#if defined(OS_LINUX_KERNEL)
-#include <net/ip.h>
-#endif
-
 void serval_fini(void)
 {
-#if defined(OS_LINUX_KERNEL)
-        inet_to_serval_fini();
-#endif
      	sock_unregister(PF_SERVAL);
 	proto_unregister(&serval_udp_proto);
 	proto_unregister(&serval_tcp_proto);

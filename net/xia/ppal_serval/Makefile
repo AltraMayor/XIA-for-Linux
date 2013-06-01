@@ -12,4 +12,4 @@ xia_ppal_serval-objs :=	main.o \
 	serval_udp.o serval_tcp.o serval_tcp_sock.o serval_tcp_output.o \
 	serval_tcp_input.o serval_tcp_cong.o serval_tcp_timer.o \
 	serval_tcp_metrics.o ctrl.o proc.o packet.o log.o \
-	udp_encap.o sysctl_net_serval.o inet_to_serval.o
+	udp_encap.o sysctl_net_serval.o
