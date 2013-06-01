@@ -12,7 +12,6 @@ struct ctl_table_header;
 /* Control variables for Serval. */
 struct netns_serval {
 	unsigned int sysctl_sal_forward;
-        unsigned int sysctl_inet_to_serval;
         unsigned int sysctl_auto_migrate;
         unsigned int sysctl_debug;
 	unsigned int sysctl_udp_encap;
