@@ -25,8 +25,6 @@
 /* payload + LL + IP + extra */
 #define MAX_SERVAL_UDP_HDR (MAX_SAL_HDR + sizeof(struct udphdr)) 
 
-extern int serval_udp_encap_xmit(struct sk_buff *skb);
-
 static int serval_udp_connection_request(struct sock *sk,
                                          struct request_sock *rsk,
                                          struct sk_buff *skb);
@@ -39,8 +37,6 @@ static int serval_udp_connection_respond_sock(struct sock *sk,
 
 static int serval_udp_rcv(struct sock *sk, struct sk_buff *skb);
 static void serval_udp_v4_send_check(struct sock *sk, struct sk_buff *skb);
-static void serval_udp_v4_encap_send_check(struct sock *sk, 
-                                           struct sk_buff *skb);
 
 /*
   For connected UDP we do nothing more for the SYN than adding an
@@ -97,24 +93,6 @@ static struct serval_sock_af_ops serval_udp_af_ops = {
         .conn_child_sock = serval_udp_connection_respond_sock,
 };
 
-static struct serval_sock_af_ops serval_udp_encap_af_ops = {
-        .rebuild_header = serval_sock_rebuild_header,
-#if defined(OS_LINUX_KERNEL)
-        .setsockopt = ip_setsockopt,
-        .getsockopt = ip_getsockopt,
-#endif
-        .conn_build_syn = serval_udp_build_syn,
-        .conn_build_synack = serval_udp_build_synack,
-        .conn_build_ack = serval_udp_build_ack,
-        .send_check = serval_udp_v4_encap_send_check,
-        .encap_queue_xmit = serval_ipv4_xmit,
-        .queue_xmit = serval_udp_encap_xmit,
-        .receive = serval_udp_rcv,
-        .net_header_len = SAL_NET_HEADER_LEN,
-        .conn_request = serval_udp_connection_request,
-        .conn_child_sock = serval_udp_connection_respond_sock,
-};
-
 static void __serval_udp_v4_send_check(struct sk_buff *skb,
                                 __be32 saddr, __be32 daddr)
 {
@@ -130,13 +108,6 @@ static void __serval_udp_v4_send_check(struct sk_buff *skb,
 void serval_udp_v4_send_check(struct sock *sk, struct sk_buff *skb)
 {
 	struct inet_sock *inet = inet_sk(sk);
-        __serval_udp_v4_send_check(skb, inet->inet_saddr, inet->inet_daddr);
-}
-
-void serval_udp_v4_encap_send_check(struct sock *sk, struct sk_buff *skb)
-{
-	struct inet_sock *inet = inet_sk(sk);
-        LOG_WARN("Encapsulation send checksumming not implemented!\n");
         __serval_udp_v4_send_check(skb, inet->inet_saddr, inet->inet_daddr);
 }
 
@@ -183,33 +154,19 @@ static int serval_udp_transmit_skb(struct sock *sk,
 static int serval_udp_init_sock(struct sock *sk)
 {
         struct serval_sock *ssk = serval_sk(sk);
-
-        if (net_serval.sysctl_udp_encap)
-                ssk->af_ops = &serval_udp_encap_af_ops;
-        else
-                ssk->af_ops = &serval_udp_af_ops;
-
+	ssk->af_ops = &serval_udp_af_ops;
         LOG_DBG("\n");
-        
         return 0;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 25)
-static int serval_udp_destroy_sock(struct sock *sk)
-#else
-        static void serval_udp_destroy_sock(struct sock *sk)
-#endif
+static void serval_udp_destroy_sock(struct sock *sk)
 {
-        //struct serval_udp_sock *usk = serval_udp_sk(sk);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 25)
-        return 0;
-#endif
+        /* struct serval_udp_sock *usk = serval_udp_sk(sk); */
 }
 
 static int serval_udp_disconnect(struct sock *sk, int flags)
 {
         LOG_DBG("\n");
-        
         return 0;
 }
 
@@ -231,12 +188,8 @@ int serval_udp_connection_respond_sock(struct sock *sk,
                                        struct sock *child,
                                        struct dst_entry *dst)
 {
-        if (serval_rsk(rsk)->udp_encap_dport)
-                serval_sk(sk)->af_ops = &serval_udp_encap_af_ops;
-        else
-                serval_sk(sk)->af_ops = &serval_udp_af_ops;
-
-        return 0;
+	serval_sk(sk)->af_ops = &serval_udp_af_ops;
+	return 0;
 }
 
 static int serval_udp_do_rcv(struct sock *sk, struct sk_buff *skb)

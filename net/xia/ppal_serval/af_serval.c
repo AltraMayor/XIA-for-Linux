@@ -52,7 +52,6 @@ struct netns_serval net_serval = {
         .sysctl_sal_forward = 0,
         .sysctl_auto_migrate = 0,
         .sysctl_debug = 0,
-        .sysctl_udp_encap = 0,
         .sysctl_sal_max_retransmits = SAL_RETRANSMITS_MAX,
         .sysctl_resolution_mode = SERVICE_ITER_ANYCAST,
 };

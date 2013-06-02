@@ -45,8 +45,6 @@ extern int proc_init(void);
 extern void proc_fini(void);
 extern int serval_sysctl_register(struct net *net);
 extern void serval_sysctl_unregister(struct net *net);
-extern int udp_encap_init(void);
-extern void udp_encap_fini(void);
 
 struct net_device *resolve_dev_impl(const struct in_addr *addr,
                                     int ifindex)
@@ -259,18 +257,8 @@ int __init serval_module_init(void)
 
         }
 
-        err = udp_encap_init();
-        
-        if (err != 0) {
-                LOG_CRIT("UDP encapsulation init failed\n");
-                pr_alert("ERROR: UDP encapsulation init failed\n");
-                goto fail_udp_encap;
-        }
-        
  out:
 	return err;
- fail_udp_encap:
-        serval_sysctl_unregister(&init_net);
  fail_sysctl:
         unregister_inetaddr_notifier(&inetaddr_notifier);
  fail_inetaddr_notifier:
@@ -287,7 +275,6 @@ int __init serval_module_init(void)
 
 void __exit serval_module_fini(void)
 {
-        udp_encap_fini();
         serval_sysctl_unregister(&init_net);
         unregister_inetaddr_notifier(&inetaddr_notifier);
         unregister_netdevice_notifier(&netdev_notifier);
