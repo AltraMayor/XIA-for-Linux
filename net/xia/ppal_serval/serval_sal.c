@@ -82,12 +82,6 @@ struct sal_context {
         struct sal_source_ext *src_ext;
 };
 
-#if defined(OS_LINUX_KERNEL)
-extern int serval_udp_encap_skb(struct sk_buff *skb, 
-                                __u32 saddr, __u32 daddr, 
-                                u16 sport, u16 dport);
-#endif
-
 static int serval_sal_state_process(struct sock *sk,
                                     struct sk_buff *skb,
                                     struct sal_context *ctx);
@@ -1564,23 +1558,6 @@ static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
         /* Calculate SAL header checksum. */
         serval_sal_send_check(rsh);
         
-#if defined(OS_LINUX_KERNEL)
-        if (ip_hdr(skb)->protocol == IPPROTO_UDP) {
-                struct iphdr *iph = ip_hdr(skb);
-                struct udphdr *uh = (struct udphdr *)
-                        ((char *)iph + (iph->ihl << 2));
-
-                LOG_DBG("Sending UDP encapsulated response\n");
-                
-                if (serval_udp_encap_skb(rskb, ip_hdr(skb)->daddr,
-                                         ip_hdr(skb)->saddr,
-                                         ntohs(uh->source),
-                                         ntohs(uh->dest))) {
-                        LOG_ERR("RST encapsulation failed\n");
-                        goto drop_and_release;
-                }
-        }
-#endif
         /* 
            Cannot use serval_sal_transmit_skb here since we do not yet
            have a full accepted socket (sk is the listening sock). 
@@ -1593,11 +1570,8 @@ static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
                 LOG_ERR("Could not send RST packet\n");
         }
         return;
-#if defined(OS_LINUX_KERNEL)
- drop_and_release:
-        dst_release(dst);
- drop_response:
-#endif
+
+drop_response:
         __kfree_skb(rskb);
         return;
 }
@@ -1754,28 +1728,6 @@ static int serval_sal_send_synack(struct sock *sk,
         /* Calculate SAL header checksum. */
         serval_sal_send_check(rsh);
 
-#if defined(OS_LINUX_KERNEL)
-        if (ip_hdr(skb)->protocol == IPPROTO_UDP) {
-                struct iphdr *iph = ip_hdr(skb);
-                struct udphdr *uh = (struct udphdr *)
-                        ((char *)iph + (iph->ihl << 2));
-
-                /* Remember that we should perform UDP
-                   encapsulation */
-                srsk->udp_encap_sport = ntohs(uh->dest);
-                srsk->udp_encap_dport = ntohs(uh->source);
-
-                LOG_DBG("Sending UDP encapsulated response\n");
-                
-                if (serval_udp_encap_skb(rskb, srsk->reply_saddr,
-                                         inet_rsk(rsk)->rmt_addr,
-                                         srsk->udp_encap_sport,
-                                         srsk->udp_encap_dport)) {
-                        LOG_ERR("SYN-ACK encapsulation failed\n");
-                        goto drop_and_release;
-                }
-        }
-#endif
         /* 
            Cannot use serval_sal_transmit_skb here since we do not yet
            have a full accepted socket (sk is the listening sock). 
@@ -1784,10 +1736,10 @@ static int serval_sal_send_synack(struct sock *sk,
                                              srsk->reply_saddr,
                                              inet_rsk(rsk)->rmt_addr, NULL);
         return 0;
- drop_and_release:
+drop_and_release:
         dst_release(dst);
 #if defined(OS_LINUX_KERNEL)
- drop_response:
+drop_response:
 #endif
         __kfree_skb(rskb);
         return 0;
@@ -1877,24 +1829,8 @@ static int serval_sal_rcv_syn(struct sock *sk,
                        SAL_SOURCE_EXT_GET_ADDR(ctx->src_ext, 0),
                        sizeof(inet_rsk(rsk)->rmt_addr));
                 
-                /* If the request was UDP encapsulated due to NAT, we
-                 * should spoof our source address in the reply to
-                 * make sure we can traverse the NAT on the way
-                 * back. */
-                if (ip_hdr(skb)->protocol == IPPROTO_UDP) {
-                        /* Get the first hop SAL forwarder, i.e., the original
-                         * destination in the request that the client
-                         * sent. Save this in our request sock and use in our
-                         * reply.  */
-                        memcpy(&srsk->reply_saddr,
-                               SAL_SOURCE_EXT_GET_ADDR(ctx->src_ext, 1),
-                               sizeof(srsk->reply_saddr));
-                } else {
-                        /* No NAT, use our own address in the reply. */
-                        memcpy(&srsk->reply_saddr,
-                               &myaddr,
-                               sizeof(srsk->reply_saddr));
-                }
+                /* No NAT, use our own address in the reply. */
+                memcpy(&srsk->reply_saddr, &myaddr, sizeof(srsk->reply_saddr));
         } else {
                 /* There was no source extension, so we will find the
                  * addresses in the IP header. */
@@ -2098,8 +2034,6 @@ static struct sock * serval_sal_request_sock_handle(struct sock *sk,
                         nssk->snd_seq.nxt = srsk->iss_seq + 1;
                         nssk->rcv_seq.iss = srsk->rcv_seq;
                         nssk->rcv_seq.nxt = srsk->rcv_seq + 1;
-                        nssk->udp_encap_sport = srsk->udp_encap_sport;
-                        nssk->udp_encap_dport = srsk->udp_encap_dport;
                         rsk->sk = nsk;
                         
                         /* Hash the sock to make it demuxable */
@@ -2160,11 +2094,6 @@ static int serval_sal_ack_process(struct sock *sk,
                 memcpy(&inet_sk(sk)->inet_daddr, &ssk->mig_daddr, 4);
                 memset(&ssk->mig_daddr, 0, 4);
                 sk_dst_reset(sk);
-                
-                /* If we're UDP encapsulating, make sure we
-                   now switch to the port used for sending the
-                   RSYN-ACK.  */
-                ssk->udp_encap_dport = ssk->udp_encap_migration_dport;
                 
                 if (ssk->af_ops->migration_completed)
                         ssk->af_ops->migration_completed(sk);
@@ -2279,17 +2208,6 @@ static int serval_sal_rcv_rsyn(struct sock *sk,
         if (ssk->af_ops->freeze_flow)
                 ssk->af_ops->freeze_flow(sk);
         
-#if defined(OS_LINUX_KERNEL)
-        /* Packet is UDP encapsulated, make sure we remember
-         * the port to send the reply on. */
-        if (ip_hdr(skb)->protocol == IPPROTO_UDP) {
-                struct iphdr *iph = ip_hdr(skb);
-                struct udphdr *uh = (struct udphdr *)
-                        ((char *)iph + (iph->ihl << 2));
-                ssk->udp_encap_migration_dport = ntohs(uh->source);
-        }
-#endif /* OS_LINUX_KERNEL */
-
         ssk->rcv_seq.nxt = ctx->verno + 1;        
         memcpy(&ssk->mig_daddr, &ip_hdr(skb)->saddr, 4);
         rskb = sk_sal_alloc_skb(sk, sk->sk_prot->max_header,
@@ -3029,22 +2947,6 @@ static int serval_sal_update_transport_csum(struct sk_buff *skb,
         return 0;
 }
 
-#if defined(OS_LINUX_KERNEL)
-static int serval_sal_update_encap_csum(struct sk_buff *skb)
-{
-        struct udphdr *uh;
-        
-        uh = udp_hdr(skb);
-        uh->check = 0;
-        uh->check = csum_tcpudp_magic(ip_hdr(skb)->saddr,
-                                      ip_hdr(skb)->daddr, 
-                                      skb->len,
-                                      IPPROTO_UDP,
-                                      csum_partial(uh, skb->len, 0));
-        return 0;
-}
-#endif /* OS_LINUX_KERNEL */
-
 static int serval_sal_resolve_service(struct sk_buff *skb, 
                                       struct sal_context *ctx,
                                       struct service_id *srvid,
@@ -3201,19 +3103,6 @@ static int serval_sal_resolve_service(struct sk_buff *skb,
                         /* Recalculate SAL checksum */
                         serval_sal_send_check(sal_hdr(cskb));
 
-#if defined(OS_LINUX_KERNEL)
-                        /* Packet is UDP encapsulated, push back UDP
-                         * encapsulation header */
-                        if (ip_hdr(cskb)->protocol == IPPROTO_UDP) {
-                                skb_push(cskb, sizeof(struct udphdr));
-                                skb_reset_transport_header(cskb);
-                                udp_hdr(cskb)->len = htons(cskb->len);
-                                LOG_DBG("Pushed back UDP encapsulation [%u:%u]\n",
-                                        ntohs(udp_hdr(skb)->source),
-                                        ntohs(udp_hdr(skb)->dest));
-                                serval_sal_update_encap_csum(cskb);
-                        }
-#endif
                         /* Push back to IP header */
                         skb_push(cskb, iph_len);
                                                 

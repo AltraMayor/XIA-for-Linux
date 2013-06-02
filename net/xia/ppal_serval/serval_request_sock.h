@@ -22,8 +22,6 @@ struct serval_request_sock {
         u32 iss_seq;
         u8 local_nonce[SAL_NONCE_SIZE];
         u8 peer_nonce[SAL_NONCE_SIZE];
-        u16 udp_encap_sport;
-        u16 udp_encap_dport;
         struct list_head lh;
 };
 
@@ -46,8 +44,6 @@ serval_reqsk_alloc(const struct request_sock_ops *ops)
         srsk = serval_rsk(rsk);
 
         INIT_LIST_HEAD(&srsk->lh);
-        srsk->udp_encap_sport = 0;
-        srsk->udp_encap_dport = 0;
 
         serval_sock_get_flowid(&srsk->local_flowid);
 
