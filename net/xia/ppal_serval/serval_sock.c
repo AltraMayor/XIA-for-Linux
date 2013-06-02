@@ -628,8 +628,6 @@ void serval_sock_init(struct sock *sk)
 
         sk->sk_state = 0;
         ssk->sal_state = SAL_RSYN_INITIAL;
-        ssk->udp_encap_sport = 0;
-        ssk->udp_encap_dport = 0;
         INIT_LIST_HEAD(&ssk->sock_node);
         INIT_LIST_HEAD(&ssk->accept_queue);
         INIT_LIST_HEAD(&ssk->syn_queue);
