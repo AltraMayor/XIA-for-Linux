@@ -120,6 +120,7 @@ unpin:
 out:
 	return NULL;
 }
+EXPORT_SYMBOL(dma_pin_iovec_pages);
 
 void dma_unpin_iovec_pages(struct dma_pinned_list *pinned_list)
 {
@@ -138,7 +139,7 @@ void dma_unpin_iovec_pages(struct dma_pinned_list *pinned_list)
 
 	kfree(pinned_list);
 }
-
+EXPORT_SYMBOL(dma_unpin_iovec_pages);
 
 /*
  * We have already pinned down the pages we will be using in the iovecs.
@@ -208,6 +209,7 @@ dma_cookie_t dma_memcpy_to_iovec(struct dma_chan *chan, struct iovec *iov,
 	BUG();
 	return -EFAULT;
 }
+EXPORT_SYMBOL(dma_memcpy_to_iovec);
 
 dma_cookie_t dma_memcpy_pg_to_iovec(struct dma_chan *chan, struct iovec *iov,
 	struct dma_pinned_list *pinned_list, struct page *page,
@@ -278,3 +280,4 @@ dma_cookie_t dma_memcpy_pg_to_iovec(struct dma_chan *chan, struct iovec *iov,
 	BUG();
 	return -EFAULT;
 }
+EXPORT_SYMBOL(dma_memcpy_pg_to_iovec);
