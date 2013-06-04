@@ -45,8 +45,6 @@ static struct net_addr zero_addr = {
         .net_raw = { 0x00, 0x00, 0x00, 0x00 }
 };
 
-#define MAX_NUM_SAL_EXTENSIONS 10 /* Includes padding */
-
 /*
  * The next routines deal with comparing 32 bit unsigned ints
  * and worry about wraparound (automatic with unsigned arithmetic).
@@ -75,9 +73,7 @@ struct sal_context {
         unsigned short flags;
         uint32_t verno; /* Version number of control information */
         uint32_t ackno; /* Acknowledgement number of control information */
-        struct sal_ext *ext[MAX_NUM_SAL_EXTENSIONS];
         struct sal_control_ext *ctrl_ext;
-        struct sal_address_ext *addr_ext;
         struct sal_service_ext *srv_ext[2];
         struct sal_source_ext *src_ext;
 };
@@ -90,28 +86,22 @@ static int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
                                    int use_copy, gfp_t gfp_mask);
 
 static size_t min_ext_length[] = {
-        [SAL_PAD_EXT] = sizeof(struct sal_pad_ext),
         [SAL_CONTROL_EXT] = sizeof(struct sal_control_ext),
         [SAL_SERVICE_EXT] = sizeof(struct sal_service_ext),
-        [SAL_ADDRESS_EXT] = sizeof(struct sal_address_ext),
         [SAL_SOURCE_EXT] = sizeof(struct sal_source_ext),
 };
 
 static size_t max_ext_length[] = {
-        [SAL_PAD_EXT] = sizeof(struct sal_pad_ext),
         [SAL_CONTROL_EXT] = sizeof(struct sal_control_ext),
         [SAL_SERVICE_EXT] = sizeof(struct sal_service_ext),
-        [SAL_ADDRESS_EXT] = sizeof(struct sal_address_ext),
         [SAL_SOURCE_EXT] = SAL_SOURCE_EXT_MAX_LEN,
 };
 
 #if defined(ENABLE_DEBUG)
 
 static char* sal_ext_name[] = {
-        [SAL_PAD_EXT] =     "PAD",
         [SAL_CONTROL_EXT] = "CONTROL",
         [SAL_SERVICE_EXT] = "SERVICE",
-        [SAL_ADDRESS_EXT] = "ADDRESS",
         [SAL_SOURCE_EXT] =  "SOURCE",
 };
 
@@ -129,11 +119,6 @@ static int print_base_ext(struct sal_ext *xt, char *buf, int buflen)
         return snprintf(buf, buflen, "%s length=%zu",
                         sal_ext_name[xt->type],
                         SAL_EXT_LEN(xt));
-}
-
-static int print_pad_ext(struct sal_ext *xt, char *buf, int buflen)
-{
-        return 0;
 }
 
 static int print_control_ext(struct sal_ext *xt, char *buf, int buflen)
@@ -161,14 +146,6 @@ static int print_service_ext(struct sal_ext *xt, char *buf, int buflen)
                         service_id_to_str(&sxt->srvid));
 }
 
-static int print_address_ext(struct sal_ext *xt, char *buf, int buflen)
-{
-        /* struct sal_address_ext *dxt = 
-           (struct sal_address_ext *)xt; */
-                
-        return 0;
-}
-
 static int print_source_ext(struct sal_ext *xt, char *buf, int buflen)
 {
         struct sal_source_ext *sxt = 
@@ -194,10 +171,8 @@ static int print_source_ext(struct sal_ext *xt, char *buf, int buflen)
 typedef int (*print_ext_func_t)(struct sal_ext *, char *, int);
 
 static print_ext_func_t print_ext_func[] = {
-        [SAL_PAD_EXT] = &print_pad_ext,
         [SAL_CONTROL_EXT] = &print_control_ext,
         [SAL_SERVICE_EXT] = &print_service_ext,
-        [SAL_ADDRESS_EXT] = &print_address_ext,
         [SAL_SOURCE_EXT] = &print_source_ext,
 };
 
@@ -271,15 +246,6 @@ static const char *sal_hdr_to_str(struct sal_hdr *sh)
 
 #endif /* ENABLE_DEBUG */
 
-static int parse_pad_ext(struct sal_ext *ext, 
-                         uint16_t ext_len,
-                         struct sk_buff *skb,
-                         struct sal_context *ctx)
-{
-        return 1;
-}
-
-
 static int parse_control_ext(struct sal_ext *ext, 
                              uint16_t ext_len,
                              struct sk_buff *skb,
@@ -327,16 +293,6 @@ static int parse_service_ext(struct sal_ext *ext,
         return ext_len;
 }
 
-static int parse_address_ext(struct sal_ext *ext, 
-                             uint16_t ext_len,
-                             struct sk_buff *skb,
-                             struct sal_context *ctx)
-{
-        LOG_INF("Address extension support not implemented\n");
-        return ext_len;
-}
-
-
 static int parse_source_ext(struct sal_ext *ext, 
                             uint16_t ext_len,
                             struct sk_buff *skb,
@@ -377,10 +333,8 @@ typedef int (*parse_ext_func_t)(struct sal_ext *,
                                 struct sal_context *ctx);
 
 static parse_ext_func_t parse_ext_func[] = {
-        [SAL_PAD_EXT] = &parse_pad_ext,
         [SAL_CONTROL_EXT] = &parse_control_ext,
         [SAL_SERVICE_EXT] = &parse_service_ext,
-        [SAL_ADDRESS_EXT] = &parse_address_ext,
         [SAL_SOURCE_EXT] = &parse_source_ext,
 };
 
@@ -400,9 +354,7 @@ static inline int parse_ext(struct sal_ext *ext, struct sk_buff *skb,
                 return -1;
         }
         
-        LOG_DBG("EXT %s length=%u\n",
-                sal_ext_name[ext->type], 
-                ext->type == SAL_PAD_EXT ? 1 : ext_len);
+        LOG_DBG("EXT %s length=%u\n", sal_ext_name[ext->type], ext_len);
 
         return parse_ext_func[ext->type](ext, ext_len, skb, ctx);
 }
@@ -417,6 +369,7 @@ enum sal_parse_mode {
 
    Returns: 0 on success.
 */
+#define MAX_NUM_SAL_EXTENSIONS 8
 static int serval_sal_parse_hdr(struct sk_buff *skb, 
                                 struct sal_context *ctx,
                                 enum sal_parse_mode mode)
@@ -452,7 +405,7 @@ static int serval_sal_parse_hdr(struct sk_buff *skb,
                         return -1;
                 }
 
-                ctx->ext[i++] = ext;
+		i++;
                 hdr_len -= ext_len;
                 ext = SAL_EXT_NEXT(ext);
         }
@@ -3740,26 +3693,6 @@ static inline int serval_sal_add_service_ext(struct sock *sk,
 
         return SAL_SERVICE_EXT_LEN;
 }
-
-/*
-  We currently have no use for PAD extension, because all SAL headers
-  are 32-bit aligned.
-
-static inline int serval_sal_add_pad_ext(struct sock *sk, 
-                                         struct sk_buff *skb,
-                                         unsigned short pad_bytes)
-{
-        struct sal_pad_ext *pad_ext;
-
-        if (pad_bytes == 0)
-                return 0;
-
-        pad_ext = (struct sal_pad_ext *)skb_push(skb, pad_bytes);
-        memset(pad_ext, 0, pad_bytes);
-        
-        return pad_bytes;
-}
-*/
 
 static struct sal_hdr *serval_sal_build_header(struct sock *sk, 
                                                struct sk_buff *skb)
