@@ -265,32 +265,18 @@ SERVAL_ASSERT(sizeof(struct sal_ext) == 2)
 #define ext_type exthdr.type
 #define ext_length exthdr.length
 
-#define SAL_EXT_FIRST(sh) \
-        ((struct sal_ext *)((char *)sh + SAL_HEADER_LEN))
+#define SAL_EXT_FIRST(sh) ((struct sal_ext *)((char *)sh + SAL_HEADER_LEN))
 
-#define SAL_EXT_NEXT(ext)                                               \
-        ((struct sal_ext *)((ext->type == SAL_PAD_EXT ?                 \
-                             (char *)ext + 1 :                          \
-                             (char *)ext + ext->length)))
+#define SAL_EXT_NEXT(ext) ((struct sal_ext *)((char *)ext + ext->length))
 
-#define SAL_EXT_LEN(ext)                                \
-        (ext->type == SAL_PAD_EXT ?                     \
-         sizeof(struct sal_pad_ext) : ext->length)
+#define SAL_EXT_LEN(ext)  (ext->length)
 
 enum sal_ext_type {
-        SAL_PAD_EXT = 0,
-        SAL_CONTROL_EXT = 1,
+        SAL_CONTROL_EXT = 0,
         SAL_SERVICE_EXT,
-        SAL_ADDRESS_EXT,
         SAL_SOURCE_EXT,
         __SAL_EXT_TYPE_MAX,
 };
-
-struct sal_pad_ext {
-        uint8_t pad[1];
-} __attribute__((packed));
-
-SERVAL_ASSERT(sizeof(struct sal_pad_ext) == 1);
 
 #define SAL_NONCE_SIZE 8
 
@@ -336,19 +322,6 @@ SERVAL_ASSERT(sizeof(struct sal_service_ext) == 36)
 
 #define SAL_SERVICE_EXT_LEN                     \
         sizeof(struct sal_service_ext)
-
-struct sal_address_ext {
-        struct sal_ext exthdr;
-        uint16_t res;
-        uint32_t verno;
-        uint32_t ackno;
-        struct net_addr addrs[0];
-} __attribute__((packed));
-
-SERVAL_ASSERT(sizeof(struct sal_address_ext) == 12)
-
-#define SAL_ADDRESS_EXT_LEN                     \
-        sizeof(struct sal_address_ext)
 
 struct sal_source_ext {
         struct sal_ext exthdr;
