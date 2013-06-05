@@ -62,9 +62,6 @@ static inline struct sal_skb_cb *__sal_skb_cb(struct sk_buff *skb)
 #define SAL_SKB_CB(__skb) __sal_skb_cb(__skb)
 
 extern int sysctl_tcp_fin_timeout;
-extern int sysctl_sal_keepalive_time;
-extern int sysctl_sal_keepalive_probes;
-extern int sysctl_sal_keepalive_intvl;
 
 #define MAX_CTRL_QUEUE_LEN 20
 
@@ -169,29 +166,6 @@ int serval_sal_recv_shutdown(struct sock *sk);
 void serval_sal_done(struct sock *sk);
 int serval_sal_rcv(struct sk_buff *skb);
 
-void serval_sal_keepalive_timeout(unsigned long data);
-
-static inline int serval_sal_keepalive_intvl_when(const struct serval_sock *ssk)
-{
-	return ssk->keepalive_intvl ? : sysctl_sal_keepalive_intvl;
-}
-
-static inline int serval_sal_keepalive_time_when(const struct serval_sock *ssk)
-{
-	return ssk->keepalive_time ? : sysctl_sal_keepalive_time;
-}
-
-static inline int serval_sal_keepalive_probes(const struct serval_sock *ssk)
-{
-	return ssk->keepalive_probes ? : sysctl_sal_keepalive_probes;
-}
-
-static inline u32 serval_sal_keepalive_time_elapsed(const struct serval_sock *ssk)
-{
-	return min_t(u32, sal_time_stamp - ssk->last_rcv_tstamp,
-			  sal_time_stamp - ssk->ack_rcv_tstamp);
-}
-
 void serval_sal_rcv_reset(struct sock *sk);
 void serval_sal_send_active_reset(struct sock *sk, gfp_t priority);
 
@@ -222,20 +196,12 @@ extern int serval_sal_forwarding;
 #define SAL_TIMEOUT_INIT ((unsigned)(3*HZ))
 #define SAL_RETRANSMITS_MAX 15
 
-#define SAL_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
-					                 * for local resources.
-					                 */
-#define SAL_TIMEWAIT_LEN (60*HZ) /* how long to wait to destroy TIME-WAIT
-				  * state, about 60 seconds	*/
-#define SAL_FIN_TIMEOUT	SAL_TIMEWAIT_LEN
-                                 /* BSD style FIN_WAIT2 deadlock breaker.
-				  * It used to be 3min, new value is 60sec,
-				  * to combine FIN-WAIT-2 timeout with
-				  * TIME-WAIT timer.
-				  */
+/* How long to wait to destroy TIME-WAIT state? About 60 seconds. */
+#define SAL_TIMEWAIT_LEN (60*HZ)
 
-#define SAL_KEEPALIVE_TIME	(120*60*HZ) /* two hours */
-#define SAL_KEEPALIVE_PROBES	9	    /* Max of 9 keepalive probes */
-#define SAL_KEEPALIVE_INTVL	(75*HZ)
+/* BSD style FIN_WAIT2 deadlock breaker. It used to be 3min,
+ * new value is 60sec, to combine FIN-WAIT-2 timeout with TIME-WAIT timer.
+ */
+#define SAL_FIN_TIMEOUT	SAL_TIMEWAIT_LEN
 
 #endif /* _SERVAL_SAL_H_ */
