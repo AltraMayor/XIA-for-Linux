@@ -31,7 +31,6 @@
 #include <serval_request_sock.h>
 #include <serval_udp_sock.h>
 #include <serval_tcp_sock.h>
-#include <delay_queue.h>
 #include <ctrl.h>
 #include <af_serval.h>
 #include <serval_sal.h>
@@ -41,8 +40,6 @@ extern int packet_init(void);
 extern void packet_fini(void);
 extern int service_init(void);
 extern void service_fini(void);
-extern int delay_queue_init(void);
-extern void delay_queue_fini(void);
 
 extern struct proto serval_udp_proto;
 extern struct proto serval_tcp_proto;
@@ -762,10 +759,6 @@ int serval_release(struct socket *sock)
                 
                 release_sock(sk);
 
-                /* Purge any packets in the delay queue for this
-                   socket */
-                delay_queue_purge_sock(sk);
-
                 /* Now socket is owned by kernel and we acquire BH lock
                    to finish close. No need to check for user refs.
                 */
@@ -1076,7 +1069,6 @@ int serval_init(void)
 
         serval_tcp_init();
         
-        delay_queue_init();
 out:
 	return err;
 fail_sock_register:
@@ -1101,5 +1093,4 @@ void serval_fini(void)
         serval_sock_tables_fini();
         packet_fini();
         service_fini();
-        delay_queue_fini();
 }
