@@ -44,8 +44,6 @@ static const char *rule_str[] = {
         [SERVICE_RULE_UNDEFINED] = "UDF",
         [SERVICE_RULE_FORWARD] = "FWD",
         [SERVICE_RULE_DEMUX] = "DMX",
-        [SERVICE_RULE_DELAY] = "DLY",
-        [SERVICE_RULE_DROP] = "DRP"
 };
 
 static const char *rule_to_str(service_rule_type_t type)
@@ -1351,9 +1349,8 @@ static int service_table_add(struct service_table *tbl,
                 if (dstlen > 0)
                         return -EINVAL;
                 break;
-        case SERVICE_RULE_DELAY:
-        case SERVICE_RULE_DROP:
-                break;
+	default:
+		BUG();
         }
 
         if (memcmp(srvid, &default_service, sizeof(default_service)) == 0)
@@ -1372,11 +1369,8 @@ static int service_table_add(struct service_table *tbl,
                 target = service_iter_next(&iter);
 
                 while (target) {
-                        /* Check for duplicates and that we do not add
-                           multiple DROP and DELAY targets */
-                        if (is_target(target, type, dst, dstlen) ||
-                            target->type == SERVICE_RULE_DROP || 
-                            target->type == SERVICE_RULE_DELAY) {
+			/* Check for duplicates. */
+                        if (is_target(target, type, dst, dstlen)) {
                                 service_iter_destroy(&iter);
                                 ret = -EEXIST;
                                 goto out;

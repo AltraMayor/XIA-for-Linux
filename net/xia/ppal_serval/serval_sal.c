@@ -27,7 +27,6 @@
 #include <net/ip.h>
 #include <serval_request_sock.h>
 #include <service.h>
-#include <delay_queue.h>
 #include <af_serval.h>
 
 extern atomic_t serval_nr_socks;
@@ -2856,7 +2855,6 @@ enum {
         SAL_RESOLVE_NO_MATCH,
         SAL_RESOLVE_DEMUX,
         SAL_RESOLVE_FORWARD,
-        SAL_RESOLVE_DELAY,
         SAL_RESOLVE_DROP,
 };
 
@@ -2964,15 +2962,6 @@ static int serval_sal_resolve_service(struct sk_buff *skb,
                         *sk = target->out.sk;
                         sock_hold(*sk);
                         err = SAL_RESOLVE_DEMUX;
-                        num_forward++;
-                        break;
-                } else if (target->type == SERVICE_RULE_DELAY) {
-                        delay_queue_skb(cskb, srvid);
-                        err = SAL_RESOLVE_DELAY;
-                        num_forward++;
-                        break;
-                } else if (target->type == SERVICE_RULE_DROP) {
-                        err = SAL_RESOLVE_DROP;
                         num_forward++;
                         break;
                 }
@@ -3177,48 +3166,6 @@ static int serval_sal_rcv_finish(struct sock *sk,
 	return err;
 }
 
-int serval_sal_reresolve(struct sk_buff *skb)
-{
-        struct sal_context ctx;
-        struct sock *sk;
-        int err = 0;
-
-        LOG_DBG("Reresolving packet\n");
-
-        if (serval_sal_parse_hdr(skb, &ctx, SAL_PARSE_ALL)) {
-                LOG_DBG("Bad Serval header %s\n",
-                        ctx.hdr ? sal_hdr_to_str(ctx.hdr) : "NULL");
-                kfree_skb(skb);
-                return -1;
-        }
-
-        err = serval_sal_resolve(skb, &ctx, &sk);
-
-        switch (err) {
-        case SAL_RESOLVE_DEMUX:
-                return serval_sal_rcv_finish(sk, skb, &ctx);
-        case SAL_RESOLVE_FORWARD:                
-                return 0;
-        case SAL_RESOLVE_DELAY:
-                return err;
-        case SAL_RESOLVE_NO_MATCH:
-        case SAL_RESOLVE_DROP:
-                LOG_DBG("RESOLVE NO_MATCH or DROP\n");
-                err = -EHOSTUNREACH;
-                break;
-        case SAL_RESOLVE_ERROR:
-                LOG_ERR("RESOLVE ERROR\n");
-                err = -EHOSTUNREACH;
-        default:
-                if (sk)
-                        sock_put(sk);
-        }
-
-        kfree_skb(skb);
-        
-        return err;
-}
-
 int serval_sal_rcv(struct sk_buff *skb)
 {
         struct sock *sk = NULL;
@@ -3293,10 +3240,6 @@ int serval_sal_rcv(struct sk_buff *skb)
                 case SAL_RESOLVE_FORWARD:
                         /* Packet forwarded on out device */
                         LOG_PKT("SAL FORWARD\n");
-                        return NET_RX_SUCCESS;
-                case SAL_RESOLVE_DELAY:
-                        LOG_PKT("SAL DELAY\n");
-                        /* Packet in delay queue */
                         return NET_RX_SUCCESS;
                 case SAL_RESOLVE_NO_MATCH:
                         if (!(ctx.flags & SVH_SYN && 
@@ -3901,18 +3844,6 @@ int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
                         /* skb copy will have no socket set. */
                         skb_serval_set_owner_w(cskb, sk);
 		}
-
-                if (target->type == SERVICE_RULE_DELAY) {
-                        err = delay_queue_skb(cskb, 
-                                              &serval_sk(sk)->peer_srvid);
-                        target = next_target;
-                        continue;
-                } else if (target->type == SERVICE_RULE_DROP) {
-                        kfree_skb(cskb);
-                        err = -EHOSTUNREACH;
-                        target = next_target;
-                        continue;
-                }
 
                 /* Remember the flow destination */
 		if (is_sock_target(target)) {
