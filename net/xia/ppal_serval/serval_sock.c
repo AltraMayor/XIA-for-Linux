@@ -637,9 +637,6 @@ void serval_sock_init(struct sock *sk)
         setup_timer(&ssk->tw_timer, 
                     serval_sal_timewait_timeout,
                     (unsigned long)sk);
-	setup_timer(&sk->sk_timer, 
-                    serval_sal_keepalive_timeout, 
-                    (unsigned long)sk);
 
         serval_sal_init_ctrl_queue(sk);
 
@@ -727,17 +724,6 @@ static void serval_sock_clear_xmit_timers(struct sock *sk)
 {
         struct serval_sock *ssk = serval_sk(sk);
         sk_stop_timer(sk, &ssk->retransmit_timer);
-	sk_stop_timer(sk, &sk->sk_timer);   
-}
-
-void serval_sock_delete_keepalive_timer(struct sock *sk)
-{
-	sk_stop_timer(sk, &sk->sk_timer);
-}
-
-void serval_sock_reset_keepalive_timer(struct sock *sk, unsigned long len)
-{
-	sk_reset_timer(sk, &sk->sk_timer, jiffies + len);
 }
 
 void serval_sock_done(struct sock *sk)

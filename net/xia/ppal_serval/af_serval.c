@@ -279,15 +279,12 @@ static int serval_listen_start(struct sock *sk, int backlog)
 {
         serval_sock_set_state(sk, SAL_LISTEN);
         sk->sk_ack_backlog = 0;
- 
         return 0;
 }
 
 static int serval_listen_stop(struct sock *sk)
 {
         struct serval_sock *ssk = serval_sk(sk);
-
-        serval_sock_delete_keepalive_timer(sk);
 
         /* Destroy queue of sockets that haven't completed three-way
          * handshake */
