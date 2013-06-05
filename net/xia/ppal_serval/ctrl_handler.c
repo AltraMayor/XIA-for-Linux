@@ -24,7 +24,6 @@
 #include "serval_sock.h"
 #include "serval_sal.h"
 #include "serval_ipv4.h"
-#include "delay_queue.h"
 
 #if defined(ENABLE_DEBUG)
 static const char *ctrlmsg_str[] = {
@@ -534,17 +533,6 @@ static int ctrl_handle_stats_query_msg(struct ctrlmsg *cm, int peer)
         return ret;
 }
 
-static int ctrl_handle_delay_verdict_msg(struct ctrlmsg *cm, int peer)
-{
-        struct ctrlmsg_delay *cmd = (struct ctrlmsg_delay *)cm;
-
-        LOG_DBG("delay queue verdict %s for pkt_id=%u\n",
-                cmd->verdict == DELAY_RELEASE ? "RELEASE" : "DROP",
-                cmd->pkt_id);
-
-        return delay_queue_set_verdict(cmd->pkt_id, cmd->verdict, peer);
-}
-
 ctrlmsg_handler_t handlers[] = {
         [CTRLMSG_TYPE_REGISTER] = dummy_ctrlmsg_handler,
         [CTRLMSG_TYPE_UNREGISTER] = dummy_ctrlmsg_handler,
@@ -558,7 +546,5 @@ ctrlmsg_handler_t handlers[] = {
         [CTRLMSG_TYPE_MIGRATE] = ctrl_handle_migrate_msg,
         [CTRLMSG_TYPE_STATS_QUERY] = ctrl_handle_stats_query_msg,
         [CTRLMSG_TYPE_STATS_RESP] = dummy_ctrlmsg_handler,
-        [CTRLMSG_TYPE_DELAY_NOTIFY] = dummy_ctrlmsg_handler,
-        [CTRLMSG_TYPE_DELAY_VERDICT] = ctrl_handle_delay_verdict_msg,
         [CTRLMSG_TYPE_DUMMY] = dummy_ctrlmsg_handler,
 };
