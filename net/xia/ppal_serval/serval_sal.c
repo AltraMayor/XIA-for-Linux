@@ -32,9 +32,6 @@
 extern atomic_t serval_nr_socks;
 
 int sysctl_sal_fin_timeout __read_mostly = SAL_FIN_TIMEOUT;
-int sysctl_sal_keepalive_time __read_mostly = SAL_KEEPALIVE_TIME;
-int sysctl_sal_keepalive_probes __read_mostly = SAL_KEEPALIVE_PROBES;
-int sysctl_sal_keepalive_intvl __read_mostly = SAL_KEEPALIVE_INTVL;
 
 static struct net_addr local_addr = {
         .net_raw = { 0x7F, 0x00, 0x00, 0x01 }
@@ -2021,7 +2018,6 @@ static int serval_sal_ack_process(struct sock *sk,
 
         serval_sal_clean_rtx_queue(sk, ctx->ackno, 0, NULL);
         ssk->snd_seq.una = ctx->ackno;
-        ssk->ack_rcv_tstamp = sal_time_stamp;
 
         LOG_PKT("received valid ACK ackno=%u\n", 
                 ctx->ackno);
@@ -3277,39 +3273,6 @@ int serval_sal_rcv(struct sk_buff *skb)
         return NET_RX_DROP;
 }
 
-#ifdef __DISABLED__
-static int serval_sal_xmit_probe_skb(struct sock *sk, int urgent)
-{
-	struct serval_sock *ssk = serval_sk(sk);
-	struct sk_buff *skb;
-
-	skb = alloc_skb(MAX_SAL_HDR, GFP_ATOMIC);
-
-	if (!skb)
-		return -1;
-
-	skb_reserve(skb, MAX_SAL_HDR);
-        skb_serval_set_owner_w(skb, sk);
-        skb->protocol = IPPROTO_SERVAL;
-        skb->ip_summed = CHECKSUM_NONE;
-        SAL_SKB_CB(skb)->flags = SVH_ACK;
-	SAL_SKB_CB(skb)->when = sal_time_stamp;
-        SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt;
-
-	return serval_sal_transmit_skb(sk, skb, 0, GFP_ATOMIC);
-}
-
-#endif /* __DISABLED__ */
-
-/* FIXME: Keepalive currently not completely implemented. */
-int serval_sal_send_keepalive_probe(struct sock *sk)
-{
-	if (sk->sk_state == SAL_CLOSED)
-		return -1;
-
-        return 0; /* serval_sal_xmit_probe_skb(sk, 0); */
-}
-
 static int serval_sal_rexmit(struct sock *sk)
 {        
         struct sk_buff *skb;
@@ -3388,23 +3351,6 @@ void serval_sal_timewait_timeout(unsigned long data)
         sock_put(sk);
 }
 
-static void serval_sal_synack_timeout(struct sock *sk)
-{
-	/* serval_sock_reqsk_queue_prune(sk, TCP_SYNQ_INTERVAL,
-           TCP_TIMEOUT_INIT, TCP_RTO_MAX); */
-}
-
-void serval_sal_set_keepalive(struct sock *sk, int val)
-{
-	if ((1 << sk->sk_state) & (SALF_CLOSED | SALF_LISTEN))
-		return;
-
-	if (val && !sock_flag(sk, SOCK_KEEPOPEN))
-		serval_sock_reset_keepalive_timer(sk, serval_sal_keepalive_time_when(serval_sk(sk)));
-	else if (!val)
-		serval_sock_delete_keepalive_timer(sk);
-}
-
 static inline int serval_sal_fin_time(const struct sock *sk)
 {
 	int fin_timeout = sysctl_sal_fin_timeout;
@@ -3414,83 +3360,6 @@ static inline int serval_sal_fin_time(const struct sock *sk)
 		fin_timeout = (rto << 2) - (rto >> 1);
 
 	return fin_timeout;
-}
-
-void serval_sal_keepalive_timeout(unsigned long data)
-{
-	struct sock *sk = (struct sock *) data;
-	struct serval_sock *ssk = serval_sk(sk);
-	u32 elapsed;
-
-	/* Only process if socket is not in use. */
-	bh_lock_sock(sk);
-
-	if (sock_owned_by_user(sk)) {
-		/* Try again later. */
-		serval_sock_reset_keepalive_timer(sk, HZ/20);
-		goto out;
-	}
-
-	if (sk->sk_state == SAL_LISTEN) {
-		serval_sal_synack_timeout(sk);
-		goto out;
-	}
-
-	if (sk->sk_state == SAL_FINWAIT2 && 
-            sock_flag(sk, SOCK_DEAD)) {
-                /*
-		if (tp->linger2 >= 0) {
-			const int tmo = serval_sal_fin_time(sk) - SAL_TIMEWAIT_LEN;
-
-			if (tmo > 0) {
-				serval_sal_timewait(sk, SAL_FINWAIT2, tmo);
-				goto out;
-			}
-		}
-                */
-		//serval_sal_send_active_reset(sk, GFP_ATOMIC);
-		goto death;
-	}
-
-	if (!sock_flag(sk, SOCK_KEEPOPEN) || 
-            sk->sk_state == SAL_CLOSED)
-		goto out;
-
-	//elapsed = serval_sal_keepalive_time_when(ssk);
-
-	/* It is alive without keepalive 8) */
-	//if (ssk->packets_out || tcp_send_head(sk))
-	//	goto resched;
-
-	elapsed = serval_sal_keepalive_time_elapsed(ssk);
-
-	if (elapsed >= serval_sal_keepalive_time_when(ssk)) {
-		if (serval_sal_send_keepalive_probe(sk) <= 0) {
-			ssk->probes_out++;
-			elapsed = serval_sal_keepalive_intvl_when(ssk);
-		} else {
-			/* If keepalive was lost due to local congestion,
-			 * try harder.
-			 */
-			elapsed = SAL_RESOURCE_PROBE_INTERVAL;
-		}
-	} else {
-		/* It is tp->rcv_tstamp + keepalive_time_when(tp) */
-		elapsed = serval_sal_keepalive_time_when(ssk) - elapsed;
-	}
-
-	sk_mem_reclaim(sk);
-
-        //resched:
-	serval_sock_reset_keepalive_timer(sk, elapsed);
-	goto out;
-
-death:
-	serval_sal_done(sk);
-
-out:
-	bh_unlock_sock(sk);
-	sock_put(sk);
 }
 
 static int serval_sal_do_xmit(struct sk_buff *skb)
