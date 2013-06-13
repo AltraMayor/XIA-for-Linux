@@ -382,7 +382,6 @@ static int xdp_disconnect(struct sock *sk, int flags)
 	sock_rps_reset_rxhash(sk);	/* XXX Review RPS calls. */
 	lock_sock(sk);
 	xia_reset_dest(xia_sk(sk));
-	sk->sk_state = TCP_CLOSE;
 	release_sock(sk);
 	return 0;
 }

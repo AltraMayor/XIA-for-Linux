@@ -49,7 +49,7 @@ EXPORT_SYMBOL_GPL(xia_release);
 
 int check_sockaddr_xia(struct sockaddr *uaddr, int addr_len)
 {
-	if (addr_len != sizeof(struct sockaddr_xia))
+	if (addr_len < sizeof(struct sockaddr_xia))
 		return -EINVAL;
 	if (uaddr->sa_family != AF_XIA)
 		return -EAFNOSUPPORT;
@@ -131,7 +131,7 @@ int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 
 	rc = check_sockaddr_xia(uaddr, addr_len);
 	if (rc)
-		return -EINVAL;
+		return rc;
 
 	sk = sock->sk;
 	xia = xia_sk(sk);
@@ -174,7 +174,6 @@ int xia_set_dest(struct xia_sock *xia, struct xia_addr *dest, int n)
 
 	sk_dst_set(sk, &xdst->dst);
 	xia->xia_daddr_set = 1;
-	sk->sk_state = TCP_ESTABLISHED;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xia_set_dest);
