@@ -174,19 +174,6 @@ int serval_tcp_rcv_checks(struct sock *sk, struct sk_buff *skb, int is_syn)
 {
         struct tcphdr *th;
 
-	if (is_syn) {
-                /* SYN packets can be broadcast and we should accept
-                 * those packets. */
-                if (skb->pkt_type != PACKET_BROADCAST && 
-                    skb->pkt_type != PACKET_HOST) {
-                        /* TCP packet not for this host (broadcast)! */
-                        goto bad_packet;
-                }
-        } else if (skb->pkt_type != PACKET_HOST) {
-                /* TCP packet not for this host! */
-                goto bad_packet;
-        }
-
 	if (!pskb_may_pull(skb, sizeof(struct tcphdr))) {
                 /* No TCP header. */
                 goto bad_packet;
