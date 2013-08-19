@@ -2348,67 +2348,92 @@ static int refresh_peer_srvc(struct serval_sock *ssk)
 static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
-	int flags = SAL_SKB_CB(skb)->flags;
+	struct xia_sock *xia = &ssk->xia_sk;
 	int ext_len = 0;
+	int flags, rc;
 	const struct xia_row *src, *dest;
 	xid_type_t src_sink_type;
 	const __u8 *src_sink_id;
 	int src_n, dest_n, dest_last_node;
 	struct xip_dst *xdst;
 
-	/* Add appropriate extension headers */
-	if (flags & (SVH_SYN | SVH_RSYN | SVH_ACK | SVH_RST | SVH_FIN)) {
-		struct sal_control_ext *ctrl_ext;
-		int rc;
+	/* Unconnected datagram, add service extensions.
+	 *
+	 * XXX This code is UDP specific. If UDP is going to stay,
+	 * this must be generalized since this code must be transport
+	 * agnostic.
+	 */
+	if (unlikely(sk->sk_state == SAL_INIT && sk->sk_type == SOCK_DGRAM)) {
+		/* Src: ServiceID. */
+		struct xia_row *last_row = xia->xia_ssink;
+		BUG_ON(!xia_sk_bound(xia));
+		src = xia->xia_saddr.s_row;
+		src_sink_type = last_row->s_xid.xid_type;
+		src_sink_id = last_row->s_xid.xid_id;
+		src_n = xia->xia_snum;
 
-		/* The ACK for a SYN-ACK must go to the serviceID of the
-		 * chosen instance because request sockets are not hashed
-		 * into the routing table, so they can only be reached
-		 * through the ServiceID of the listening socket.
+		/* Dest: ServiceID.
+		 *
+		 * This is a hack to have a ServiceID instead of
+		 * a FlowID. See serval_udp.c:serval_udp_sendmsg() for
+		 * details.
+		 *
+		 * We don't bother refreshing @xdst here because
+		 * UDP just obtained it.
 		 */
-		if (flags & SVH_SYN) {
-			/* Src: ServiceID. */
-			struct xia_row *last_row = ssk->xia_sk.xia_ssink;
-			BUG_ON(!xia_sk_bound(&ssk->xia_sk));
-			src = ssk->xia_sk.xia_saddr.s_row;
-			src_sink_type = last_row->s_xid.xid_type;
-			src_sink_id = last_row->s_xid.xid_id;
-			src_n = ssk->xia_sk.xia_snum;
+		BUG_ON(!xia->xia_daddr_set);
+		dest = xia->xia_daddr.s_row;
+		dest_n = xia->xia_dnum;
+		dest_last_node = xia->xia_dlast_node;
+		xdst = dst_xdst(sk_dst_get(&xia->sk));
 
-			/* Dst: ServiceID. */
-			BUG_ON(!ssk->peer_srvc_set);
-			rc = refresh_peer_srvc(ssk);
-			if (rc)
-				return rc;
-			dest = ssk->peer_srvc_addr.s_row;
-			dest_n = ssk->peer_srvc_num;
-			dest_last_node = ssk->peer_srvc_last_node;
-			xdst = ssk->peer_srvc_xdst;
-			xdst_hold(xdst);
-                } else {
-			struct xia_sock *xia = &ssk->xia_sk;
+		goto finish;
+	}
 
-			/* Src: FlowID. */
-			BUG_ON(!xia_sk_bound(&ssk->xia_sk));
-			BUG_ON(!ssk->local_flowid_hashed);
-			src = ssk->xia_sk.xia_saddr.s_row;
-			src_sink_type = XIDTYPE_FLOWID;
-			src_sink_id = ssk->flow_fxid.fx_xid;
-			src_n = ssk->xia_sk.xia_snum;
+	/* Choose source and destination addresses, and obtain @xdst. */
+	flags = SAL_SKB_CB(skb)->flags;
+	if (unlikely(flags & SVH_SYN)) {
+		/* Src: ServiceID. */
+		struct xia_row *last_row = xia->xia_ssink;
+		BUG_ON(!xia_sk_bound(xia));
+		src = xia->xia_saddr.s_row;
+		src_sink_type = last_row->s_xid.xid_type;
+		src_sink_id = last_row->s_xid.xid_id;
+		src_n = xia->xia_snum;
 
-			/* Dest: FlowID. */
-			BUG_ON(!xia->xia_daddr_set);
-			rc = serval_sock_refresh_dest(sk);
-			if (rc)
-				return rc;
-			dest = xia->xia_daddr.s_row;
-			dest_n = xia->xia_dnum;
-			dest_last_node = xia->xia_dlast_node;
-			xdst = dst_xdst(sk_dst_get(&xia->sk));
-		}
+		/* Dst: ServiceID. */
+		BUG_ON(!ssk->peer_srvc_set);
+		rc = refresh_peer_srvc(ssk);
+		if (rc)
+			return rc;
+		dest = ssk->peer_srvc_addr.s_row;
+		dest_n = ssk->peer_srvc_num;
+		dest_last_node = ssk->peer_srvc_last_node;
+		xdst = ssk->peer_srvc_xdst;
+		xdst_hold(xdst);
+        } else {
+		/* Src: FlowID. */
+		BUG_ON(!xia_sk_bound(xia));
+		BUG_ON(!ssk->local_flowid_hashed);
+		src = xia->xia_saddr.s_row;
+		src_sink_type = XIDTYPE_FLOWID;
+		src_sink_id = ssk->flow_fxid.fx_xid;
+		src_n = xia->xia_snum;
 
-		/* Add control extension header. */
-		ctrl_ext = push_ctrl_ext_hdr(skb);
+		/* Dest: FlowID. */
+		BUG_ON(!xia->xia_daddr_set);
+		rc = serval_sock_refresh_dest(sk);
+		if (rc)
+			return rc;
+		dest = xia->xia_daddr.s_row;
+		dest_n = xia->xia_dnum;
+		dest_last_node = xia->xia_dlast_node;
+		xdst = dst_xdst(sk_dst_get(&xia->sk));
+	}
+
+	/* Add control extension header if needed. */
+	if (flags & ~SVH_RETRANS) {
+		struct sal_control_ext *ctrl_ext = push_ctrl_ext_hdr(skb);
 		ctrl_ext->verno = htonl(SAL_SKB_CB(skb)->verno);
 		ctrl_ext->ackno = htonl(ssk->rcv_seq.nxt);
 		memcpy(ctrl_ext->nonce, ssk->local_nonce, SAL_NONCE_SIZE);
@@ -2419,42 +2444,9 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 		ctrl_ext->fin = !!(flags & SVH_FIN);
 		ctrl_ext->rst = !!(flags & SVH_RST);
 		ext_len += sizeof(*ctrl_ext);
-        } else {
-		/* Unconnected datagram, add service extensions */
-		/* XXX This code is UDP specific. If UDP is going to stay,
-		 * this must be generalized since this code must be transport
-		 * agnostic.
-		 */
-		if (sk->sk_state == SAL_INIT && sk->sk_type == SOCK_DGRAM) {
-			struct xia_sock *xia = &ssk->xia_sk;
+        }
 
-			/* Src: ServiceID. */
-			struct xia_row *last_row = ssk->xia_sk.xia_ssink;
-			BUG_ON(!xia_sk_bound(&ssk->xia_sk));
-			src = ssk->xia_sk.xia_saddr.s_row;
-			src_sink_type = last_row->s_xid.xid_type;
-			src_sink_id = last_row->s_xid.xid_id;
-			src_n = ssk->xia_sk.xia_snum;
-
-			/* Dest: ServiceID.
-			 *
-			 * This is a hack to have a ServiceID instead of
-			 * a FlowID. See serval_udp.c:serval_udp_sendmsg() for
-			 * details.
-			 *
-			 * We don't bother refreshing @xdst here because
-			 * UDP just obtained it.
-			 */
-			BUG_ON(!xia->xia_daddr_set);
-			dest = xia->xia_daddr.s_row;
-			dest_n = xia->xia_dnum;
-			dest_last_node = xia->xia_dlast_node;
-			xdst = dst_xdst(sk_dst_get(&xia->sk));
-		} else {
-			BUG();
-		}
-	}
-
+finish:
 	/* Add SAL base header */
 	push_sal_hdr(skb, sk->sk_protocol, ext_len);
 
