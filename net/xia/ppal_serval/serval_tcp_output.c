@@ -916,7 +916,7 @@ int serval_tcp_mss_to_mtu(struct sock *sk, int mss)
  * transmission and possible later retransmissions.
  * All SKB's seen here are completely headerless.  It is our
  * job to build the TCP header, and pass the packet down to
- * IP so it can do the same plus pass the packet off to the
+ * XIP so it can do the same plus pass the packet off to the
  * device.
  *
  * We are working here with either a clone of the original
