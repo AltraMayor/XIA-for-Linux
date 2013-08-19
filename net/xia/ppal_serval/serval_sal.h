@@ -76,10 +76,16 @@ enum sal_ctrl_flags {
 	SVH_SYN       = 1 << 0,
 	SVH_RSYN      = 1 << 1,
 	SVH_ACK       = 1 << 2,
+
+	/* XXX This flag isn't used, implement it or drop it. */
 	SVH_NACK      = 1 << 3,
+
 	SVH_RST       = 1 << 4,
 	SVH_FIN       = 1 << 5,
 
+	/* XXX This flag is only used internally, so it should be implemented
+	 * somewhere else.
+	 */
 	SVH_RETRANS   = 1 << 6,
 };
 
