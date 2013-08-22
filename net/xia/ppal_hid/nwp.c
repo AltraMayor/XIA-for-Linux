@@ -978,7 +978,7 @@ static void hdev_destroy(struct hid_dev *hdev)
 static int hid_netdev_event(struct notifier_block *nb,
 	unsigned long event, void *ptr)
 {
-	struct net_device *dev = ptr;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct hid_dev *hdev;
 
 	ASSERT_RTNL();
