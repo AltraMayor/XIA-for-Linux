@@ -660,7 +660,7 @@ static void serval_tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags)
         /* Tells hardware to compute checksum or not. */
 	skb->ip_summed = CHECKSUM_PARTIAL;
 	skb->csum = 0; 
-	
+
         TCP_SKB_CB(skb)->tcp_flags = flags;
 	TCP_SKB_CB(skb)->sacked = 0;
 
@@ -675,7 +675,6 @@ static void serval_tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags)
 
 	TCP_SKB_CB(skb)->end_seq = seq;
 }
-
 
 /* Pcount in the middle of the write queue got changed, we need to do various
  * tweaks to fix counters
@@ -1942,18 +1941,20 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
                                         TCP_SKB_CB(skb)->tcp_flags);
         th->check = 0;
-	//tp->packets_out += serval_tcp_skb_pcount(skb);
+	/* tp->packets_out += serval_tcp_skb_pcount(skb); */
 
 	tp->snd_nxt = tp->write_seq;
 	tp->pushed_seq = tp->write_seq;
 
 	serval_tcp_options_write((__be32 *)(th + 1), tp, &opts);
 
-        /* On SYN the checksum is deferred until after
-           resolution. This is because we do not know the route and
-           src,dst IP at this point, and these are needed for the
-           checksum */
-        
+	/* XXX The following was true for IP, but not for XIP. so
+	 * simplify the code:
+	 * On SYN the checksum is deferred until after resolution.
+	 * This is because we do not know the route and src,dst IP at
+	 * this point, and these are needed for the checksum.
+	 */
+
         return 0;
 }
 
