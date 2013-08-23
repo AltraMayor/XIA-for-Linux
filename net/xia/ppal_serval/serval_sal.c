@@ -50,7 +50,6 @@ struct sal_context {
         uint32_t ackno;
 
         struct sal_control_ext *ctrl_ext;
-	struct sal_connect_ext *conn_ext;
 };
 
 static int serval_sal_state_process(struct sock *sk, struct sk_buff *skb,
@@ -588,6 +587,7 @@ static int set_peer_srvc(struct serval_sock *ssk, const struct xia_row *dest,
 int serval_sal_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, daddr, uaddr);
+	struct serval_sock *ssk;
 	int rc, n;
 
 	rc = check_type_of_all_sinks(daddr, XIDTYPE_SRVCID);
@@ -595,14 +595,15 @@ int serval_sal_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		return rc;
 	n = rc;
 
-	rc = set_peer_srvc(sk_ssk(sk), daddr->sxia_addr.s_row, n);
+	ssk = sk_ssk(sk);
+	rc = set_peer_srvc(ssk, daddr->sxia_addr.s_row, n);
 	if (rc)
 		return rc;
 
         /* Disable segmentation offload */
         sk->sk_gso_type = 0;
-        
-        return serval_sal_send_syn(sk, sk_ssk(sk)->snd_seq.iss);
+
+        return serval_sal_send_syn(sk, ssk->snd_seq.iss);
 }
 
 static void serval_sal_timewait(struct sock *sk, int state, int timeo)
@@ -2039,16 +2040,18 @@ drop:
 static int serval_sal_do_rcv_ctx(struct serval_sock *ssk, struct sk_buff *skb,
 	const struct sal_context *ctx)
 {
-        /* We can safely use __skb_pull here, because we have already
-         * linearized the SAL header part of the skb */
+        /* We can safely use __skb_pull() here, because we have already
+         * linearized the SAL header part of the skb.
+	 */
         __skb_pull(skb, ctx->length);
 
         /* Repoint to the transport header pointer to the actual
-         * transport layer header */
+         * transport layer header.
+	 */
         skb_reset_transport_header(skb);
-        
+
         SAL_SKB_CB(skb)->flags = ctx->flags;
-        
+
         return serval_sal_state_process(&ssk->xia_sk.sk, skb, ctx);
 }
 
@@ -2097,7 +2100,7 @@ static int linearize_and_parse_sal_header(struct sk_buff *skb,
 
 static int __serval_sal_rcv(struct sk_buff *skb,
 	int (*do_rcv)(struct serval_sock *ssk, struct sk_buff *skb,
-	const struct sal_context *ctx))
+		const struct sal_context *ctx))
 {
 	struct sal_context sal_ctx;
 	struct xip_dst *xdst;
