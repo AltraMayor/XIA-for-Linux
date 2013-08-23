@@ -527,6 +527,8 @@ void serval_sock_init(struct serval_sock *ssk)
 
 	sk->sk_state = 0;
 	ssk->sal_state = SAL_RSYN_INITIAL;
+	xdst_init_anchor(&ssk->srvc_anchor);
+	xdst_init_anchor(&ssk->flow_anchor);
 	INIT_LIST_HEAD(&ssk->accept_queue);
 	INIT_LIST_HEAD(&ssk->syn_queue);
 	setup_timer(&ssk->retransmit_timer, serval_sal_rexmit_timeout,
