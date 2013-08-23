@@ -1115,6 +1115,7 @@ static struct serval_request_sock *serval_reqsk_alloc(
 
 	atomic_set(&srsk->refcnt, 1);
 	serval_sock_get_flowid(srsk->flow_fxid.fx_xid);
+	xdst_init_anchor(&srsk->flow_anchor);
 	get_random_bytes(srsk->local_nonce, sizeof(srsk->local_nonce));
 	get_random_bytes(&srsk->iss_seq, sizeof(srsk->iss_seq));
 	srsk->parent_ssk = NULL;
