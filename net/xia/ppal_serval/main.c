@@ -586,6 +586,7 @@ void serval_sock_destroy(struct sock *sk)
 		ssk->peer_srvc_xdst = NULL;
 		xdst_put(xdst);
 	}
+	ssk->peer_srvc_set = false;
 
 	/* Clean queues. */
 	serval_sal_ctrl_queue_purge(sk);
