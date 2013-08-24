@@ -1099,6 +1099,14 @@ static int serval_sal_send_synack(struct sock *sk,
 	return xip_local_out(rskb);
 }
 
+static struct xia_row *xip_dst_sink(struct sk_buff *skb)
+{
+	struct xiphdr *xiph = xip_hdr(skb);
+	if (xiph->num_dst < 1)
+		return NULL;
+	return &xiph->dst_addr[xiph->last_node];
+}
+
 static struct xia_row *xip_src_sink(struct sk_buff *skb)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
@@ -1295,7 +1303,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	u8 num_dest, dest_last_node;
 
 	if (	/* Bad nonce. */
-		!memcmp(srsk->peer_nonce, ctx->ctrl_ext->nonce,
+		memcmp(srsk->peer_nonce, ctx->ctrl_ext->nonce,
 			SAL_NONCE_SIZE) ||
 		/* Bad verno. */
 		(ctx->verno != srsk->rcv_seq + 1) ||
@@ -1408,14 +1416,25 @@ static int serval_sal_child_process(struct sock *parent,
 static int do_rcv_for_srsk(struct serval_sock *ssk, struct sk_buff *skb,
 	const struct sal_context *ctx)
 {
+	const struct xia_row *dst_sink = xip_dst_sink(skb);
 	const struct xia_row *src_sink = xip_src_sink(skb);
 	struct serval_request_sock *srsk;
         struct serval_sock *nssk;
 
+	/* If there is no sink in the destination address,
+	 * @skb shouldn't ever reach this execution point because would've
+	 * been dropped.
+	 */
+	BUG_ON(!dst_sink);
+	/* If the destination sink isn't a FlowID, this function shouldn't
+	 * be called because it only handles FlowIDs.
+	 */
+	BUG_ON(dst_sink->s_xid.xid_type != XIDTYPE_FLOWID);
+
 	if (!src_sink || src_sink->s_xid.xid_type != XIDTYPE_FLOWID ||
 		!ctx->ctrl_ext || ctx->flags & SVH_SYN ||
 		!(ctx->flags & SVH_ACK) ||
-		!(srsk = find_srsk_for_ack(ssk, src_sink->s_xid.xid_id)) ||
+		!(srsk = find_srsk_for_ack(ssk, dst_sink->s_xid.xid_id)) ||
         	!(nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx))) {
 		/* We don't send a reset packet here because we don't want to
 		 * help an adversary scanning for peding connections.
