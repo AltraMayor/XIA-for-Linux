@@ -1413,11 +1413,12 @@ static int serval_sal_child_process(struct sock *parent,
 /* Deal with the last step of a three-way handshake, that it, the ACK packet
  * that arrives at the server coming from the cliente.
  */
-static int do_rcv_for_srsk(struct serval_sock *ssk, struct sk_buff *skb,
+static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
 	const struct sal_context *ctx)
 {
 	const struct xia_row *dst_sink = xip_dst_sink(skb);
 	const struct xia_row *src_sink = xip_src_sink(skb);
+	struct serval_sock *ssk;
 	struct serval_request_sock *srsk;
         struct serval_sock *nssk;
 
@@ -1431,6 +1432,7 @@ static int do_rcv_for_srsk(struct serval_sock *ssk, struct sk_buff *skb,
 	 */
 	BUG_ON(dst_sink->s_xid.xid_type != XIDTYPE_FLOWID);
 
+	ssk = sk_ssk(sk);
 	if (!src_sink || src_sink->s_xid.xid_type != XIDTYPE_FLOWID ||
 		!ctx->ctrl_ext || ctx->flags & SVH_SYN ||
 		!(ctx->flags & SVH_ACK) ||
@@ -1444,7 +1446,7 @@ static int do_rcv_for_srsk(struct serval_sock *ssk, struct sk_buff *skb,
 	}
 
         /* The new sock is already locked here */
-	return serval_sal_child_process(&ssk->xia_sk.sk, nssk, skb, ctx);
+	return serval_sal_child_process(sk, nssk, skb, ctx);
 }
 
 static int serval_sal_ack_process(struct sock *sk, struct sk_buff *skb,
@@ -2056,24 +2058,6 @@ drop:
 	return 0;
 }
 
-static int serval_sal_do_rcv_ctx(struct serval_sock *ssk, struct sk_buff *skb,
-	const struct sal_context *ctx)
-{
-        /* We can safely use __skb_pull() here, because we have already
-         * linearized the SAL header part of the skb.
-	 */
-        __skb_pull(skb, ctx->length);
-
-        /* Repoint to the transport header pointer to the actual
-         * transport layer header.
-	 */
-        skb_reset_transport_header(skb);
-
-        SAL_SKB_CB(skb)->flags = ctx->flags;
-
-        return serval_sal_state_process(&ssk->xia_sk.sk, skb, ctx);
-}
-
 static int linearize_and_parse_sal_header(struct sk_buff *skb,
 	struct sal_context *sal_ctx)
 {
@@ -2118,7 +2102,7 @@ static int linearize_and_parse_sal_header(struct sk_buff *skb,
 }
 
 static int __serval_sal_rcv(struct sk_buff *skb,
-	int (*do_rcv)(struct serval_sock *ssk, struct sk_buff *skb,
+	int (*do_rcv)(struct sock *sk, struct sk_buff *skb,
 		const struct sal_context *ctx))
 {
 	struct sal_context sal_ctx;
@@ -2131,15 +2115,26 @@ static int __serval_sal_rcv(struct sk_buff *skb,
 		return NET_RX_DROP;
 	}
 
+	/* We can safely use __skb_pull() here, because we have already
+	 * linearized the SAL header part of the skb.
+	 */
+	__skb_pull(skb, sal_ctx.length);
+
+	/* Repoint to the transport header pointer to the actual
+	 * transport layer header.
+	 */
+	skb_reset_transport_header(skb);
+
+	SAL_SKB_CB(skb)->flags = sal_ctx.flags;
+
 	xdst = skb_xdst(skb);
 	ssk = xdst->info;
-
 	/* XXX Need a refcnt on @sk here and in XDP's local_input_input(). */
 	skb_dst_drop(skb);
 
 	bh_lock_sock_nested(&ssk->xia_sk.sk);
 	/* One should not drop the packet @skb because do_rcv() consumes it. */
-	rc = do_rcv(ssk, skb, &sal_ctx);
+	rc = do_rcv(&ssk->xia_sk.sk, skb, &sal_ctx);
 	bh_unlock_sock(&ssk->xia_sk.sk);
 
 	return rc < 0 ? NET_RX_DROP : NET_RX_SUCCESS;
@@ -2147,7 +2142,7 @@ static int __serval_sal_rcv(struct sk_buff *skb,
 
 int serval_sal_rcv(struct sk_buff *skb)
 {
-	return __serval_sal_rcv(skb, serval_sal_do_rcv_ctx);
+	return __serval_sal_rcv(skb, serval_sal_state_process);
 }
 
 int serval_sal_rsk_rcv(struct sk_buff *skb)
