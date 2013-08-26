@@ -1202,34 +1202,6 @@ drop:
         return rc;
 }
 
-/* Create new child socket in RESPOND state.
- * This happens as a result of a LISTEN:ing socket receiving an ACK in
- * response to a SYNACK response.
- */
-static struct serval_sock *serval_sal_create_respond_sock(
-	struct serval_sock *ssk, struct sk_buff *skb,
-	struct request_sock *req, struct dst_entry *dst)
-{
-        struct sock *nsk = sk_clone_lock(&ssk->xia_sk.sk, GFP_ATOMIC);
-	struct serval_sock *nssk;
-
-	if (!nsk)
-		return NULL;
-	nssk = sk_ssk(nsk);
-	serval_sock_init(nssk);
-
-	/* Transport protocol specific init. */                
-	if (ssk->af_ops->conn_child_sock(&ssk->xia_sk.sk, skb, req, nsk,
-		dst) < 0) {
-                /* Transport child sock init failed. */
-                sock_set_flag(nsk, SOCK_DEAD);
-                sk_free(nsk);
-		return NULL;
-        }
-
-        return nssk;
-}
-
 /* Find a request sock that has previously been created by a SYN. */
 static struct serval_request_sock *find_srsk_for_syn(struct serval_sock *ssk,
 	const u8 *peer_srvcid, const u8 *peer_nonce)
@@ -1262,25 +1234,20 @@ static struct serval_request_sock *find_srsk_for_ack(struct serval_sock *ssk,
         return NULL;
 }
 
-static struct xip_dst *update_xdst(struct xip_dst *xdst, struct xia_row *addr,
+static struct xip_dst *update_xdst(struct net *net, struct xia_row *addr,
 	int n, u8 *plast_node, xid_type_t new_sink_type, const u8 *new_sink_id)
 {
+	struct xia_row *last_row;
+	struct xip_dst *xdst;
+
 	/* Update sink. */
-	struct xia_row *last_row = &addr[n - 1];
+	last_row = &addr[n - 1];
 	last_row->s_xid.xid_type = new_sink_type;
 	memmove(last_row->s_xid.xid_id, new_sink_id, XIA_XID_MAX);
 
-	/* Does changing the sink impact @xdst? */
-	if (likely(*plast_node == XIA_ENTRY_NODE_INDEX ||
-		*plast_node < n - 1)) {
-		/* No. */
-		xdst_hold(xdst);
-		return xdst;
-	}
-
+	*plast_node = XIA_ENTRY_NODE_INDEX;
 	unmark_xia_rows(addr, n);
-	xdst = xip_mark_addr_and_get_dst(xdst_net(xdst), addr, n,
-		plast_node, 0);
+	xdst = xip_mark_addr_and_get_dst(net, addr, n, plast_node, 0);
 	return !IS_ERR(xdst) ? xdst : NULL;
 }
 
@@ -1297,12 +1264,18 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	struct serval_sock *ssk, struct serval_request_sock *srsk,
 	struct sk_buff *skb, const struct sal_context *ctx)
 {
+	struct xiphdr *xiph = xip_hdr(skb);
+	struct xia_addr addr;
+	struct net *net;
 	struct xia_row *dest;
 	struct xip_dst *xdst;
+	struct sock *nsk;
 	struct serval_sock *nssk;
 	u8 num_dest, dest_last_node;
 
-	if (	/* Bad nonce. */
+	if (	/* There's no return address. */
+		xiph->num_src < 1 ||
+		/* Bad nonce. */
 		memcmp(srsk->peer_nonce, ctx->ctrl_ext->nonce,
 			SAL_NONCE_SIZE) ||
 		/* Bad verno. */
@@ -1312,26 +1285,41 @@ static struct serval_sock *serval_sal_request_sock_handle(
 		return NULL;
 	}
 
-	if (skb_cow(skb, 0))
-		return NULL; /* We cannot mark the source address. */
-	xdst = route_src_addr(sock_net(&ssk->xia_sk.sk), skb, &dest, &num_dest,
-		&dest_last_node);
-	if (!xdst)
+	/* Obtain @xdst for source address of packet. */
+	num_dest = xiph->num_src;
+	copy_n_and_shade_xia_addr(&addr, &xiph->dst_addr[xiph->num_dst],
+		num_dest);
+	net = sock_net(&ssk->xia_sk.sk);
+	dest = addr.s_row;
+	dest_last_node = XIA_ENTRY_NODE_INDEX;
+	xdst = xip_mark_addr_and_get_dst(net, dest, num_dest,
+		&dest_last_node, 0);
+	if (IS_ERR(xdst))
 		return NULL; /* Packet @skb is not routable back. */
 
-	nssk = serval_sal_create_respond_sock(ssk, skb, &srsk->req, &xdst->dst);
-	if (!nssk) {
+	/* Create new serval socket from @ssk. */
+	nsk = sk_clone_lock(&ssk->xia_sk.sk, GFP_ATOMIC);
+	if (!nsk) {
 		xdst_put(xdst);
 		return NULL;
 	}
+	nssk = sk_ssk(nsk);
+	serval_sock_init(nssk);
 	__xia_set_dest(&nssk->xia_sk, dest, num_dest, dest_last_node, xdst);
+
+	/* Transport protocol specific init. */
+	if (ssk->af_ops->conn_child_sock(&ssk->xia_sk.sk, skb, &srsk->req, nsk,
+		&xdst->dst) < 0) {
+		/* Transport child sock init failed. */
+		goto nssk;
+	}
 
 	/* Emulate connect() from @nssk to the peer.
 	 * Build peer's full ServiceID address from full FlowID address.
 	 */
 	/* XXX Make the typecast unnecessary. */
-	xdst = update_xdst(xdst, dest, num_dest, &dest_last_node,
-		XIDTYPE_SRVCID, (u8 *)&srsk->peer_srvcid);
+	xdst = update_xdst(net, dest, num_dest, &dest_last_node, XIDTYPE_SRVCID,
+		(u8 *)&srsk->peer_srvcid);
 	if (!xdst)
 		goto nssk;
 	__set_peer_srvc(nssk, dest, num_dest, dest_last_node, xdst);
@@ -1342,6 +1330,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 		ssk->xia_sk.xia_snum);
 	nssk->local_srvcid_hashed = false;
 
+	/* Set up control fields. */
 	memcpy(nssk->local_nonce, srsk->local_nonce, SAL_NONCE_SIZE);
 	memcpy(nssk->peer_nonce, srsk->peer_nonce, SAL_NONCE_SIZE);
 	nssk->snd_seq.iss = srsk->iss_seq;
@@ -1351,7 +1340,6 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	nssk->rcv_seq.nxt = srsk->rcv_seq + 1;
 	nssk->xia_sk.sk.sk_ack_backlog = 0;
 	serval_sock_set_state(&nssk->xia_sk.sk, SAL_RESPOND);
-	srsk->req.sk = &nssk->xia_sk.sk;
 
 	/* Hash the sock to make it demuxable */
 	init_fxid(&nssk->flow_fxid, srsk->flow_fxid.fx_xid,
@@ -1359,14 +1347,17 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	if (serval_swap_srsk_ssk_flowid(&srsk->flow_fxid, nssk))
 		goto nssk;
 
-	/* Move request sock to accept queue */
+	/* This is the only reference to @nssk that will be kept. */
+	srsk->req.sk = &nssk->xia_sk.sk;
+	/* Move request sock to accept queue. */
 	list_move_tail(&srsk->lh, &ssk->accept_queue);
-
 	return nssk;
 
 nssk:
-	BUG_ON(atomic_read(&nssk->xia_sk.sk.sk_refcnt) != 1);
-        bh_unlock_sock(&nssk->xia_sk.sk);
+	BUG_ON(atomic_read(&nssk->xia_sk.sk.sk_refcnt) != 2);
+	sock_set_flag(nsk, SOCK_DEAD);
+	bh_unlock_sock(&nssk->xia_sk.sk);
+	sock_put(&nssk->xia_sk.sk);
 	sock_put(&nssk->xia_sk.sk);
 	return NULL;
 }
