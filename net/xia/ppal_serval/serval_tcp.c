@@ -26,10 +26,38 @@ void serval_tcp_enter_memory_pressure(struct sock *sk)
 
 atomic_long_t serval_tcp_memory_allocated  __read_mostly;
 
+/* These states need RST on ABORT according to RFC793. */
+static inline bool serval_tcp_need_reset(int state)
+{
+	return (1 << state) &
+		(SALF_CONNECTED | SALF_CLOSEWAIT | SALF_FINWAIT1 |
+		SALF_FINWAIT2 | SALF_RESPOND);
+}
+
 static int serval_tcp_disconnect(struct sock *sk, int flags)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-        int err = 0;
+	int old_state = sk->sk_state;
+
+	serval_sock_set_state(sk, SAL_CLOSED);
+
+	/* ABORT function of RFC793. */
+	if (old_state == SAL_LISTEN) {
+		serval_listen_stop(sk);
+	} else if (serval_tcp_need_reset(old_state) ||
+		(tp->snd_nxt != tp->write_seq &&
+		(1 << old_state) & (SALF_CLOSING | SALF_LASTACK))) {
+		/* The last check adjusts for discrepancy of Linux wrt. RFC
+		 * states. See tcp_disconnect() for details.
+		 */
+		serval_sal_send_active_reset(sk, gfp_any());
+		sk->sk_err = ECONNRESET;
+	} else if (old_state == SALF_REQUEST) {
+		sk->sk_err = ECONNRESET;
+	}
+
+	if (old_state != SAL_CLOSED)
+		sk->sk_prot->unhash(sk);
 
 	serval_tcp_clear_xmit_timers(sk);
 	__skb_queue_purge(&sk->sk_receive_queue);
@@ -59,7 +87,7 @@ static int serval_tcp_disconnect(struct sock *sk, int flags)
 
 	sk->sk_error_report(sk);
 
-        return err;
+        return 0;
 }
 
 __u32 serval_tcp_random_sequence_number(void)
@@ -299,7 +327,7 @@ void serval_tcp_init(void)
         sysctl_serval_tcp_rmem[2] = max(87380, max_rshare);
 }
 
-static int serval_tcp_connection_close(struct sock *sk)
+static void serval_tcp_connection_close(struct sock *sk)
 {
         struct sk_buff *skb;
 	int data_was_unread = 0;
@@ -315,9 +343,17 @@ static int serval_tcp_connection_close(struct sock *sk)
 		__kfree_skb(skb);
 	}
 
-	sk_mem_reclaim(sk);
-        serval_tcp_send_fin(sk);
-        return data_was_unread;
+	if (data_was_unread) {
+		/* Unread data was tossed, zap the connection. */
+		serval_sal_send_active_reset(sk, sk->sk_allocation);
+		sk->sk_prot->unhash(sk);
+		serval_sock_set_state(sk, SAL_CLOSED);
+	} else if (sock_flag(sk, SOCK_LINGER) && !sk->sk_lingertime) {
+		/* Check zero linger _after_ checking for unread data. */
+		sk->sk_prot->disconnect(sk, 0);
+	} else {
+        	serval_tcp_send_fin(sk);
+	}
 }
 
 static unsigned int serval_tcp_xmit_size_goal(struct sock *sk, u32 mss_now,
@@ -1035,20 +1071,6 @@ int serval_tcp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 			goto do_error;
 	}
 
-#if defined(ENABLE_TCP_REPAIR)
-	if (unlikely(tp->repair)) {
-		if (tp->repair_queue == TCP_RECV_QUEUE) {
-			copied = serval_tcp_send_rcvq(sk, msg, size);
-			goto out;
-		}
-
-		err = -EINVAL;
-		if (tp->repair_queue == TCP_NO_QUEUE)
-			goto out_err;
-
-		/* 'common' sending to sendq */
-	}
-#endif
 	/* This should be in poll */
 	clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags);
 
@@ -1179,11 +1201,7 @@ new_segment:
 			if ((seglen -= copy) == 0 && iovlen == 0)
 				goto out;
 
-			if (skb->len < max || (flags & MSG_OOB) 
-#if defined(ENABLE_TCP_REPAIR)
-                            || unlikely(tp->repair)
-#endif
-                            )
+			if (skb->len < max || (flags & MSG_OOB)) 
 				continue;
 
 			if (forced_push(tp)) {
