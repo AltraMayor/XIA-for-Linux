@@ -26,7 +26,7 @@ struct serval_sock_af_ops {
 	int	(*conn_build_ack)(struct sock *sk, struct sk_buff *skb);
 	int	(*conn_request)(struct sock *sk, struct request_sock *rsk,
 			struct sk_buff *skb);
-	int	(*conn_close)(struct sock *sk);
+	void	(*conn_close)(struct sock *sk);
 	int	(*request_state_process)(struct sock *sk, struct sk_buff *skb);
 	int	(*respond_state_process)(struct sock *sk, struct sk_buff *skb);
 	int	(*conn_child_sock)(struct sock *sk, struct sk_buff *skb,
@@ -177,8 +177,6 @@ void serval_sal_close(struct sock *sk, long timeout);
 int serval_sal_migrate(struct sock *sk);
 void serval_sal_rexmit_timeout(unsigned long data);
 void serval_sal_timewait_timeout(unsigned long data);
-int serval_sal_send_shutdown(struct sock *sk);
-int serval_sal_recv_shutdown(struct sock *sk);
 void serval_sal_done(struct sock *sk);
 
 int serval_sal_rcv(struct sk_buff *skb);

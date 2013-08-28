@@ -746,45 +746,40 @@ void serval_sal_close(struct sock *sk, long timeout)
 
         case SAL_CONNECTED:
         case SAL_RESPOND:
-                serval_sock_set_state(sk, SAL_FINWAIT1);
-                break;
+		serval_sock_set_state(sk, SAL_FINWAIT1);
+		break;
 
 	case SAL_LISTEN:
 		serval_listen_stop(sk);
 		sk->sk_prot->unhash(sk);
 		serval_sock_set_state(sk, SAL_CLOSED);
+		/* Fall through. */
+
+	case SAL_CLOSED:
 		goto adjudge_to_death;
 
 	case SAL_REQUEST:
-	case SAL_CLOSED:
 	case SAL_LASTACK:
 		serval_sal_done(sk);
         	release_sock(sk);
 		return;
 
-	/* Having all states helps the compiler to help us. */
 	case SAL_FINWAIT1:
 	case SAL_FINWAIT2:
 	case SAL_TIMEWAIT:
 	case SAL_CLOSING:
+		/* Unexpected state. */
+		BUG();
+
 	default:
+		/* Either someone forgot to deal with a state,
+		 * @sk is not valid at all, or the memory is corrupted.
+		 */
 		BUG();
 	}
 
         if (ssk->af_ops->conn_close) {
-		/* Tell transport to, e.g., schedule end-of-stream
-		 * (i.e., put FIN in the last queued transport segment).
-		 * This will defer the call to serval_sal_send_shutdown()
-		 * until transport is done.
-		 */
-		int err = ssk->af_ops->conn_close(sk);
-		BUG_ON(err < 0); /* Transport error. */
-		if (err > 0) {
-                        /* Data was unread, we need to send RESET. */
-                        serval_sal_send_active_reset(sk, sk->sk_allocation);
-			sk->sk_prot->unhash(sk);
-                        serval_sock_set_state(sk, SAL_CLOSED);
-                }
+		ssk->af_ops->conn_close(sk);
         } else {
 		serval_sal_send_fin(sk);
         }
