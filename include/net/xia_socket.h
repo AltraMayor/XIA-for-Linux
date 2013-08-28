@@ -177,6 +177,14 @@ struct xia_sock {
 	 *
 	 * If @xia_daddr_set is true, fields @xia_dlast_node and @xia_daddr
 	 * have valid values.
+	 *
+	 * Why isn't there a field xia_dsink analogue to @xia_ssink instead of
+	 * @xia_daddr_set?
+	 * The source address must have a single sink because
+	 * this address is used to bind a listening socket to
+	 * the routing table. Whereas, the destination address may have
+	 * multiple sinks. Thus, the field xia_dsink would point to a single
+	 * sink independently how many sinks exit in an address.
 	 */
 	u8			xia_daddr_set;
 	/* Number of nodes in @xia_daddr. */
