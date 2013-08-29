@@ -30,6 +30,7 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct xia_xid dst;
+	const struct serval_sock *ssk;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
 		NLM_F_MULTI);
@@ -52,7 +53,9 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 
 	dst.xid_type = xtbl_ppalty(xtbl);
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+	ssk = srvc_fxid_ssk(fxid);
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
+		nla_put_u8(skb, RTA_PROTOINFO, ssk->xia_sk.sk.sk_state)))
 		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
@@ -141,7 +144,9 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			 */
 			copy_n_and_shade_xia_addr_from_addr(&src,
 				&ssk->peer_srvc_addr, ssk->peer_srvc_num);
-			if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src)))
+			if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src) ||
+				nla_put_u8(skb, RTA_PROTOINFO,
+					ssk->xia_sk.sk.sk_state)))
 				goto nla_put_failure;
 		}
 		break;
@@ -154,7 +159,8 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		src.xid_type = XIDTYPE_SRVCID;
 		memmove(src.xid_id, srsk->peer_srvcid.s_sid,
 			sizeof(src.xid_id));
-		if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src)))
+		if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src) ||
+			nla_put_u8(skb, RTA_PROTOINFO, SAL_RESPOND)))
 			goto nla_put_failure;
 		break;
 	}
