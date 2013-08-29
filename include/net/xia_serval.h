@@ -9,25 +9,15 @@
 
 /* XXX This struct should go away and become just an XID. */
 struct service_id {
-	uint8_t s_sid[XIA_XID_MAX];
+	__u8 s_sid[XIA_XID_MAX];
 };
 
 /* XXX This struct should go away and become just an XID. */
 struct flow_id {
-	uint8_t s_id[XIA_XID_MAX];
+	__u8 s_id[XIA_XID_MAX];
 };
 
 #define SAL_NONCE_SIZE 8
-
-#ifdef __KERNEL__
-
-#include <linux/string.h>
-#include <net/request_sock.h>
-#include <net/xia_socket.h>
-#include <net/xia_fib.h>
-
-#define SOCK_TYPE		0
-#define REQUEST_SOCK_TYPE	1
 
 /* TCP states from net/tcp_states.h, should be as compatible as possible.
  *
@@ -74,6 +64,16 @@ enum {
 	SALF_LISTEN    = (1 << 10),
 	SALF_CLOSING   = (1 << 11),
 };
+
+#ifdef __KERNEL__
+
+#include <linux/string.h>
+#include <net/request_sock.h>
+#include <net/xia_socket.h>
+#include <net/xia_fib.h>
+
+#define SOCK_TYPE		0
+#define REQUEST_SOCK_TYPE	1
 
 /* Connection handshake:
  *
