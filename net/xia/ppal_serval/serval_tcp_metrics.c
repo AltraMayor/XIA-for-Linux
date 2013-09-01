@@ -227,7 +227,7 @@ void serval_tcp_update_metrics(struct sock *sk)
 		return;
 
 	if (dst->flags & DST_HOST)
-                dst_confirm(dst);
+		dst_confirm(dst);
 
 	rcu_read_lock();
 	if (tp->backoff || !tp->srtt) {
@@ -299,10 +299,11 @@ void serval_tcp_update_metrics(struct sock *sk)
 		/* Cong. avoidance phase, cwnd is reliable. */
 		if (!tcp_metric_locked(tm, TCP_METRIC_SSTHRESH))
 			tcp_metric_set(tm, TCP_METRIC_SSTHRESH,
-				       max(tp->snd_cwnd >> 1, tp->snd_ssthresh));
+				max(tp->snd_cwnd >> 1, tp->snd_ssthresh));
 		if (!tcp_metric_locked(tm, TCP_METRIC_CWND)) {
 			val = tcp_metric_get(tm, TCP_METRIC_CWND);
-			tcp_metric_set(tm, TCP_METRIC_CWND, (val + tp->snd_cwnd) >> 1);
+			tcp_metric_set(tm, TCP_METRIC_CWND,
+				(val + tp->snd_cwnd) >> 1);
 		}
 	} else {
 		/* Else slow start did not finish, cwnd is non-sense,
@@ -369,7 +370,7 @@ void serval_tcp_init_metrics(struct sock *sk)
 	val = tcp_metric_get(tm, TCP_METRIC_REORDERING);
 	if (val && tp->reordering != val) {
 		serval_tcp_disable_fack(tp);
-		//serval_tcp_disable_early_retrans(tp);
+		/* serval_tcp_disable_early_retrans(tp); */
 		tp->reordering = val;
 	}
 

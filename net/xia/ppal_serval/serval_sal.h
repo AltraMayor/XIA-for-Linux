@@ -43,27 +43,26 @@ int serval_sock_refresh_dest(struct sock *sk);
 
 int serval_sal_xmit_skb(struct sk_buff *skb);
 
-/* 
-   NOTE:
-   
-   We must be careful that this struct does not overflow the 48 bytes
-   that the skb struct gives us in the cb field.
-   
-   Transport protocols (i.e., in most cases TCP) reserve some room for
-   lower layer control blocks (e.g., IPv4/IPv6) at the head of their
-   own control block. This is done in order to keep the lower layer
-   information when processing incoming packets. We should therefore
-   be careful not to overwrite the IP control block in incoming
-   packets in case TCP expects it to be there.
-
-   For outgoing packets, we are free to overwrite the control block
-   with our own information. Any packets queued by the transport
-   protocol are cloned before transmission, so the original
-   information will be preserved in the queued packet.
-
-   We should be careful to do the same in the SAL layer when queuing
-   packets; i.e., we should always clone queued packets before we
-   transmit.
+/* NOTE:
+ *
+ * We must be careful that this struct does not overflow the 48 bytes
+ * that the skb struct gives us in the cb field.
+ *
+ * Transport protocols (i.e., in most cases TCP) reserve some room for
+ * lower layer control blocks (e.g., IPv4/IPv6) at the head of their
+ * own control block. This is done in order to keep the lower layer
+ * information when processing incoming packets. We should therefore
+ * be careful not to overwrite the IP control block in incoming
+ * packets in case TCP expects it to be there.
+ *
+ * For outgoing packets, we are free to overwrite the control block
+ * with our own information. Any packets queued by the transport
+ * protocol are cloned before transmission, so the original
+ * information will be preserved in the queued packet.
+ *
+ * We should be careful to do the same in the SAL layer when queuing
+ * packets; i.e., we should always clone queued packets before we
+ * transmit.
  */
 /* XXX Is this struct needed at all? Isn't there a simpler solution? */
 struct sal_skb_cb {
@@ -93,7 +92,7 @@ enum sal_ctrl_flags {
 
 static inline struct sal_skb_cb *__sal_skb_cb(struct sk_buff *skb)
 {
-        return (struct sal_skb_cb *)&(skb)->cb[0];
+	return (struct sal_skb_cb *)&(skb)->cb[0];
 }
 
 #define SAL_SKB_CB(__skb) __sal_skb_cb(__skb)
@@ -107,16 +106,16 @@ extern int sysctl_tcp_fin_timeout;
 /* control queue abstraction */
 static inline void serval_sal_ctrl_queue_purge(struct sock *sk)
 {
-    struct sk_buff *skb = sk_ssk(sk)->ctrl_queue;
-    if (skb) {
-            kfree_skb(skb);
-            sk_ssk(sk)->ctrl_queue = NULL;
-    }
+	struct sk_buff *skb = sk_ssk(sk)->ctrl_queue;
+	if (skb) {
+		kfree_skb(skb);
+		sk_ssk(sk)->ctrl_queue = NULL;
+	}
 }
 
 static inline struct sk_buff *serval_sal_ctrl_queue_head(struct sock *sk)
 {
-    return sk_ssk(sk)->ctrl_queue;
+	return sk_ssk(sk)->ctrl_queue;
 }
 
 static inline struct sk_buff *serval_sal_send_head(struct sock *sk)
@@ -127,10 +126,10 @@ static inline struct sk_buff *serval_sal_send_head(struct sock *sk)
 static inline int serval_sal_skb_is_last(const struct sock *sk,
 					 const struct sk_buff *skb)
 {
-    return skb == sk_ssk(sk)->ctrl_queue;
+	return skb == sk_ssk(sk)->ctrl_queue;
 }
 
-static inline void serval_sal_advance_send_head(struct sock *sk, 
+static inline void serval_sal_advance_send_head(struct sock *sk,
 						struct sk_buff *skb)
 {
 	if (serval_sal_skb_is_last(sk, skb))
@@ -146,17 +145,17 @@ static inline void serval_sal_init_send_head(struct sock *sk)
 
 static inline void serval_sal_init_ctrl_queue(struct sock *sk)
 {
-        sk_ssk(sk)->ctrl_queue = NULL;
-        serval_sal_init_send_head(sk);
+	sk_ssk(sk)->ctrl_queue = NULL;
+	serval_sal_init_send_head(sk);
 }
 
-static inline void __serval_sal_add_ctrl_queue_tail(struct sock *sk, 
+static inline void __serval_sal_add_ctrl_queue_tail(struct sock *sk,
 						    struct sk_buff *skb)
 {
 	sk_ssk(sk)->ctrl_queue = skb;
 }
 
-static inline void serval_sal_add_ctrl_queue_tail(struct sock *sk, 
+static inline void serval_sal_add_ctrl_queue_tail(struct sock *sk,
 						  struct sk_buff *skb)
 {
 	__serval_sal_add_ctrl_queue_tail(sk, skb);
@@ -165,7 +164,7 @@ static inline void serval_sal_add_ctrl_queue_tail(struct sock *sk,
 		sk_ssk(sk)->ctrl_send_head = skb;
 }
 
-static inline void serval_sal_unlink_ctrl_queue(struct sk_buff *skb, 
+static inline void serval_sal_unlink_ctrl_queue(struct sk_buff *skb,
 						struct sock *sk)
 {
 	if (skb == sk_ssk(sk)->ctrl_queue)
@@ -187,7 +186,7 @@ void serval_sal_send_active_reset(struct sock *sk, gfp_t priority);
 
 static inline struct sal_hdr *sal_hdr(struct sk_buff *skb)
 {
-        return (struct sal_hdr *)skb_transport_header(skb);
+	return (struct sal_hdr *)skb_transport_header(skb);
 }
 
 int serval_sal_send_fin(struct sock *sk);

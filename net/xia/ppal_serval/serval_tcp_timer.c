@@ -43,8 +43,10 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 	int shift = 0;
 
 	/* If peer does not open window for long time, or did not transmit
-	 * anything for long time, penalize it. */
-	if ((s32)(tcp_time_stamp - tp->lsndtime) > 2*SERVAL_TCP_RTO_MAX || !do_reset)
+	 * anything for long time, penalize it.
+	 */
+	if ((s32)(tcp_time_stamp - tp->lsndtime) > 2 * SERVAL_TCP_RTO_MAX ||
+		!do_reset)
 		shift++;
 
 	/* If some dubious ICMP arrived, penalize even more. */
@@ -65,9 +67,10 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 		if (do_reset)
 			serval_sal_send_active_reset(sk, GFP_ATOMIC);
 
-                /* Too many orphans, TCP done! */
+		/* Too many orphans, TCP done! */
 		serval_sal_done(sk);
-		//NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONMEMORY);
+		/* NET_INC_STATS_BH(sock_net(sk),
+			LINUX_MIB_TCPABORTONMEMORY); */
 		return 1;
 	}
 	return 0;
@@ -91,7 +94,7 @@ static int serval_tcp_orphan_retries(struct sock *sk, int alive)
 }
 
 
-static void serval_tcp_mtu_probing(struct serval_tcp_sock *tp, 
+static void serval_tcp_mtu_probing(struct serval_tcp_sock *tp,
 				   struct sock *sk)
 {
 	/* Black hole detection */
@@ -100,9 +103,8 @@ static void serval_tcp_mtu_probing(struct serval_tcp_sock *tp,
 			tp->tp_mtup.enabled = 1;
 			serval_tcp_sync_mss(sk, tp->pmtu_cookie);
 		} else {
-			int mss;
-
-			mss = serval_tcp_mtu_to_mss(sk, tp->tp_mtup.search_low) >> 1;
+			int mss = serval_tcp_mtu_to_mss(sk,
+				tp->tp_mtup.search_low) >> 1;
 			mss = min(sysctl_serval_tcp_base_mss, mss);
 			mss = max(mss, 68 - tp->tcp_header_len);
 			tp->tp_mtup.search_low = serval_tcp_mss_to_mtu(sk, mss);
@@ -122,25 +124,25 @@ static int retransmits_timed_out(struct sock *sk,
 {
 	unsigned int timeout, linear_backoff_thresh;
 	unsigned int start_ts;
-	unsigned int rto_base = syn_set ? 
-                SERVAL_TCP_TIMEOUT_INIT : 
-                SERVAL_TCP_RTO_MIN;
-	
+	unsigned int rto_base = syn_set ?
+		SERVAL_TCP_TIMEOUT_INIT :
+		SERVAL_TCP_RTO_MIN;
+
 	if (!serval_tcp_sk(sk)->retransmits)
 		return 0;
 
-        if (unlikely(!serval_tcp_sk(sk)->retrans_stamp)) {
-                struct sk_buff *skb = serval_tcp_write_queue_head(sk);
-                
-                if (!skb) {
+	if (unlikely(!serval_tcp_sk(sk)->retrans_stamp)) {
+		struct sk_buff *skb = serval_tcp_write_queue_head(sk);
+
+		if (!skb) {
 			LIMIT_NETDEBUG(KERN_ERR
 				pr_fmt("BUG! Transmit queue empty!\n"));
-                        return 0;
-                }
-                start_ts = TCP_SKB_CB(skb)->when;
-        } else {
+			return 0;
+		}
+		start_ts = TCP_SKB_CB(skb)->when;
+	} else {
 		start_ts = serval_tcp_sk(sk)->retrans_stamp;
-        }
+	}
 
 	linear_backoff_thresh = ilog2(SERVAL_TCP_RTO_MAX/rto_base);
 
@@ -148,7 +150,7 @@ static int retransmits_timed_out(struct sock *sk,
 		timeout = ((2 << boundary) - 1) * rto_base;
 	else
 		timeout = ((2 << linear_backoff_thresh) - 1) * rto_base +
-			  (boundary - linear_backoff_thresh) * SERVAL_TCP_RTO_MAX;
+			(boundary - linear_backoff_thresh) * SERVAL_TCP_RTO_MAX;
 
 	return (tcp_time_stamp - start_ts) >= timeout;
 }
@@ -200,7 +202,8 @@ static void serval_tcp_delack_timer(unsigned long data)
 	if (sock_owned_by_user(sk)) {
 		/* Try again later. */
 		tp->tp_ack.blocked = 1;
-		//NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
+		/* NET_INC_STATS_BH(sock_net(sk),
+			LINUX_MIB_DELAYEDACKLOCKED); */
 		sk_reset_timer(sk, &tp->delack_timer, jiffies + TCP_DELACK_MIN);
 		goto out_unlock;
 	}
@@ -219,7 +222,8 @@ static void serval_tcp_delack_timer(unsigned long data)
 	if (!skb_queue_empty(&tp->ucopy.prequeue)) {
 		struct sk_buff *skb;
 
-		//NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSCHEDULERFAILED);
+		/* NET_INC_STATS_BH(sock_net(sk),
+			LINUX_MIB_TCPSCHEDULERFAILED); */
 
 		while ((skb = __skb_dequeue(&tp->ucopy.prequeue)) != NULL)
 			sk_backlog_rcv(sk, skb);
@@ -239,7 +243,7 @@ static void serval_tcp_delack_timer(unsigned long data)
 			tp->tp_ack.ato      = TCP_ATO_MIN;
 		}
 		serval_tcp_send_ack(sk);
-		//NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKS);
+		/* NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKS); */
 	}
 out:
 	if (serval_tcp_memory_pressure)
@@ -268,21 +272,21 @@ static void serval_tcp_probe_timer(struct sock *sk)
 	 *
 	 * Let me to explain. icsk_probes_out is zeroed by incoming ACKs
 	 * even if they advertise zero window. Hence, connection is killed only
-	 * if we received no ACKs for normal connection timeout. It is not killed
-	 * only because window stays zero for some time, window may be zero
-	 * until armageddon and even later. We are in full accordance
-	 * with RFCs, only probe timer combines both retransmission timeout
-	 * and probe timeout in one bottle.				--ANK
+	 * if we received no ACKs for normal connection timeout.
+	 * It is not killed only because window stays zero for some time,
+	 * window may be zero until armageddon and even later.
+	 * We are in full accordance with RFCs, only probe timer combines
+	 * both retransmission timeout and probe timeout in one bottle.	--ANK
 	 */
 	max_probes = sysctl_serval_tcp_retries2;
 
 	if (sock_flag(sk, SOCK_DEAD)) {
-		const int alive = ((tp->rto << tp->backoff) < SERVAL_TCP_RTO_MAX);
+		const int alive = (tp->rto << tp->backoff) < SERVAL_TCP_RTO_MAX;
 
 		max_probes = serval_tcp_orphan_retries(sk, alive);
 
-		if (serval_tcp_out_of_resources(sk, alive || 
-                                                tp->probes_out <= max_probes))
+		if (serval_tcp_out_of_resources(sk, alive ||
+						tp->probes_out <= max_probes))
 			return;
 	}
 
@@ -350,14 +354,13 @@ void serval_tcp_retransmit_timer(struct sock *sk)
 		NET_INC_STATS_BH(sock_net(sk), mib_idx);
 #endif
 	}
-	
-	if (serval_tcp_use_frto(sk)) {
-		serval_tcp_enter_frto(sk);
-	} else {
-		serval_tcp_enter_loss(sk, 0);
-	}
 
-	if (serval_tcp_retransmit_skb(sk, 
+	if (serval_tcp_use_frto(sk))
+		serval_tcp_enter_frto(sk);
+	else
+		serval_tcp_enter_loss(sk, 0);
+
+	if (serval_tcp_retransmit_skb(sk,
 				      serval_tcp_write_queue_head(sk)) > 0) {
 		/* Retransmission failed because of local congestion,
 		 * do not backoff.
@@ -365,8 +368,8 @@ void serval_tcp_retransmit_timer(struct sock *sk)
 		if (!tp->retransmits)
 			tp->retransmits = 1;
 		serval_tsk_reset_xmit_timer(sk, STSK_TIME_RETRANS,
-					    min(tp->rto, SERVAL_TCP_RESOURCE_PROBE_INTERVAL),
-					    SERVAL_TCP_RTO_MAX);
+			min(tp->rto, SERVAL_TCP_RESOURCE_PROBE_INTERVAL),
+			SERVAL_TCP_RTO_MAX);
 		goto out;
 	}
 
@@ -408,7 +411,7 @@ out_reset_timer:
 		/* Use normal (exponential) backoff */
 		tp->rto = min(tp->rto << 1, SERVAL_TCP_RTO_MAX);
 	}
-	serval_tsk_reset_xmit_timer(sk, STSK_TIME_RETRANS, 
+	serval_tsk_reset_xmit_timer(sk, STSK_TIME_RETRANS,
 				    tp->rto, SERVAL_TCP_RTO_MAX);
 	if (retransmits_timed_out(sk, sysctl_serval_tcp_retries1 + 1, 0))
 		__sk_dst_reset(sk);

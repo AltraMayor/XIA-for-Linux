@@ -24,10 +24,10 @@ int sysctl_sal_fin_timeout __read_mostly = SAL_FIN_TIMEOUT;
  */
 static inline int before(__u32 seq1, __u32 seq2)
 {
-        return (__s32)(seq1-seq2) < 0;
+	return (__s32)(seq1-seq2) < 0;
 }
 
-#define after(seq2, seq1) 	before(seq1, seq2)
+#define after(seq2, seq1)	before(seq1, seq2)
 
 /* is s2<=s1<=s3 ? */
 static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
@@ -37,19 +37,19 @@ static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
 
 /* Context for parsed Serval headers. */
 struct sal_context {
-        struct sal_hdr *hdr;
+	struct sal_hdr *hdr;
 
 	/* SAL header length + lenght of all extension headers present */
-        unsigned short length;
+	unsigned short length;
 
 	/* These three fields are host-endian copies of respective fields
 	 * in @ctrl_ext when it exists.
 	 */
-        unsigned short flags;
-        uint32_t verno;
-        uint32_t ackno;
+	unsigned short flags;
+	uint32_t verno;
+	uint32_t ackno;
 
-        struct sal_control_ext *ctrl_ext;
+	struct sal_control_ext *ctrl_ext;
 };
 
 static int serval_sal_state_process(struct sock *sk, struct sk_buff *skb,
@@ -59,7 +59,7 @@ static int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	int use_copy, gfp_t gfp_mask);
 
 static size_t verify_ext_length[] = {
-        [SAL_CONTROL_EXT] = sizeof(struct sal_control_ext),
+	[SAL_CONTROL_EXT] = sizeof(struct sal_control_ext),
 };
 
 static int parse_control_ext(struct sal_context *sal_ctx, struct sal_ext *ext)
@@ -74,9 +74,9 @@ static int parse_control_ext(struct sal_context *sal_ctx, struct sal_ext *ext)
 	sal_ctx->verno = ntohl(cext->verno);
 	sal_ctx->ackno = ntohl(cext->ackno);
 
-        /* Parse flags */
+	/* Parse flags */
 	if (cext->syn)
-		sal_ctx->flags |= SVH_SYN; 
+		sal_ctx->flags |= SVH_SYN;
 	if (cext->rsyn)
 		sal_ctx->flags |= SVH_RSYN;
 	if (cext->ack)
@@ -88,7 +88,7 @@ static int parse_control_ext(struct sal_context *sal_ctx, struct sal_ext *ext)
 	if (cext->fin)
 		sal_ctx->flags |= SVH_FIN;
 
-        return sizeof(struct sal_control_ext);
+	return sizeof(struct sal_control_ext);
 }
 
 typedef int (*parse_ext_func_t)(struct sal_context *sal_ctx,
@@ -138,7 +138,7 @@ static int serval_sal_parse_hdr(struct sal_context *sal_ctx,
 		return rest ? rest : -1;
 	}
 
-        /* Parse extensions */
+	/* Parse extensions */
 	i = 0;
 	rest -= sizeof(struct sal_hdr);
 	ext = SAL_EXT_FIRST(shdr);
@@ -151,15 +151,15 @@ static int serval_sal_parse_hdr(struct sal_context *sal_ctx,
 		i++;
 		rest -= ext_len;
 		ext = SAL_EXT_NEXT(ext);
-        }
-        return rest;
+	}
+	return rest;
 }
 
 static inline int has_valid_verno(uint32_t seg_seq, struct sock *sk)
-{        
+{
 	if ((1 << sk->sk_state) & (SALF_LISTEN | SALF_REQUEST))
-                return 1;
-        return !before(seg_seq, sk_ssk(sk)->rcv_seq.nxt);
+		return 1;
+	return !before(seg_seq, sk_ssk(sk)->rcv_seq.nxt);
 }
 
 static inline int packet_has_transport_hdr(const struct sk_buff *skb,
@@ -171,13 +171,13 @@ static inline int packet_has_transport_hdr(const struct sk_buff *skb,
 		: skb->len > 0;			/* Yes.	*/
 }
 
-static inline int has_valid_control_extension(struct sock *sk, 
-                                              const struct sal_context *ctx)
+static inline int has_valid_control_extension(struct sock *sk,
+					      const struct sal_context *ctx)
 {
-        /* Check nonce for all control extensions except SYNs, since
+	/* Check nonce for all control extensions except SYNs, since
 	 * those are actually establishing nonces.
 	 */
-        return ctx->ctrl_ext && (ctx->ctrl_ext->syn ||
+	return ctx->ctrl_ext && (ctx->ctrl_ext->syn ||
 		!memcmp(ctx->ctrl_ext->nonce, sk_ssk(sk)->peer_nonce,
 			SAL_NONCE_SIZE));
 }
@@ -255,7 +255,7 @@ static void serval_sal_rtt_estimator(struct sock *sk, const __u32 mrtt)
 		} else {
 			m -= (ssk->mdev >> 2);   /* similar update on mdev */
 		}
-		ssk->mdev += m;	    	/* mdev = 3/4 mdev + 1/4 new */
+		ssk->mdev += m;		/* mdev = 3/4 mdev + 1/4 new */
 		if (ssk->mdev > ssk->mdev_max) {
 			ssk->mdev_max = ssk->mdev;
 			if (ssk->mdev_max > ssk->rttvar)
@@ -263,7 +263,8 @@ static void serval_sal_rtt_estimator(struct sock *sk, const __u32 mrtt)
 		}
 		if (after(ssk->snd_seq.una, ssk->rtt_seq)) {
 			if (ssk->mdev_max < ssk->rttvar)
-				ssk->rttvar -= (ssk->rttvar - ssk->mdev_max) >> 2;
+				ssk->rttvar -= (ssk->rttvar - ssk->mdev_max)
+					>> 2;
 			ssk->rtt_seq = ssk->snd_seq.nxt;
 			ssk->mdev_max = serval_sal_rto_min(sk);
 		}
@@ -271,8 +272,8 @@ static void serval_sal_rtt_estimator(struct sock *sk, const __u32 mrtt)
 		/* no previous measure. */
 		ssk->srtt = m << 3;	/* take the measured time to be rtt */
 		ssk->mdev = m << 1;	/* make sure rto = 3*rtt */
-		ssk->mdev_max = ssk->rttvar = max(ssk->mdev, 
-                                                  serval_sal_rto_min(sk));
+		ssk->mdev_max = ssk->rttvar = max(ssk->mdev,
+						  serval_sal_rto_min(sk));
 		ssk->rtt_seq = ssk->snd_seq.nxt;
 	}
 }
@@ -322,18 +323,17 @@ static void serval_sal_rearm_rto(struct sock *sk)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 
-	if (!serval_sal_ctrl_queue_head(sk)) {
+	if (!serval_sal_ctrl_queue_head(sk))
 		serval_sock_clear_xmit_timer(sk);
-	} else {
+	else
 		serval_sock_reset_xmit_timer(sk, ssk->rto, SAL_RTO_MAX);
-	}
 }
 
 void serval_sal_update_rtt(struct sock *sk, const s32 seq_rtt)
 {
-        serval_sal_rtt_estimator(sk, seq_rtt);
+	serval_sal_rtt_estimator(sk, seq_rtt);
 	serval_sal_set_rto(sk);
-        sk_ssk(sk)->backoff = 0;
+	sk_ssk(sk)->backoff = 0;
 }
 
 /* Given an ACK, clean all packets from the control queue that this ACK
@@ -344,73 +344,73 @@ void serval_sal_update_rtt(struct sock *sk, const s32 seq_rtt)
  * still unacked packets in the queue and we removed the first packet
  * in the queue.
  */
-static int serval_sal_clean_rtx_queue(struct sock *sk, uint32_t ackno, int all, 
-                                      struct sal_skb_cb *cb_out)
+static int serval_sal_clean_rtx_queue(struct sock *sk, uint32_t ackno, int all,
+				      struct sal_skb_cb *cb_out)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *skb, *fskb = serval_sal_ctrl_queue_head(sk);
-        unsigned int num = 0;
-        u32 now = sal_time_stamp;
-        s32 seq_rtt = -1;
-       
-        while ((skb = serval_sal_ctrl_queue_head(sk))) {
-                if (after(ackno, SAL_SKB_CB(skb)->verno) || all) {
-                        serval_sal_unlink_ctrl_queue(skb, sk);
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *skb, *fskb = serval_sal_ctrl_queue_head(sk);
+	unsigned int num = 0;
+	u32 now = sal_time_stamp;
+	s32 seq_rtt = -1;
 
-                        if (cb_out) {
-                                /* merge the state */
-                                cb_out->flags |= SAL_SKB_CB(skb)->flags;
-                        }
+	while ((skb = serval_sal_ctrl_queue_head(sk))) {
+		if (after(ackno, SAL_SKB_CB(skb)->verno) || all) {
+			serval_sal_unlink_ctrl_queue(skb, sk);
 
-                        if (SAL_SKB_CB(skb)->flags & SVH_RETRANS) {
-                                seq_rtt = -1;
-                        } else if (!all) {
-                                seq_rtt = now - SAL_SKB_CB(skb)->when;
-                                serval_sal_update_rtt(sk, seq_rtt);
-                                serval_sal_rearm_rto(sk);
-                        }
+			if (cb_out) {
+				/* merge the state */
+				cb_out->flags |= SAL_SKB_CB(skb)->flags;
+			}
 
-                        if (skb == serval_sal_send_head(sk))
-                                serval_sal_advance_send_head(sk, skb);
+			if (SAL_SKB_CB(skb)->flags & SVH_RETRANS) {
+				seq_rtt = -1;
+			} else if (!all) {
+				seq_rtt = now - SAL_SKB_CB(skb)->when;
+				serval_sal_update_rtt(sk, seq_rtt);
+				serval_sal_rearm_rto(sk);
+			}
 
-                        kfree_skb(skb);
-                        skb = serval_sal_ctrl_queue_head(sk);
-                        if (skb)
-                                ssk->snd_seq.una = SAL_SKB_CB(skb)->verno;
-                        num++;                        
-                } else {
-                        break;
-                }
-        }
+			if (skb == serval_sal_send_head(sk))
+				serval_sal_advance_send_head(sk, skb);
 
-        /* If we removed the first packet in the queue, we should also
-         * clear the retransmit timer since it is no longer valid.
+			kfree_skb(skb);
+			skb = serval_sal_ctrl_queue_head(sk);
+			if (skb)
+				ssk->snd_seq.una = SAL_SKB_CB(skb)->verno;
+			num++;
+		} else {
+			break;
+		}
+	}
+
+	/* If we removed the first packet in the queue, we should also
+	 * clear the retransmit timer since it is no longer valid.
 	 */
-        if (serval_sal_ctrl_queue_head(sk) != fskb) {
-                serval_sock_clear_xmit_timer(sk);
-                ssk->retransmits = 0;
-        }
+	if (serval_sal_ctrl_queue_head(sk) != fskb) {
+		serval_sock_clear_xmit_timer(sk);
+		ssk->retransmits = 0;
+	}
 
-        if (serval_sal_ctrl_queue_head(sk))
-                serval_sock_reset_xmit_timer(sk, ssk->rto, SAL_RTO_MAX);
+	if (serval_sal_ctrl_queue_head(sk))
+		serval_sock_reset_xmit_timer(sk, ssk->rto, SAL_RTO_MAX);
 
-        return 0;
+	return 0;
 }
 
 static void serval_sal_queue_ctrl_skb(struct sock *sk, struct sk_buff *skb)
 {
-        /* Cannot release header here in case this is an unresolved
-         * packet. We need the skb_transport_header() pointer to
-         * calculate checksum.
+	/* Cannot release header here in case this is an unresolved
+	 * packet. We need the skb_transport_header() pointer to
+	 * calculate checksum.
 	 */
 
 	serval_sal_add_ctrl_queue_tail(sk, skb);
-        
-        /* Check if the skb became first in queue, in that case update
-         * unacknowledged verno.
+
+	/* Check if the skb became first in queue, in that case update
+	 * unacknowledged verno.
 	 */
-        if (skb == serval_sal_ctrl_queue_head(sk))
-                sk_ssk(sk)->snd_seq.una = SAL_SKB_CB(skb)->verno;
+	if (skb == serval_sal_ctrl_queue_head(sk))
+		sk_ssk(sk)->snd_seq.una = SAL_SKB_CB(skb)->verno;
 }
 
 /* This function writes packets in the control queue to the
@@ -419,27 +419,27 @@ static void serval_sal_queue_ctrl_skb(struct sock *sk, struct sk_buff *skb)
  */
 static int serval_sal_write_xmit(struct sock *sk, unsigned int limit, gfp_t gfp)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *skb;
-        unsigned int num = 0;
-        int err = 0;
-        
-	while ((skb = serval_sal_send_head(sk)) && 
-               (ssk->snd_seq.nxt - ssk->snd_seq.una) <= ssk->snd_seq.wnd) {
-                
-                if (limit && num == limit)
-                        break;
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *skb;
+	unsigned int num = 0;
+	int err = 0;
 
-                SAL_SKB_CB(skb)->when = sal_time_stamp;
-                                
-                err = serval_sal_transmit_skb(sk, skb, 1, gfp);
-                if (err < 0)
-                        break;
-                serval_sal_advance_send_head(sk, skb);
-                num++;
-        }
+	while ((skb = serval_sal_send_head(sk)) &&
+	       (ssk->snd_seq.nxt - ssk->snd_seq.una) <= ssk->snd_seq.wnd) {
 
-        return err;
+		if (limit && num == limit)
+			break;
+
+		SAL_SKB_CB(skb)->when = sal_time_stamp;
+
+		err = serval_sal_transmit_skb(sk, skb, 1, gfp);
+		if (err < 0)
+			break;
+		serval_sal_advance_send_head(sk, skb);
+		num++;
+	}
+
+	return err;
 }
 
 /* Queue SAL control packets for the purpose of doing retransmissions
@@ -450,35 +450,35 @@ static int serval_sal_write_xmit(struct sock *sk, unsigned int limit, gfp_t gfp)
  */
 static int serval_sal_queue_and_push(struct sock *sk, struct sk_buff *skb)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sal_skb_cb cb;
-        
-        memset(&cb, 0, sizeof(cb));
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sal_skb_cb cb;
 
-        /* Remove previously queued control packet(s). We currently
-         * only queue one control packet at a time, allowing control
-         * packets to override each other (necessary for, e.g.,
-         * (re)migration). It is not strictly necessary to use a queue
-         * for this, but we use it anyway for convenience and future
-         * proofness (in case we want to implement a send window).
+	memset(&cb, 0, sizeof(cb));
+
+	/* Remove previously queued control packet(s). We currently
+	 * only queue one control packet at a time, allowing control
+	 * packets to override each other (necessary for, e.g.,
+	 * (re)migration). It is not strictly necessary to use a queue
+	 * for this, but we use it anyway for convenience and future
+	 * proofness (in case we want to implement a send window).
 	 */
-        serval_sal_clean_rtx_queue(sk, 0, 1, &cb);
+	serval_sal_clean_rtx_queue(sk, 0, 1, &cb);
 
-        /* We need to merge the state in unacknowledged packets with
-         * the our new state when we are overriding (currently
-         * previous flags).
+	/* We need to merge the state in unacknowledged packets with
+	 * the our new state when we are overriding (currently
+	 * previous flags).
 	 */
-        SAL_SKB_CB(skb)->flags |= cb.flags;
+	SAL_SKB_CB(skb)->flags |= cb.flags;
 
-        /* Queue the new packet. */
-        serval_sal_queue_ctrl_skb(sk, skb);
+	/* Queue the new packet. */
+	serval_sal_queue_ctrl_skb(sk, skb);
 
-        /* Set retransmission timer. */
-        if (skb == serval_sal_ctrl_queue_head(sk))
-                serval_sock_reset_xmit_timer(sk, ssk->rto, SAL_RTO_MAX);
-        
-        /* Write packets in queue to network. */
-        return serval_sal_write_xmit(sk, 1, GFP_ATOMIC);
+	/* Set retransmission timer. */
+	if (skb == serval_sal_ctrl_queue_head(sk))
+		serval_sock_reset_xmit_timer(sk, ssk->rto, SAL_RTO_MAX);
+
+	/* Write packets in queue to network. */
+	return serval_sal_write_xmit(sk, 1, GFP_ATOMIC);
 }
 
 /* This function is equivalent to sock.c:sock_wfree().
@@ -523,28 +523,28 @@ static struct sk_buff *sk_sal_alloc_skb(struct sock *sk, gfp_t gfp)
 
 static int serval_sal_send_syn(struct sock *sk, u32 verno)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *skb;
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *skb;
 
-        skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
-        if (!skb)
-                return -ENOMEM;
+	skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
+	if (!skb)
+		return -ENOMEM;
 
-        /* Ask transport to fill in */
-        if (ssk->af_ops->conn_build_syn) {
-                int err = ssk->af_ops->conn_build_syn(sk, skb);
-                if (err) {
-                        /* Transport protocol returned error. */
-                        __kfree_skb(skb);
-                        return err;
-                }
-        }
+	/* Ask transport to fill in */
+	if (ssk->af_ops->conn_build_syn) {
+		int err = ssk->af_ops->conn_build_syn(sk, skb);
+		if (err) {
+			/* Transport protocol returned error. */
+			__kfree_skb(skb);
+			return err;
+		}
+	}
 
-        SAL_SKB_CB(skb)->flags = SVH_SYN;
-        SAL_SKB_CB(skb)->verno = verno;
-        ssk->snd_seq.nxt = verno + 1;
+	SAL_SKB_CB(skb)->flags = SVH_SYN;
+	SAL_SKB_CB(skb)->verno = verno;
+	ssk->snd_seq.nxt = verno + 1;
 
-        return serval_sal_queue_and_push(sk, skb);
+	return serval_sal_queue_and_push(sk, skb);
 }
 
 static void set_peer_srvc_xdst(struct serval_sock *ssk, struct xip_dst *xdst)
@@ -600,24 +600,24 @@ int serval_sal_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	if (rc)
 		return rc;
 
-        /* Disable segmentation offload */
-        sk->sk_gso_type = 0;
+	/* Disable segmentation offload */
+	sk->sk_gso_type = 0;
 
-        return serval_sal_send_syn(sk, ssk->snd_seq.iss);
+	return serval_sal_send_syn(sk, ssk->snd_seq.iss);
 }
 
 static void serval_sal_timewait(struct sock *sk, int state, int timeo)
 {
-        unsigned long timeout = jiffies + timeo;
-        struct serval_sock *ssk = sk_ssk(sk);
-        const int rto = (ssk->rto << 2) - (ssk->rto >> 1);
+	unsigned long timeout = jiffies + timeo;
+	struct serval_sock *ssk = sk_ssk(sk);
+	const int rto = (ssk->rto << 2) - (ssk->rto >> 1);
 
-        serval_sock_set_state(sk, state);
-        
-        if (timeo < rto)
-                timeout = jiffies + rto;
+	serval_sock_set_state(sk, state);
 
-        sk_reset_timer(sk, &ssk->tw_timer, timeout); 
+	if (timeo < rto)
+		timeout = jiffies + rto;
+
+	sk_reset_timer(sk, &ssk->tw_timer, timeout);
 }
 
 void serval_sal_done(struct sock *sk)
@@ -629,80 +629,80 @@ void serval_sal_done(struct sock *sk)
 
 static inline int serval_sock_set_sal_state(struct sock *sk,
 	unsigned int new_state)
-{ 
-        BUG_ON(new_state >= __SAL_RSYN_MAX_STATE);
-        sk_ssk(sk)->sal_state = new_state;
-        return new_state;
+{
+	BUG_ON(new_state >= __SAL_RSYN_MAX_STATE);
+	sk_ssk(sk)->sal_state = new_state;
+	return new_state;
 }
 
 static int serval_sal_send_rsyn(struct sock *sk, u32 verno)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *skb;
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *skb;
 
 	if ((1 << sk->sk_state) & (SALF_REQUEST | SALF_LISTEN | SALF_CLOSED))
 		return 0;
 
-        switch (ssk->sal_state) {
-        case SAL_RSYN_INITIAL:
-                serval_sock_set_sal_state(sk, SAL_RSYN_SENT);
-                break;
-        case SAL_RSYN_RECV:
-                serval_sock_set_sal_state(sk, SAL_RSYN_SENT_RECV);
-                break;
-        case SAL_RSYN_SENT:
-        case SAL_RSYN_SENT_RECV:
-                /* Here we just move to the same state again, so
-                   nothing to do. */
-                break;
-        }
+	switch (ssk->sal_state) {
+	case SAL_RSYN_INITIAL:
+		serval_sock_set_sal_state(sk, SAL_RSYN_SENT);
+		break;
+	case SAL_RSYN_RECV:
+		serval_sock_set_sal_state(sk, SAL_RSYN_SENT_RECV);
+		break;
+	case SAL_RSYN_SENT:
+	case SAL_RSYN_SENT_RECV:
+		/* Here we just move to the same state again, so
+		   nothing to do. */
+		break;
+	}
 
-        for (;;) {
-                skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
-                if (skb)
-                        break;
-                yield();
-        }
+	for (;;) {
+		skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
+		if (skb)
+			break;
+		yield();
+	}
 
-        /* Use same sequence number as previous packet for migration
+	/* Use same sequence number as previous packet for migration
 	 * requests.
 	 */
-        SAL_SKB_CB(skb)->flags = SVH_RSYN;
-        SAL_SKB_CB(skb)->verno = verno;
+	SAL_SKB_CB(skb)->flags = SVH_RSYN;
+	SAL_SKB_CB(skb)->verno = verno;
 
 	if ((1 << sk->sk_state) &
 		(SALF_FINWAIT1 | SALF_CLOSING | SALF_LASTACK)) {
 		/* We have sent our FIN, but not received the ACK.
 		 * We need to add the FIN bit.
 		 */
-                SAL_SKB_CB(skb)->flags |= SVH_FIN;
+		SAL_SKB_CB(skb)->flags |= SVH_FIN;
 	}
 
-        return serval_sal_queue_and_push(sk, skb);
+	return serval_sal_queue_and_push(sk, skb);
 }
 
 int serval_sal_migrate(struct sock *sk)
 {
-        return serval_sal_send_rsyn(sk, sk_ssk(sk)->snd_seq.nxt++);
+	return serval_sal_send_rsyn(sk, sk_ssk(sk)->snd_seq.nxt++);
 }
 
 int serval_sal_send_fin(struct sock *sk)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *skb;
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *skb;
 
-        /* We are under lock, so allocation must be atomic */
-        /* Socket is locked, keep trying until memory is available. */
-        for (;;) {
-                skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
-                
-                if (skb)
-                        break;
-                yield();
-        }
+	/* We are under lock, so allocation must be atomic */
+	/* Socket is locked, keep trying until memory is available. */
+	for (;;) {
+		skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
 
-        SAL_SKB_CB(skb)->flags = SVH_FIN;
-        SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt++;
+		if (skb)
+			break;
+		yield();
+	}
+
+	SAL_SKB_CB(skb)->flags = SVH_FIN;
+	SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt++;
 
 	/* If we are in the process of migrating, then we should
 	 * probably add also the RSYN flag. Otherwise, if the previous
@@ -710,14 +710,14 @@ int serval_sal_send_fin(struct sock *sk)
 	 * the migration will never happen. XXX: verify that this is
 	 * really the way to handle this situation.
 	 */
-        if (ssk->sal_state == SAL_RSYN_SENT) {
+	if (ssk->sal_state == SAL_RSYN_SENT) {
 		/* RSYN was in progress, adding RSYN flag. */
-                SAL_SKB_CB(skb)->flags |= SVH_RSYN;
-        } else if (sk_ssk(sk)->sal_state == SAL_RSYN_RECV) {
-                SAL_SKB_CB(skb)->flags |= SVH_RSYN | SVH_ACK;
-        }
+		SAL_SKB_CB(skb)->flags |= SVH_RSYN;
+	} else if (sk_ssk(sk)->sal_state == SAL_RSYN_RECV) {
+		SAL_SKB_CB(skb)->flags |= SVH_RSYN | SVH_ACK;
+	}
 
-        return serval_sal_queue_and_push(sk, skb);
+	return serval_sal_queue_and_push(sk, skb);
 }
 
 /* XXX Verify that this function handles all possible cases.
@@ -726,8 +726,8 @@ int serval_sal_send_fin(struct sock *sk)
 /* Called when application calls close(), or terminates. */
 void serval_sal_close(struct sock *sk, long timeout)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        int state;
+	struct serval_sock *ssk = sk_ssk(sk);
+	int state;
 
 	if ((1 << sk->sk_state) & (SALF_FINWAIT1 | SALF_FINWAIT2 |
 		SALF_TIMEWAIT | SALF_CLOSING)) {
@@ -739,13 +739,13 @@ void serval_sal_close(struct sock *sk, long timeout)
 	lock_sock(sk);
 	sk->sk_shutdown = SHUTDOWN_MASK;
 
-        switch (sk->sk_state) {
-        case SAL_CLOSEWAIT:
-                serval_sock_set_state(sk, SAL_LASTACK);
-                break;
+	switch (sk->sk_state) {
+	case SAL_CLOSEWAIT:
+		serval_sock_set_state(sk, SAL_LASTACK);
+		break;
 
-        case SAL_CONNECTED:
-        case SAL_RESPOND:
+	case SAL_CONNECTED:
+	case SAL_RESPOND:
 		serval_sock_set_state(sk, SAL_FINWAIT1);
 		break;
 
@@ -761,7 +761,7 @@ void serval_sal_close(struct sock *sk, long timeout)
 	case SAL_REQUEST:
 	case SAL_LASTACK:
 		serval_sal_done(sk);
-        	release_sock(sk);
+		release_sock(sk);
 		return;
 
 	case SAL_FINWAIT1:
@@ -778,68 +778,67 @@ void serval_sal_close(struct sock *sk, long timeout)
 		BUG();
 	}
 
-        if (ssk->af_ops->conn_close) {
+	if (ssk->af_ops->conn_close)
 		ssk->af_ops->conn_close(sk);
-        } else {
+	else
 		serval_sal_send_fin(sk);
-        }
 	sk_mem_reclaim(sk);
 
-        sk_stream_wait_close(sk, timeout);
+	sk_stream_wait_close(sk, timeout);
 
 adjudge_to_death:
-        state = sk->sk_state;
+	state = sk->sk_state;
 
-        /* Hold reference so that the sock is not destroyed by a bh
+	/* Hold reference so that the sock is not destroyed by a bh
 	 * when we release lock.
 	 */
-        sock_hold(sk);
+	sock_hold(sk);
 
-        /* Orphaning will mark the sock with flag DEAD,
+	/* Orphaning will mark the sock with flag DEAD,
 	 * what allows it to be destroyed.
 	 */
-        sock_orphan(sk);
+	sock_orphan(sk);
 
-        release_sock(sk);
+	release_sock(sk);
 
-        /* Now socket is owned by kernel and we acquire BH lock to finish
+	/* Now socket is owned by kernel and we acquire BH lock to finish
 	 * the close. No need to check for user refs.
-         */
-        local_bh_disable();
-        bh_lock_sock(sk);
+	 */
+	local_bh_disable();
+	bh_lock_sock(sk);
 
-        /* Have we already been destroyed by a softirq or backlog? */
-        if (state != SAL_CLOSED && sk->sk_state == SAL_CLOSED)
-                goto out;
+	/* Have we already been destroyed by a softirq or backlog? */
+	if (state != SAL_CLOSED && sk->sk_state == SAL_CLOSED)
+		goto out;
 
-        /* Other cleanup stuff goes here */
-        if (sk->sk_state == SAL_CLOSED)
-                serval_sock_destroy(sk);
+	/* Other cleanup stuff goes here */
+	if (sk->sk_state == SAL_CLOSED)
+		serval_sock_destroy(sk);
 
 	/* XXX What if @sk->sk_state isn't SAL_CLOSED?
 	 * tcp_close() deals with it for the sake of avoiding a resource leak.
 	 */
 
 out:
-        bh_unlock_sock(sk);
-        local_bh_enable();
-        sock_put(sk);
+	bh_unlock_sock(sk);
+	local_bh_enable();
+	sock_put(sk);
 }
 
 static int serval_sal_send_ack(struct sock *sk)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *skb;
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *skb;
 
-        skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
-        if (!skb)
-                return -ENOMEM;
+	skb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
+	if (!skb)
+		return -ENOMEM;
 
-        SAL_SKB_CB(skb)->flags = SVH_ACK;
-        /* Do not increment sequence numbers for pure ACKs */
-        SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt;
-        /* Do not queue pure ACKs */
-        return serval_sal_transmit_skb(sk, skb, 0, GFP_ATOMIC);
+	SAL_SKB_CB(skb)->flags = SVH_ACK;
+	/* Do not increment sequence numbers for pure ACKs */
+	SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt;
+	/* Do not queue pure ACKs */
+	return serval_sal_transmit_skb(sk, skb, 0, GFP_ATOMIC);
 }
 
 /* Kill this socket if we receive a reset. */
@@ -906,7 +905,7 @@ static struct xip_dst *route_src_addr(struct net *net, struct sk_buff *skb,
 	if (xiph->num_src < 1)
 		return NULL;
 
-	*psrc = &xiph->dst_addr[xiph->num_dst]; 
+	*psrc = &xiph->dst_addr[xiph->num_dst];
 	*pnum_src = xiph->num_src;
 	*psrc_last_node = XIA_ENTRY_NODE_INDEX;
 	xdst = xip_mark_addr_and_get_dst(net, *psrc, *pnum_src,
@@ -1004,7 +1003,7 @@ static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
 void serval_sal_send_active_reset(struct sock *sk, gfp_t priority)
 {
 	struct sk_buff *skb;
-        struct serval_sock *ssk = sk_ssk(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
 
 	/* NOTE: No TCP options attached and we never retransmit this. */
 	skb = alloc_skb(MAX_SAL_HDR, priority);
@@ -1013,10 +1012,10 @@ void serval_sal_send_active_reset(struct sock *sk, gfp_t priority)
 
 	/* Reserve space for headers and prepare control bits. */
 	skb_reserve(skb, MAX_SAL_HDR);
-        prepare_skb_to_send(skb, sk);
-        SAL_SKB_CB(skb)->flags = SVH_RST | SVH_ACK;
+	prepare_skb_to_send(skb, sk);
+	SAL_SKB_CB(skb)->flags = SVH_RST | SVH_ACK;
 	SAL_SKB_CB(skb)->when = sal_time_stamp;
-        SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt;
+	SAL_SKB_CB(skb)->verno = ssk->snd_seq.nxt;
 
 	serval_sal_transmit_skb(sk, skb, 0, priority);
 }
@@ -1069,15 +1068,15 @@ static int serval_sal_send_synack(struct sock *sk,
 			&srsk->req, rskb));
 	}
 
-        /* Add control extensions */
+	/* Add control extensions */
 	ctrl_ext = push_ctrl_ext_hdr(rskb);
-        ctrl_ext->verno = htonl(srsk->iss_seq);
-        ctrl_ext->ackno = htonl(srsk->rcv_seq + 1);
-        ctrl_ext->syn = 1;
-        ctrl_ext->ack = 1;
-        memcpy(ctrl_ext->nonce, srsk->local_nonce, SAL_NONCE_SIZE);
-        
-        /* Add Serval header */
+	ctrl_ext->verno = htonl(srsk->iss_seq);
+	ctrl_ext->ackno = htonl(srsk->rcv_seq + 1);
+	ctrl_ext->syn = 1;
+	ctrl_ext->ack = 1;
+	memcpy(ctrl_ext->nonce, srsk->local_nonce, SAL_NONCE_SIZE);
+
+	/* Add Serval header */
 	push_sal_hdr(rskb, ctx->hdr->protocol, sizeof(*ctrl_ext));
 
 	/* We cannot use serval_sal_transmit_skb() here since we do not yet
@@ -1138,39 +1137,39 @@ void srsk_put(struct serval_request_sock *srsk)
 static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 	const struct sal_context *sal_ctx)
 {
-        struct serval_request_sock *srsk;
+	struct serval_request_sock *srsk;
 	static struct xia_row *src_sink;
-        struct serval_sock *ssk;
-        int rc = 0;
+	struct serval_sock *ssk;
+	int rc = 0;
 
-        if (sk->sk_ack_backlog >= sk->sk_max_ack_backlog) {
+	if (sk->sk_ack_backlog >= sk->sk_max_ack_backlog) {
 		rc = -EINVAL; /* XXX Isn't there a better error? */
-                goto drop;
+		goto drop;
 	}
 
-        srsk = serval_reqsk_alloc(sk->sk_prot->rsk_prot);
-        if (!srsk) {
+	srsk = serval_reqsk_alloc(sk->sk_prot->rsk_prot);
+	if (!srsk) {
 		rc = -ENOMEM;
 		goto drop;
 	}
-        /* Copy fields in request packet into request sock. */
+	/* Copy fields in request packet into request sock. */
 	src_sink = xip_src_sink(skb);
 	memcpy(&srsk->peer_srvcid, src_sink->s_xid.xid_id,
 		sizeof(srsk->peer_srvcid));
-        memcpy(srsk->peer_nonce, sal_ctx->ctrl_ext->nonce, SAL_NONCE_SIZE);
-        srsk->rcv_seq = sal_ctx->verno;
+	memcpy(srsk->peer_nonce, sal_ctx->ctrl_ext->nonce, SAL_NONCE_SIZE);
+	srsk->rcv_seq = sal_ctx->verno;
 
-        /* Call upper transport protocol handler */
-        ssk = sk_ssk(sk);
-        if (ssk->af_ops->conn_request) {
+	/* Call upper transport protocol handler */
+	ssk = sk_ssk(sk);
+	if (ssk->af_ops->conn_request) {
 		/* XXX Pass @srsk directly. */
-                rc = ssk->af_ops->conn_request(sk, &srsk->req, skb);
-                if (rc) {
-                        /* Transport will free the skb on error. */
+		rc = ssk->af_ops->conn_request(sk, &srsk->req, skb);
+		if (rc) {
+			/* Transport will free the skb on error. */
 			srsk_put(srsk);
-                        return rc;
-                }
-        }
+			return rc;
+		}
+	}
 
 	/* Hash @srsk. */
 	__init_fxid(&srsk->flow_fxid, XRTABLE_LOCAL_INDEX, REQUEST_SOCK_TYPE);
@@ -1179,7 +1178,7 @@ static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 	 * unique.
 	 */
 	BUG_ON(__serval_sock_hash_flowid(sock_net(sk), &srsk->flow_fxid));
-	
+
 	/* Add the new request socket to the SYN queue.
 	 *
 	 * We only add @srsk to @ssk->syn_queue when it's fully set, so
@@ -1190,29 +1189,29 @@ static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 	list_add(&srsk->lh, &ssk->syn_queue);
 	sk->sk_ack_backlog++;
 
-        rc = serval_sal_send_synack(sk, srsk, skb, sal_ctx);
+	rc = serval_sal_send_synack(sk, srsk, skb, sal_ctx);
 
 drop:
-        kfree_skb(skb); /* Free the SYN request. */
-        return rc;
+	kfree_skb(skb); /* Free the SYN request. */
+	return rc;
 }
 
 /* Find a request sock that has previously been created by a SYN. */
 static struct serval_request_sock *find_srsk_for_syn(struct serval_sock *ssk,
 	const u8 *peer_srvcid, const u8 *peer_nonce)
 {
-        struct serval_request_sock *srsk;
-        list_for_each_entry(srsk, &ssk->syn_queue, lh) {
-                if (!memcmp(&srsk->peer_srvcid, peer_srvcid,
+	struct serval_request_sock *srsk;
+	list_for_each_entry(srsk, &ssk->syn_queue, lh) {
+		if (!memcmp(&srsk->peer_srvcid, peer_srvcid,
 				sizeof(srsk->peer_srvcid)) &&
 			/* Also compare nonce because ServiceID may open
 			 * multiple connections at once, or be replicated
 			 * in the network.
 			 */
 			!memcmp(srsk->peer_nonce, peer_nonce, SAL_NONCE_SIZE))
-                        return srsk;
-        }
-        return NULL;
+			return srsk;
+	}
+	return NULL;
 }
 
 /* Find a request sock that has previously been created by a SYN using
@@ -1221,12 +1220,12 @@ static struct serval_request_sock *find_srsk_for_syn(struct serval_sock *ssk,
 static struct serval_request_sock *find_srsk_for_ack(struct serval_sock *ssk,
 	const u8 *local_flowid)
 {
-        struct serval_request_sock *srsk;
-        list_for_each_entry(srsk, &ssk->syn_queue, lh) {
-                if (!memcmp(srsk->flow_fxid.fx_xid, local_flowid, XIA_XID_MAX))
-                        return srsk;
-        }
-        return NULL;
+	struct serval_request_sock *srsk;
+	list_for_each_entry(srsk, &ssk->syn_queue, lh) {
+		if (!memcmp(srsk->flow_fxid.fx_xid, local_flowid, XIA_XID_MAX))
+			return srsk;
+	}
+	return NULL;
 }
 
 static struct xip_dst *update_xdst(struct net *net, struct xia_row *addr,
@@ -1268,7 +1267,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	struct serval_sock *nssk;
 	u8 num_dest, dest_last_node;
 
-	if (	/* There's no return address. */
+	if (/* There's no return address. */
 		xiph->num_src < 1 ||
 		/* Bad nonce. */
 		memcmp(srsk->peer_nonce, ctx->ctrl_ext->nonce,
@@ -1368,32 +1367,32 @@ static int serval_sal_child_process(struct sock *parent,
 	struct serval_sock *child, struct sk_buff *skb,
 	const struct sal_context *ctx)
 {
-        int state = child->xia_sk.sk.sk_state;
-        int rc;
+	int state = child->xia_sk.sk.sk_state;
+	int rc;
 
-        /* @child sock is already locked here */
+	/* @child sock is already locked here */
 
-        /* Check lock on @child socket, similarly to how we handled the
-         * @parent sock for the incoming @skb.
+	/* Check lock on @child socket, similarly to how we handled the
+	 * @parent sock for the incoming @skb.
 	 */
-        if (!sock_owned_by_user(&child->xia_sk.sk)) {
-                rc = serval_sal_state_process(&child->xia_sk.sk, skb, ctx);
-                if (rc == 0 && state == SAL_RESPOND &&
+	if (!sock_owned_by_user(&child->xia_sk.sk)) {
+		rc = serval_sal_state_process(&child->xia_sk.sk, skb, ctx);
+		if (rc == 0 && state == SAL_RESPOND &&
 			child->xia_sk.sk.sk_state != state) {
-                        /* Waking up parent (listening) sock. */
-                        parent->sk_data_ready(parent, 0);
-                }
-        } else {
-                /* User got lock, add skb to backlog so that it will
+			/* Waking up parent (listening) sock. */
+			parent->sk_data_ready(parent, 0);
+		}
+	} else {
+		/* User got lock, add skb to backlog so that it will
 		 * be processed in user context when the lock is released.
 		 */
-                __sk_add_backlog(&child->xia_sk.sk, skb);
+		__sk_add_backlog(&child->xia_sk.sk, skb);
 		rc = 0;
-        }
+	}
 
-        bh_unlock_sock(&child->xia_sk.sk);
-        sock_put(&child->xia_sk.sk);
-        return rc;
+	bh_unlock_sock(&child->xia_sk.sk);
+	sock_put(&child->xia_sk.sk);
+	return rc;
 }
 
 /* Deal with the last step of a three-way handshake, that it, the ACK packet
@@ -1406,7 +1405,7 @@ static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
 	const struct xia_row *src_sink = xip_src_sink(skb);
 	struct serval_sock *ssk;
 	struct serval_request_sock *srsk;
-        struct serval_sock *nssk;
+	struct serval_sock *nssk;
 
 	/* If there is no sink in the destination address,
 	 * @skb shouldn't ever reach this execution point because would've
@@ -1423,64 +1422,64 @@ static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
 		!ctx->ctrl_ext || ctx->flags & SVH_SYN ||
 		!(ctx->flags & SVH_ACK) ||
 		!(srsk = find_srsk_for_ack(ssk, dst_sink->s_xid.xid_id)) ||
-        	!(nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx))) {
+		!(nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx))) {
 		/* We don't send a reset packet here because we don't want to
 		 * help an adversary scanning for peding connections.
 		 */
-        	kfree_skb(skb);
-	        return -EINVAL;
+		kfree_skb(skb);
+		return -EINVAL;
 	}
 
-        /* The new sock is already locked here */
+	/* The new sock is already locked here */
 	return serval_sal_child_process(sk, nssk, skb, ctx);
 }
 
 static int serval_sal_ack_process(struct sock *sk, struct sk_buff *skb,
 	const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        
-        if (!(ctx->flags & SVH_ACK) ||
+	struct serval_sock *ssk = sk_ssk(sk);
+
+	if (!(ctx->flags & SVH_ACK) ||
 		/* If the ack is older than previous acks, ignore it. */
 		before(ctx->ackno, ssk->snd_seq.una) ||
 		/* If the ack corresponds to something we haven't sent yet,
 		 * ignore it.
 		 */
 		after(ctx->ackno, ssk->snd_seq.nxt))
-                return -EINVAL;
+		return -EINVAL;
 
-        serval_sal_clean_rtx_queue(sk, ctx->ackno, 0, NULL);
-        ssk->snd_seq.una = ctx->ackno;
+	serval_sal_clean_rtx_queue(sk, ctx->ackno, 0, NULL);
+	ssk->snd_seq.una = ctx->ackno;
 
 /* XXX Implement socket migration. */
 #if 0
-        /* Check for migration handshake ACK. */
-        switch (ssk->sal_state) {
-        case SAL_RSYN_RECV:
-                if (!(ctx->flags & SVH_RSYN))
-                        serval_sock_set_sal_state(sk, SAL_RSYN_INITIAL);
-                break;
-        case SAL_RSYN_SENT_RECV:
-                if (!(ctx->flags & SVH_RSYN))
-                        serval_sock_set_sal_state(sk, SAL_RSYN_SENT);
-                break;
-        default:
-                return 0;
-        }
-        
-        if (!(ctx->flags & SVH_RSYN)) {
-                /* Migration complete for @ssk's flow. */
+	/* Check for migration handshake ACK. */
+	switch (ssk->sal_state) {
+	case SAL_RSYN_RECV:
+		if (!(ctx->flags & SVH_RSYN))
+			serval_sock_set_sal_state(sk, SAL_RSYN_INITIAL);
+		break;
+	case SAL_RSYN_SENT_RECV:
+		if (!(ctx->flags & SVH_RSYN))
+			serval_sock_set_sal_state(sk, SAL_RSYN_SENT);
+		break;
+	default:
+		return 0;
+	}
+
+	if (!(ctx->flags & SVH_RSYN)) {
+		/* Migration complete for @ssk's flow. */
 		/* XXX Replace IP code. */
-                memcpy(&inet_sk(sk)->inet_daddr, &ssk->mig_daddr, 4);
-                memset(&ssk->mig_daddr, 0, 4);
+		memcpy(&inet_sk(sk)->inet_daddr, &ssk->mig_daddr, 4);
+		memset(&ssk->mig_daddr, 0, 4);
 		/* XXX Route again, don't wait. Shouldn't peer's address
 		 * be redone?
 		 */
-                sk_dst_reset(sk);
+		sk_dst_reset(sk);
 
-                if (ssk->af_ops->migration_completed)
+		if (ssk->af_ops->migration_completed)
 			ssk->af_ops->migration_completed(sk);
-        }
+	}
 #endif
 
 	return 0;
@@ -1492,75 +1491,75 @@ static int serval_sal_ack_process(struct sock *sk, struct sk_buff *skb,
 #if 0
 static int dev_get_ipv4_addr(struct net_device *dev, void *addr)
 {
-        struct in_device *in_dev;
-        int ret = 0;
-        
+	struct in_device *in_dev;
+	int ret = 0;
+
 	rcu_read_lock();
 
 	in_dev = __in_dev_get_rcu(dev);
 
-        if (in_dev) {
-                for_primary_ifa(in_dev) {
+	if (in_dev) {
+		for_primary_ifa(in_dev) {
 			memcpy(addr, &ifa->ifa_local, 4);
-                        ret = 1;
-                        break;
-                }
-                endfor_ifa(indev);
-        }
+			ret = 1;
+			break;
+		}
+		endfor_ifa(indev);
+	}
 	rcu_read_unlock();
 
-        return ret;
+	return ret;
 }
 #endif
 
 static int serval_sal_rcv_rsynack(struct sock *sk,
-                                  struct sk_buff *skb,
-                                  const struct sal_context *ctx)
+				  struct sk_buff *skb,
+				  const struct sal_context *ctx)
 {
 	return -1;
 
 /* XXX Implement socket migration. */
 #if 0
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct net_device *mig_dev = dev_get_by_index(sock_net(sk), 
-                                                      ssk->mig_dev_if);
-        int rc = 0;
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct net_device *mig_dev = dev_get_by_index(sock_net(sk),
+						      ssk->mig_dev_if);
+	int rc = 0;
 
-        if (!mig_dev) {
+	if (!mig_dev) {
 		/* No migration device set. */
-                return -1;
-        }
+		return -1;
+	}
 
-        switch (ssk->sal_state) {
-        case SAL_RSYN_SENT:
-                /* Migration complete for FlowID. */
-                serval_sock_set_sal_state(sk, SAL_RSYN_INITIAL);
-                
-                dev_get_ipv4_addr(mig_dev, &inet_sk(sk)->inet_saddr);
-                serval_sock_set_mig_dev(sk, 0);
-                sk_dst_reset(sk);
+	switch (ssk->sal_state) {
+	case SAL_RSYN_SENT:
+		/* Migration complete for FlowID. */
+		serval_sock_set_sal_state(sk, SAL_RSYN_INITIAL);
 
-                if (ssk->af_ops->migration_completed)
-                        ssk->af_ops->migration_completed(sk);
-                break;
+		dev_get_ipv4_addr(mig_dev, &inet_sk(sk)->inet_saddr);
+		serval_sock_set_mig_dev(sk, 0);
+		sk_dst_reset(sk);
 
-        case SAL_RSYN_SENT_RECV:
-                serval_sock_set_sal_state(sk, SAL_RSYN_RECV);
-                memcpy(&ssk->mig_daddr, &ip_hdr(skb)->saddr, 4);
-                sk_dst_reset(sk);
-                break;
+		if (ssk->af_ops->migration_completed)
+			ssk->af_ops->migration_completed(sk);
+		break;
 
-        default:
-                goto out;
-        }
-        
-        ssk->rcv_seq.nxt = ctx->verno + 1;
+	case SAL_RSYN_SENT_RECV:
+		serval_sock_set_sal_state(sk, SAL_RSYN_RECV);
+		memcpy(&ssk->mig_daddr, &ip_hdr(skb)->saddr, 4);
+		sk_dst_reset(sk);
+		break;
 
-        rc = serval_sal_send_ack(sk);
+	default:
+		goto out;
+	}
 
-out:        
-        dev_put(mig_dev);
-        return rc;
+	ssk->rcv_seq.nxt = ctx->verno + 1;
+
+	rc = serval_sal_send_ack(sk);
+
+out:
+	dev_put(mig_dev);
+	return rc;
 #endif
 }
 
@@ -1571,142 +1570,136 @@ static int serval_sal_rcv_rsyn(struct sock *sk, struct sk_buff *skb,
 	return -1;
 /* XXX Implement socket migration. */
 #if 0
-        struct serval_sock *ssk = sk_ssk(sk);
-        struct sk_buff *rskb = NULL;
-        
-        if (!has_valid_control_extension(sk, ctx)) {
-                /* Bad migration control packet. */
-                return -1;
-        }
-       
-        /* We ignore migrations in these states */
+	struct serval_sock *ssk = sk_ssk(sk);
+	struct sk_buff *rskb = NULL;
+
+	if (!has_valid_control_extension(sk, ctx)) {
+		/* Bad migration control packet. */
+		return -1;
+	}
+
+	/* We ignore migrations in these states */
 	if ((1 << sk->sk_state) & (SALF_CLOSED | SALF_LISTEN | SALF_REQUEST))
 		return -1;
-                
-        switch(ssk->sal_state) {
-        case SAL_RSYN_INITIAL:
-                serval_sock_set_sal_state(sk, SAL_RSYN_RECV);
-                break;
-        case SAL_RSYN_SENT:
-                serval_sock_set_sal_state(sk, SAL_RSYN_SENT_RECV);
-                break;
-        case SAL_RSYN_RECV:
-        case SAL_RSYN_SENT_RECV:
+
+	switch (ssk->sal_state) {
+	case SAL_RSYN_INITIAL:
+		serval_sock_set_sal_state(sk, SAL_RSYN_RECV);
+		break;
+	case SAL_RSYN_SENT:
+		serval_sock_set_sal_state(sk, SAL_RSYN_SENT_RECV);
+		break;
+	case SAL_RSYN_RECV:
+	case SAL_RSYN_SENT_RECV:
 		/* Just send another RSYN+ACK to acknowledge the new
 		 * address change.
 		 */
-                break;
-        default:
-                return 0;
-        }
-        
-        if (ssk->af_ops->freeze_flow)
-                ssk->af_ops->freeze_flow(sk);
-        
-        ssk->rcv_seq.nxt = ctx->verno + 1;        
-        memcpy(&ssk->mig_daddr, &ip_hdr(skb)->saddr, 4);
-        rskb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
-        if (!rskb)
-                return -ENOMEM;
-        
-        SAL_SKB_CB(rskb)->flags = SVH_RSYN | SVH_ACK;
-        SAL_SKB_CB(rskb)->verno = ssk->snd_seq.nxt++;
-        SAL_SKB_CB(rskb)->when = sal_time_stamp;
+		break;
+	default:
+		return 0;
+	}
 
-        return serval_sal_queue_and_push(sk, rskb);
+	if (ssk->af_ops->freeze_flow)
+		ssk->af_ops->freeze_flow(sk);
+
+	ssk->rcv_seq.nxt = ctx->verno + 1;
+	memcpy(&ssk->mig_daddr, &ip_hdr(skb)->saddr, 4);
+	rskb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
+	if (!rskb)
+		return -ENOMEM;
+
+	SAL_SKB_CB(rskb)->flags = SVH_RSYN | SVH_ACK;
+	SAL_SKB_CB(rskb)->verno = ssk->snd_seq.nxt++;
+	SAL_SKB_CB(rskb)->when = sal_time_stamp;
+
+	return serval_sal_queue_and_push(sk, rskb);
 #endif
 }
 
-static int serval_sal_rcv_fin(struct sock *sk, 
-                              struct sk_buff *skb,
-                              const struct sal_context *ctx)
+static int serval_sal_rcv_fin(struct sock *sk, struct sk_buff *skb,
+	const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        int err = 0;
+	struct serval_sock *ssk = sk_ssk(sk);
 
-        if (!has_valid_control_extension(sk, ctx)) {
-                /* Bad control extension. */
-                return -1;
-        }
-        
-        sk->sk_shutdown |= RCV_SHUTDOWN;
-        sock_set_flag(sk, SOCK_DONE);
+	if (!has_valid_control_extension(sk, ctx)) {
+		/* Bad control extension. */
+		return -1;
+	}
 
-        ssk->rcv_seq.nxt = ctx->verno + 1;
-        
-        /* If there is still an application attached to the
-           sock, then wake it up. */
-        if (!sock_flag(sk, SOCK_DEAD)) {
+	sk->sk_shutdown |= RCV_SHUTDOWN;
+	sock_set_flag(sk, SOCK_DONE);
+
+	ssk->rcv_seq.nxt = ctx->verno + 1;
+
+	/* If there is still an application attached to the
+	 * sock, then wake it up.
+	 */
+	if (!sock_flag(sk, SOCK_DEAD)) {
 		/* Wake user up. */
-                sk->sk_state_change(sk);
-                
-                /* Do not send POLL_HUP for half
-                   duplex close. */
-                if (sk->sk_shutdown == SHUTDOWN_MASK ||
-                    sk->sk_state == SAL_CLOSED)
-                        sk_wake_async(sk, SOCK_WAKE_WAITD, 
-                                      POLL_HUP);
-                else
-                        sk_wake_async(sk, SOCK_WAKE_WAITD, 
-                                      POLL_IN);
-        }
+		sk->sk_state_change(sk);
 
-        err = serval_sal_send_ack(sk);
-        
-        return err;
+		/* Do not send POLL_HUP for half duplex close. */
+		if (sk->sk_shutdown == SHUTDOWN_MASK ||
+		    sk->sk_state == SAL_CLOSED)
+			sk_wake_async(sk, SOCK_WAKE_WAITD, POLL_HUP);
+		else
+			sk_wake_async(sk, SOCK_WAKE_WAITD, POLL_IN);
+	}
+
+	return serval_sal_send_ack(sk);
 }
 
 static int serval_sal_connected_state_process(struct sock *sk,
-                                              struct sk_buff *skb,
-                                              const struct sal_context *ctx)
+					      struct sk_buff *skb,
+					      const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        int err = 0;
-        char should_drop = 0, should_close = 0;
+	struct serval_sock *ssk = sk_ssk(sk);
+	int err = 0;
+	char should_drop = 0, should_close = 0;
 
-        err = serval_sal_ack_process(sk, skb, ctx);
+	err = serval_sal_ack_process(sk, skb, ctx);
 
-        if (ctx->flags & SVH_FIN) {
-                err = serval_sal_rcv_fin(sk, skb, ctx);
-                
-                if (err == 0)
-                        should_close = 1;
-        }
+	if (ctx->flags & SVH_FIN) {
+		err = serval_sal_rcv_fin(sk, skb, ctx);
 
-        /* Should pass FINs to transport and ultimately the user, as
-         * it needs to pick it off its receive queue to notice EOF. */
-        if (packet_has_transport_hdr(skb, ctx->hdr) || (ctx->flags & SVH_FIN)) {
-                ssk->last_rcv_tstamp = sal_time_stamp;
-                err = ssk->af_ops->receive(sk, skb);
-        } else {
-                /* No transport header, so we just drop the packet
-                 * since there is nothing more to do with it. */
-                err = 0;
-                should_drop = 1;
-        }
+		if (err == 0)
+			should_close = 1;
+	}
 
-        if (should_close)
-                serval_sock_set_state(sk, SAL_CLOSEWAIT);
+	/* Should pass FINs to transport and ultimately the user, as
+	 * it needs to pick it off its receive queue to notice EOF. */
+	if (packet_has_transport_hdr(skb, ctx->hdr) || (ctx->flags & SVH_FIN)) {
+		ssk->last_rcv_tstamp = sal_time_stamp;
+		err = ssk->af_ops->receive(sk, skb);
+	} else {
+		/* No transport header, so we just drop the packet
+		 * since there is nothing more to do with it. */
+		err = 0;
+		should_drop = 1;
+	}
 
-        if (should_drop)
-                kfree_skb(skb);
+	if (should_close)
+		serval_sock_set_state(sk, SAL_CLOSEWAIT);
 
-        return err;
+	if (should_drop)
+		kfree_skb(skb);
+
+	return err;
 }
 
 static int serval_sal_closewait_state_process(struct sock *sk,
 	struct sk_buff *skb, const struct sal_context *ctx)
 {
-        if (ctx->flags & SVH_FIN)
-                serval_sal_send_ack(sk);
+	if (ctx->flags & SVH_FIN)
+		serval_sal_send_ack(sk);
 
-        serval_sal_ack_process(sk, skb, ctx);
+	serval_sal_ack_process(sk, skb, ctx);
 
 	if (packet_has_transport_hdr(skb, ctx->hdr))
 		return sk_ssk(sk)->af_ops->receive(sk, skb);
 
-        kfree_skb(skb);
-        return 0;
+	kfree_skb(skb);
+	return 0;
 }
 
 static int serval_sal_listen_state_process(struct sock *sk,
@@ -1724,19 +1717,19 @@ static int serval_sal_listen_state_process(struct sock *sk,
 		goto drop;
 	}
 
-        srsk = find_srsk_for_syn(sk_ssk(sk), src_sink->s_xid.xid_id,
+	srsk = find_srsk_for_syn(sk_ssk(sk), src_sink->s_xid.xid_id,
 		ctx->ctrl_ext->nonce);
-        if (srsk) {
+	if (srsk) {
 		/* SYN already received, dropping @skb. */
-                serval_sal_send_synack(sk, srsk, skb, ctx);
+		serval_sal_send_synack(sk, srsk, skb, ctx);
 		rc = 0;
-                goto drop;
-        }
-        return serval_sal_rcv_syn(sk, skb, ctx);
+		goto drop;
+	}
+	return serval_sal_rcv_syn(sk, skb, ctx);
 
 drop:
-        kfree_skb(skb);
-        return rc;
+	kfree_skb(skb);
+	return rc;
 }
 
 /* This function is called at the client side that is trying to connect to a
@@ -1747,19 +1740,19 @@ drop:
 static int serval_sal_request_state_process(struct sock *sk,
 	struct sk_buff *skb, const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
 	struct xiphdr *xiph;
-        struct sk_buff *rskb;
-        int rc;
+	struct sk_buff *rskb;
+	int rc;
 
-        if (!has_valid_control_extension(sk, ctx) ||
+	if (!has_valid_control_extension(sk, ctx) ||
 		!(ctx->flags & SVH_SYN) || !(ctx->flags & SVH_ACK) ||
 		serval_sal_ack_process(sk, skb, ctx)) {
 		/* Packet @skb is not a SYN-ACK response and/or
 		 * the ACK is invalid.
 		*/
 		rc = -EINVAL;
-                goto drop;
+		goto drop;
 	}
 
 	/* Save peer's FlowID at @ssk->peer_flowid if the source address of
@@ -1772,126 +1765,126 @@ static int serval_sal_request_state_process(struct sock *sk,
 		goto drop;
 	}
 
-        /* Save nonce. */
-        memcpy(ssk->peer_nonce, ctx->ctrl_ext->nonce, SAL_NONCE_SIZE);
+	/* Save nonce. */
+	memcpy(ssk->peer_nonce, ctx->ctrl_ext->nonce, SAL_NONCE_SIZE);
 
-        /* Update expected rcv sequence number. */
-        ssk->rcv_seq.nxt = ctx->verno + 1;
-        
-        /* Let transport know about the response. */
-        if (ssk->af_ops->request_state_process) {
-                rc = ssk->af_ops->request_state_process(sk, skb);
-                if (rc) {
-                        /* Transport drops the packet. */
-                        return rc;
-                }
-        }
+	/* Update expected rcv sequence number. */
+	ssk->rcv_seq.nxt = ctx->verno + 1;
 
-        /* Move to connected state. */
-        serval_sock_set_state(sk, SAL_CONNECTED);
-        
-        /* Let application know we are connected. */
+	/* Let transport know about the response. */
+	if (ssk->af_ops->request_state_process) {
+		rc = ssk->af_ops->request_state_process(sk, skb);
+		if (rc) {
+			/* Transport drops the packet. */
+			return rc;
+		}
+	}
+
+	/* Move to connected state. */
+	serval_sock_set_state(sk, SAL_CONNECTED);
+
+	/* Let application know we are connected. */
 	if (!sock_flag(sk, SOCK_DEAD)) {
-                sk->sk_state_change(sk);
-                sk_wake_async(sk, SOCK_WAKE_IO, POLL_OUT);
-        }
+		sk->sk_state_change(sk);
+		sk_wake_async(sk, SOCK_WAKE_IO, POLL_OUT);
+	}
 
-        /* Allocate ACK. */
-        rskb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
-        if (!rskb) {
+	/* Allocate ACK. */
+	rskb = sk_sal_alloc_skb(sk, GFP_ATOMIC);
+	if (!rskb) {
 		rc = -ENOMEM;
 		goto drop;
 	}
 
-        /* Ask transport to fill in. */
-        if (ssk->af_ops->conn_build_ack) {
-                rc = ssk->af_ops->conn_build_ack(sk, rskb);
-                if (rc) {
+	/* Ask transport to fill in. */
+	if (ssk->af_ops->conn_build_ack) {
+		rc = ssk->af_ops->conn_build_ack(sk, rskb);
+		if (rc) {
 			kfree_skb(rskb);
 			goto drop;
-                }
-        }
+		}
+	}
 
-        /* Update control block. */
-        SAL_SKB_CB(rskb)->flags = SVH_ACK;
-        /* Do not increase sequence number for pure ACK. */
-        SAL_SKB_CB(rskb)->verno = ssk->snd_seq.nxt;
+	/* Update control block. */
+	SAL_SKB_CB(rskb)->flags = SVH_ACK;
+	/* Do not increase sequence number for pure ACK. */
+	SAL_SKB_CB(rskb)->verno = ssk->snd_seq.nxt;
 
-        /* Transmit, do not queue a pure ACK. */
-        rc = serval_sal_transmit_skb(sk, rskb, 0, GFP_ATOMIC);
+	/* Transmit, do not queue a pure ACK. */
+	rc = serval_sal_transmit_skb(sk, rskb, 0, GFP_ATOMIC);
 
-drop: 
-        kfree_skb(skb);
-        return rc;
+drop:
+	kfree_skb(skb);
+	return rc;
 }
 
 static int serval_sal_respond_state_process(struct sock *sk,
 	struct sk_buff *skb, const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
 
-        if (!has_valid_control_extension(sk, ctx))
-                goto drop;
+	if (!has_valid_control_extension(sk, ctx))
+		goto drop;
 
-        /* Process ACK */
-        if (serval_sal_ack_process(sk, skb, ctx) == 0) {
-                if (ssk->af_ops->respond_state_process &&
+	/* Process ACK */
+	if (serval_sal_ack_process(sk, skb, ctx) == 0) {
+		if (ssk->af_ops->respond_state_process &&
 			ssk->af_ops->respond_state_process(sk, skb)) {
 			/* Transport drops ACK. */
 			return 0;
-                }
+		}
 
-                /* Valid ACK */
-                serval_sock_set_state(sk, SAL_CONNECTED);
+		/* Valid ACK */
+		serval_sock_set_state(sk, SAL_CONNECTED);
 
-                /* Let user know */
-                sk->sk_state_change(sk);
-                sk_wake_async(sk, SOCK_WAKE_IO, POLL_OUT);
-        }
+		/* Let user know */
+		sk->sk_state_change(sk);
+		sk_wake_async(sk, SOCK_WAKE_IO, POLL_OUT);
+	}
 
 drop:
-        kfree_skb(skb);
-        return 0;
+	kfree_skb(skb);
+	return 0;
 }
 
-static int serval_sal_finwait1_state_process(struct sock *sk, 
-                                             struct sk_buff *skb,
-                                             const struct sal_context *ctx)
+static int serval_sal_finwait1_state_process(struct sock *sk,
+					     struct sk_buff *skb,
+					     const struct sal_context *ctx)
 {
-        int ack_ok = (ctx->flags & SVH_ACK) &&
+	int ack_ok = (ctx->flags & SVH_ACK) &&
 		!serval_sal_ack_process(sk, skb, ctx);
 
-        if (ctx->flags & SVH_FIN) {
-                if (serval_sal_rcv_fin(sk, skb, ctx) == 0) {
-                        if (ack_ok)
-                                serval_sal_timewait(sk, SAL_TIMEWAIT, 
-                                                    SAL_TIMEWAIT_LEN);
-                        else
-                                serval_sock_set_state(sk, SAL_CLOSING);
-                }
-        } else if (ack_ok) {
-                serval_sal_timewait(sk, SAL_FINWAIT2, SAL_FIN_TIMEOUT);
-        }
+	if (ctx->flags & SVH_FIN) {
+		if (serval_sal_rcv_fin(sk, skb, ctx) == 0) {
+			if (ack_ok)
+				serval_sal_timewait(sk, SAL_TIMEWAIT,
+						    SAL_TIMEWAIT_LEN);
+			else
+				serval_sock_set_state(sk, SAL_CLOSING);
+		}
+	} else if (ack_ok) {
+		serval_sal_timewait(sk, SAL_FINWAIT2, SAL_FIN_TIMEOUT);
+	}
 
-        if (packet_has_transport_hdr(skb, ctx->hdr) || ctx->flags & SVH_FIN)
+	if (packet_has_transport_hdr(skb, ctx->hdr) || ctx->flags & SVH_FIN)
 		return sk_ssk(sk)->af_ops->receive(sk, skb);
 
 	kfree_skb(skb);
 	return 0;
 }
 
-static int serval_sal_finwait2_state_process(struct sock *sk, 
-                                             struct sk_buff *skb,
-                                             const struct sal_context *ctx)
+static int serval_sal_finwait2_state_process(struct sock *sk,
+					     struct sk_buff *skb,
+					     const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
 
-        /* We've received our FIN-ACK already */
-        if (ctx->flags & SVH_FIN) {
+	/* We've received our FIN-ACK already */
+	if (ctx->flags & SVH_FIN) {
 		int err = serval_sal_rcv_fin(sk, skb, ctx);
 		if (!err)
 			serval_sal_timewait(sk, SAL_TIMEWAIT, SAL_TIMEWAIT_LEN);
-        }
+	}
 
 	if (packet_has_transport_hdr(skb, ctx->hdr) || ctx->flags & SVH_FIN)
 		return ssk->af_ops->receive(sk, skb);
@@ -1900,52 +1893,52 @@ static int serval_sal_finwait2_state_process(struct sock *sk,
 	return 0;
 }
 
-static int serval_sal_closing_state_process(struct sock *sk, 
-                                            struct sk_buff *skb,
-                                            const struct sal_context *ctx)
+static int serval_sal_closing_state_process(struct sock *sk,
+					    struct sk_buff *skb,
+					    const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-                
-        if ((ctx->flags & SVH_ACK) &&
+	struct serval_sock *ssk = sk_ssk(sk);
+
+	if ((ctx->flags & SVH_ACK) &&
 		serval_sal_ack_process(sk, skb, ctx) == 0) {
-                /* ACK was valid */
-                serval_sal_timewait(sk, SAL_TIMEWAIT, SAL_TIMEWAIT_LEN);
-        }
+		/* ACK was valid */
+		serval_sal_timewait(sk, SAL_TIMEWAIT, SAL_TIMEWAIT_LEN);
+	}
 
 	if (ctx->flags & SVH_FIN)
-                serval_sal_send_ack(sk);
+		serval_sal_send_ack(sk);
 
 	if (packet_has_transport_hdr(skb, ctx->hdr))
 		return ssk->af_ops->receive(sk, skb);
 
-        kfree_skb(skb);
-        return 0;
+	kfree_skb(skb);
+	return 0;
 }
 
 static int serval_sal_lastack_state_process(struct sock *sk,
 	struct sk_buff *skb, const struct sal_context *ctx)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
-        int err = 0, ack_ok;
-        
-        if (ctx->flags & SVH_FIN)
-                serval_sal_send_ack(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
+	int err = 0, ack_ok;
 
-        ack_ok = serval_sal_ack_process(sk, skb, ctx) == 0;
+	if (ctx->flags & SVH_FIN)
+		serval_sal_send_ack(sk);
 
-        if (packet_has_transport_hdr(skb, ctx->hdr)) {
-                err = ssk->af_ops->receive(sk, skb);
-        } else {
-                err = 0;
-                kfree_skb(skb);
-        }
+	ack_ok = serval_sal_ack_process(sk, skb, ctx) == 0;
 
-        if (ack_ok) {
-                /* ACK was valid, close socket. */
-                serval_sal_done(sk);
-        }
+	if (packet_has_transport_hdr(skb, ctx->hdr)) {
+		err = ssk->af_ops->receive(sk, skb);
+	} else {
+		err = 0;
+		kfree_skb(skb);
+	}
 
-        return err;
+	if (ack_ok) {
+		/* ACK was valid, close socket. */
+		serval_sal_done(sk);
+	}
+
+	return err;
 }
 
 /* Receive for datagram sockets that are not connected. */
@@ -1969,75 +1962,75 @@ static int serval_sal_init_state_process(struct sock *sk, struct sk_buff *skb,
 int serval_sal_state_process(struct sock *sk, struct sk_buff *skb,
 	const struct sal_context *ctx)
 {
-        int err = 0;
+	int err = 0;
 
-        if (ctx->ctrl_ext) {                
-                if (!has_valid_verno(ctx->verno, sk))
-                        goto drop;
+	if (ctx->ctrl_ext) {
+		if (!has_valid_verno(ctx->verno, sk))
+			goto drop;
 
-                /* Is this a reset packet */
-                if (ctx->ctrl_ext->rst) {
-                        serval_sal_rcv_reset(sk);
-                        goto drop;
-                }
-                
-                /* Check for migration */
-                if (ctx->ctrl_ext->rsyn) {
-                        if (ctx->ctrl_ext->ack)
-                                err = serval_sal_rcv_rsynack(sk, skb, ctx);
-                        else
-                                err = serval_sal_rcv_rsyn(sk, skb, ctx);
-                }
-        }
+		/* Is this a reset packet */
+		if (ctx->ctrl_ext->rst) {
+			serval_sal_rcv_reset(sk);
+			goto drop;
+		}
 
-        switch (sk->sk_state) {
-        case SAL_INIT:
-                if (sk->sk_type == SOCK_DGRAM) 
-                        err = serval_sal_init_state_process(sk, skb, ctx);
-                else
-                        goto drop;
-                break;
-        case SAL_CONNECTED:
-                err = serval_sal_connected_state_process(sk, skb, ctx);
-                break;
-        case SAL_REQUEST:
-                err = serval_sal_request_state_process(sk, skb, ctx);
-                break;
-        case SAL_RESPOND:
-                err = serval_sal_respond_state_process(sk, skb, ctx);
-                break;
-        case SAL_LISTEN:
-                err = serval_sal_listen_state_process(sk, skb, ctx);
-                break;
-        case SAL_FINWAIT1:
-                err = serval_sal_finwait1_state_process(sk, skb, ctx);
-                break;
-        case SAL_FINWAIT2:
-                err = serval_sal_finwait2_state_process(sk, skb, ctx);
-                break;
-        case SAL_CLOSING:
-                err = serval_sal_closing_state_process(sk, skb, ctx);
-                break;
-        case SAL_LASTACK:
-                err = serval_sal_lastack_state_process(sk, skb, ctx);
-                break;
-        case SAL_TIMEWAIT:
-                /* Resend ACK of FIN in case our previous one got lost */
-                if (ctx->ctrl_ext && ctx->ctrl_ext->fin)
-                        serval_sal_send_ack(sk);
-                goto drop;
-        case SAL_CLOSEWAIT:
-                err = serval_sal_closewait_state_process(sk, skb, ctx);
-                break;
-        case SAL_CLOSED:
-                serval_sal_send_reset(sk, skb, ctx);
-                goto drop;
-        default:
+		/* Check for migration */
+		if (ctx->ctrl_ext->rsyn) {
+			if (ctx->ctrl_ext->ack)
+				err = serval_sal_rcv_rsynack(sk, skb, ctx);
+			else
+				err = serval_sal_rcv_rsyn(sk, skb, ctx);
+		}
+	}
+
+	switch (sk->sk_state) {
+	case SAL_INIT:
+		if (sk->sk_type == SOCK_DGRAM)
+			err = serval_sal_init_state_process(sk, skb, ctx);
+		else
+			goto drop;
+		break;
+	case SAL_CONNECTED:
+		err = serval_sal_connected_state_process(sk, skb, ctx);
+		break;
+	case SAL_REQUEST:
+		err = serval_sal_request_state_process(sk, skb, ctx);
+		break;
+	case SAL_RESPOND:
+		err = serval_sal_respond_state_process(sk, skb, ctx);
+		break;
+	case SAL_LISTEN:
+		err = serval_sal_listen_state_process(sk, skb, ctx);
+		break;
+	case SAL_FINWAIT1:
+		err = serval_sal_finwait1_state_process(sk, skb, ctx);
+		break;
+	case SAL_FINWAIT2:
+		err = serval_sal_finwait2_state_process(sk, skb, ctx);
+		break;
+	case SAL_CLOSING:
+		err = serval_sal_closing_state_process(sk, skb, ctx);
+		break;
+	case SAL_LASTACK:
+		err = serval_sal_lastack_state_process(sk, skb, ctx);
+		break;
+	case SAL_TIMEWAIT:
+		/* Resend ACK of FIN in case our previous one got lost */
+		if (ctx->ctrl_ext && ctx->ctrl_ext->fin)
+			serval_sal_send_ack(sk);
+		goto drop;
+	case SAL_CLOSEWAIT:
+		err = serval_sal_closewait_state_process(sk, skb, ctx);
+		break;
+	case SAL_CLOSED:
+		serval_sal_send_reset(sk, skb, ctx);
+		goto drop;
+	default:
 		BUG();
-        }
-                
+	}
+
 	/* Ignoring @err. */
-        return 0;
+	return 0;
 
 drop:
 	kfree_skb(skb);
@@ -2059,7 +2052,7 @@ static int linearize_and_parse_sal_header(struct sk_buff *skb,
 	 * migth be paged. This function call will also linearize the
 	 * requested length.
 	 */
-        if (!pskb_may_pull(skb, sizeof(*shdr)))
+	if (!pskb_may_pull(skb, sizeof(*shdr)))
 		return -ENOMEM;
 
 	/* Now we can actually look into the base header. */
@@ -2137,19 +2130,19 @@ int serval_sal_rsk_rcv(struct sk_buff *skb)
 }
 
 static int serval_sal_rexmit(struct sock *sk)
-{        
-        struct sk_buff *skb;
+{
+	struct sk_buff *skb;
 
-        skb = serval_sal_ctrl_queue_head(sk);
-        if (!skb) {
+	skb = serval_sal_ctrl_queue_head(sk);
+	if (!skb) {
 		/* No packet to retransmit. */
-                return -1;
-        }
+		return -1;
+	}
 
-        SAL_SKB_CB(skb)->flags |= SVH_RETRANS;
+	SAL_SKB_CB(skb)->flags |= SVH_RETRANS;
 
-        /* Always clone retransmitted packets */
-        return serval_sal_transmit_skb(sk, skb, 1, GFP_ATOMIC);
+	/* Always clone retransmitted packets */
+	return serval_sal_transmit_skb(sk, skb, 1, GFP_ATOMIC);
 }
 
 static void serval_sal_write_err(struct sock *sk)
@@ -2161,39 +2154,39 @@ static void serval_sal_write_err(struct sock *sk)
 
 void serval_sal_rexmit_timeout(unsigned long data)
 {
-        struct sock *sk = (struct sock *)data;
-        struct serval_sock *ssk = sk_ssk(sk);
+	struct sock *sk = (struct sock *)data;
+	struct serval_sock *ssk = sk_ssk(sk);
 
-        bh_lock_sock(sk);
+	bh_lock_sock(sk);
 
-        if (ssk->retransmits >= net_serval.sysctl_sal_max_retransmits) {
+	if (ssk->retransmits >= net_serval.sysctl_sal_max_retransmits) {
 		/* XXX: check error values here */
 		/* Max retransmits attempts reached. NOT rescheduling timer! */
-                serval_sal_write_err(sk);
-        } else {
-                /* Retransmitting and rescheduling timer. */
-                serval_sal_rexmit(sk);
+		serval_sal_write_err(sk);
+	} else {
+		/* Retransmitting and rescheduling timer. */
+		serval_sal_rexmit(sk);
 
-                ssk->backoff++;
-                ssk->retransmits++; /* Increase number of attempts. */
+		ssk->backoff++;
+		ssk->retransmits++; /* Increase number of attempts. */
 
-                serval_sock_reset_xmit_timer(sk,
+		serval_sock_reset_xmit_timer(sk,
 			min(ssk->rto << ssk->backoff, SAL_RTO_MAX),
 			SAL_RTO_MAX);
-        }
-        bh_unlock_sock(sk);
-        sock_put(sk);
+	}
+	bh_unlock_sock(sk);
+	sock_put(sk);
 }
 
 /* This timeout is used for TIMEWAIT and FINWAIT2 */
 void serval_sal_timewait_timeout(unsigned long data)
 {
-        struct sock *sk = (struct sock *)data;
-        bh_lock_sock(sk);
-        serval_sal_done(sk);
-        bh_unlock_sock(sk);
-        /* Release timer's reference. */
-        sock_put(sk);
+	struct sock *sk = (struct sock *)data;
+	bh_lock_sock(sk);
+	serval_sal_done(sk);
+	bh_unlock_sock(sk);
+	/* Release timer's reference. */
+	sock_put(sk);
 }
 
 static inline int serval_sal_fin_time(const struct sock *sk)
@@ -2211,75 +2204,74 @@ static inline int serval_sal_fin_time(const struct sock *sk)
 #if 0
 static int serval_sal_do_xmit(struct sk_buff *skb)
 {
-        struct sock *sk = skb->sk;
-        struct serval_sock *ssk = sk_ssk(sk);
-      	uint32_t temp_daddr = 0;
-        u8 skb_flags = SAL_SKB_CB(skb)->flags;
-        struct net_device *mig_dev = NULL; 
-        int rc;
+	struct sock *sk = skb->sk;
+	struct serval_sock *ssk = sk_ssk(sk);
+	uint32_t temp_daddr = 0;
+	u8 skb_flags = SAL_SKB_CB(skb)->flags;
+	struct net_device *mig_dev = NULL;
+	int rc;
 
-        if (skb_flags & SVH_RSYN) {
-                mig_dev = dev_get_by_index(sock_net(sk), ssk->mig_dev_if);
+	if (skb_flags & SVH_RSYN) {
+		mig_dev = dev_get_by_index(sock_net(sk), ssk->mig_dev_if);
 
-                if (mig_dev) {
+		if (mig_dev) {
 			/* Sending on @mig_dev. */
 			dev_get_ipv4_addr(mig_dev, &inet_sk(sk)->inet_saddr);
 			skb->dev = mig_dev;
-                }
+		}
 
-                if (ssk->sal_state == SAL_RSYN_RECV) {
-			/* Sending to migration address @ssk->mig_daddr. */ 
+		if (ssk->sal_state == SAL_RSYN_RECV) {
+			/* Sending to migration address @ssk->mig_daddr. */
 			memcpy(&temp_daddr, &inet_sk(sk)->inet_daddr, 4);
 			memcpy(&inet_sk(sk)->inet_daddr, &ssk->mig_daddr, 4);
-                }
+		}
 
-                /* Must remove any cached route */
-                sk_dst_reset(sk);
-        }
+		/* Must remove any cached route */
+		sk_dst_reset(sk);
+	}
 
-        /*
-          XXX we kind of hard code the outgoing device here based
-          on what has been bound to the socket in the connection
-          setup phase. Instead, the device should be resolved based
-          on, e.g., dst IP (if it exists at this point).
+	/*
+	  XXX we kind of hard code the outgoing device here based
+	  on what has been bound to the socket in the connection
+	  setup phase. Instead, the device should be resolved based
+	  on, e.g., dst IP (if it exists at this point).
 
-          However, we currently do not implement an IP routing table
-          for userlevel, which would otherwise be used for this
-          resolution. Kernel space should work, because it routes
-          packet according to the kernel's routing table, thus
-          figuring out the device along the way.
+	  However, we currently do not implement an IP routing table
+	  for userlevel, which would otherwise be used for this
+	  resolution. Kernel space should work, because it routes
+	  packet according to the kernel's routing table, thus
+	  figuring out the device along the way.
 
-          Packets that are sent using an advisory IP may fail in
-          queue_xmit for userlevel unless the socket has had its
-          interface set by a previous send event.
-        */
-        rc = xip_local_out(skb);
-        
-        if (skb_flags & SVH_RSYN) {
-                /* Restore inet_sk(sk)->daddr */
-                if (mig_dev) {
-                        struct net_device *dev = 
-                                dev_get_by_index(sock_net(sk), 
-                                                 sk->sk_bound_dev_if);
-                                
-                        if (dev) {
+	  Packets that are sent using an advisory IP may fail in
+	  queue_xmit for userlevel unless the socket has had its
+	  interface set by a previous send event.
+	*/
+	rc = xip_local_out(skb);
+
+	if (skb_flags & SVH_RSYN) {
+		/* Restore inet_sk(sk)->daddr */
+		if (mig_dev) {
+			struct net_device *dev =
+				dev_get_by_index(sock_net(sk),
+						 sk->sk_bound_dev_if);
+
+			if (dev) {
 				dev_get_ipv4_addr(dev,
 					&inet_sk(sk)->inet_saddr);
-                                dev_put(dev);
-                        }
-                }
-                
-                if (ssk->sal_state == SAL_RSYN_RECV) {
-                        memcpy(&inet_sk(sk)->inet_daddr, &temp_daddr, 4);
-                }
-                /* Reset cached route again */
-                sk_dst_reset(sk);
-        }
+				dev_put(dev);
+			}
+		}
 
-        if (mig_dev)
-                dev_put(mig_dev);
+		if (ssk->sal_state == SAL_RSYN_RECV)
+			memcpy(&inet_sk(sk)->inet_daddr, &temp_daddr, 4);
+		/* Reset cached route again */
+		sk_dst_reset(sk);
+	}
 
-        return rc;
+	if (mig_dev)
+		dev_put(mig_dev);
+
+	return rc;
 }
 #else
 static inline int serval_sal_do_xmit(struct sk_buff *skb)
@@ -2415,7 +2407,7 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 		dest_last_node = ssk->peer_srvc_last_node;
 		xdst = ssk->peer_srvc_xdst;
 		xdst_hold(xdst);
-        } else {
+	} else {
 		/* Src: FlowID. */
 		BUG_ON(!xia_sk_bound(xia));
 		BUG_ON(!ssk->local_flowid_hashed);
@@ -2448,7 +2440,7 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 		ctrl_ext->fin = !!(flags & SVH_FIN);
 		ctrl_ext->rst = !!(flags & SVH_RST);
 		ext_len += sizeof(*ctrl_ext);
-        }
+	}
 
 finish:
 	/* Add SAL base header */
@@ -2469,23 +2461,23 @@ static int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	int rc;
 
 	if (likely(use_copy)) {
-                /* pskb_copy will make a copy of header and
+		/* pskb_copy will make a copy of header and
 		 * non-fragmented data. Making a copy is necessary
 		 * since we are changing the TCP header checksum for
 		 * every copy we send (retransmission or copies for
 		 * packets matching multiple rules).
 		 */
-                skb = pskb_copy(skb, gfp_mask);
+		skb = pskb_copy(skb, gfp_mask);
 		if (unlikely(!skb)) {
-                        /* Shouldn't free the passed skb here, since
-                         * we were asked to use a copy. That probably
-                         * means the original skb sits in a queue
-                         * somewhere, and freeing it would be bad.
+			/* Shouldn't free the passed skb here, since
+			 * we were asked to use a copy. That probably
+			 * means the original skb sits in a queue
+			 * somewhere, and freeing it would be bad.
 			 */
-                        return -ENOBUFS;
-                }
+			return -ENOBUFS;
+		}
 
-                prepare_skb_to_send(skb, sk);
+		prepare_skb_to_send(skb, sk);
 	}
 
 	rc = add_xip_sal_headers_xdst(sk, skb);
@@ -2496,7 +2488,7 @@ static int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
 }
 
 /* This function is typically called by transport to send data */
-int serval_sal_xmit_skb(struct sk_buff *skb) 
+int serval_sal_xmit_skb(struct sk_buff *skb)
 {
 	return serval_sal_transmit_skb(skb->sk, skb, 0, GFP_ATOMIC);
 }

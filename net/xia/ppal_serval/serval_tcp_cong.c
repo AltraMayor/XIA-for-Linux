@@ -2,15 +2,15 @@
 #include "serval_tcp_sock.h"
 #include "serval_tcp.h"
 
-int sysctl_serval_tcp_max_ssthresh = 0;
+int sysctl_serval_tcp_max_ssthresh; /* Implicitly = 0. */
 
 /* Assign choice of congestion control. */
 void serval_tcp_init_congestion_control(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-	
+
 	/* if no choice made yet assign the current value set as default */
-        tp->ca_ops = &serval_tcp_init_congestion_ops;
+	tp->ca_ops = &serval_tcp_init_congestion_ops;
 
 	if (tp->ca_ops->init)
 		tp->ca_ops->init(sk);
@@ -24,7 +24,7 @@ void serval_tcp_cleanup_congestion_control(struct sock *sk)
 	if (tp->ca_ops->release)
 		tp->ca_ops->release(sk);
 
-	//module_put(tp->ca_ops->owner);
+	/* module_put(tp->ca_ops->owner); */
 }
 
 /* RFC2861 Check whether we are limited by application or congestion window
@@ -50,7 +50,7 @@ int serval_tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
  * Slow start is used when congestion window is less than slow start
  * threshold. This version implements the basic RFC2581 version
  * and optionally supports:
- * 	RFC3742 Limited Slow Start  	  - growth limited to max_ssthresh
+ *	RFC3742 Limited Slow Start	  - growth limited to max_ssthresh
  *	RFC3465 Appropriate Byte Counting - growth limited by bytes acknowledged
  */
 void serval_tcp_slow_start(struct serval_tcp_sock *tp)
@@ -67,11 +67,14 @@ void serval_tcp_slow_start(struct serval_tcp_sock *tp)
 	if (sysctl_serval_tcp_abc && tp->bytes_acked < tp->mss_cache)
 		return;
 
-	if (sysctl_serval_tcp_max_ssthresh > 0 && 
-	    tp->snd_cwnd > sysctl_serval_tcp_max_ssthresh)
-		cnt = sysctl_serval_tcp_max_ssthresh >> 1; /* limited slow start */
-	else
-		cnt = tp->snd_cwnd;			/* exponential increase */
+	if (sysctl_serval_tcp_max_ssthresh > 0 &&
+		tp->snd_cwnd > sysctl_serval_tcp_max_ssthresh) {
+		/* Limited slow start. */
+		cnt = sysctl_serval_tcp_max_ssthresh >> 1;
+	} else {
+		/* Exponential increase. */
+		cnt = tp->snd_cwnd;
+	}
 
 	/* RFC3465: ABC
 	 * We MAY increase by 2 if discovered delayed ack
