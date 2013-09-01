@@ -29,13 +29,14 @@
 #else
 #define SERVAL_TCP_MSS_DEFAULT		 524U	/* IPv4 (RFC1122, RFC2581) */
 #endif
-#define SERVAL_TCP_MSS_DESIRED		1220U	/* IPv6 (tunneled), EDNS0 (RFC3226) */
+/* IPv6 (tunneled), EDNS0 (RFC3226) */
+#define SERVAL_TCP_MSS_DESIRED		1220U
 
 #define SERVAL_TCP_MSS_INIT (1460 - sizeof(struct sal_hdr))
 
-/* 
+/*
  * Never offer a window over 32767 without using window scaling. Some
- * poor stacks do signed 16bit maths! 
+ * poor stacks do signed 16bit maths!
  */
 #define MAX_TCP_WINDOW		32767U
 
@@ -81,15 +82,17 @@
 #define TCP_TIMEWAIT_LEN (60*HZ) /* how long to wait to destroy TIME-WAIT
 				  * state, about 60 seconds	*/
 #define TCP_FIN_TIMEOUT	TCP_TIMEWAIT_LEN
-                                 /* BSD style FIN_WAIT2 deadlock breaker.
+				 /* BSD style FIN_WAIT2 deadlock breaker.
 				  * It used to be 3min, new value is 60sec,
 				  * to combine FIN-WAIT-2 timeout with
 				  * TIME-WAIT timer.
 				  */
 
-#define TCP_DELACK_MAX	((unsigned)(HZ/5))	/* maximal time to delay before sending an ACK */
+/* maximal time to delay before sending an ACK */
+#define TCP_DELACK_MAX	((unsigned)(HZ/5))
 #if HZ >= 100
-#define TCP_DELACK_MIN	((unsigned)(HZ/25))	/* minimal time to delay before sending an ACK */
+/* minimal time to delay before sending an ACK */
+#define TCP_DELACK_MIN	((unsigned)(HZ/25))
 #define TCP_ATO_MIN	((unsigned)(HZ/25))
 #else
 #define TCP_DELACK_MIN	4U
@@ -97,14 +100,15 @@
 #endif
 #define SERVAL_TCP_RTO_MAX	((unsigned)(120*HZ))
 #define SERVAL_TCP_RTO_MIN	((unsigned)(HZ/5))
-#define SERVAL_TCP_TIMEOUT_INIT ((unsigned)(3*HZ))	/* RFC 1122 initial RTO value	*/
+/* RFC 1122 initial RTO value. */
+#define SERVAL_TCP_TIMEOUT_INIT ((unsigned)(3*HZ))
 
-#define SERVAL_TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
-					                 * for local resources.
-					                 */
+/* Maximal interval between probes for local resources. */
+#define SERVAL_TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U))
 
 #define TCP_KEEPALIVE_TIME	(120*60*HZ)	/* two hours */
-#define TCP_KEEPALIVE_PROBES	9		/* Max of 9 keepalive probes	*/
+/* Max of 9 keepalive probes. */
+#define TCP_KEEPALIVE_PROBES	9
 #define TCP_KEEPALIVE_INTVL	(75*HZ)
 
 #define MAX_TCP_KEEPIDLE	32767
@@ -129,13 +133,13 @@
 /*
  *	TCP option
  */
- 
+
 #define TCPOPT_NOP		1	/* Padding */
 #define TCPOPT_EOL		0	/* End of options */
 #define TCPOPT_MSS		2	/* Segment size negotiating */
 #define TCPOPT_WINDOW		3	/* Window scaling */
-#define TCPOPT_SACK_PERM        4       /* SACK Permitted */
-#define TCPOPT_SACK             5       /* SACK Block */
+#define TCPOPT_SACK_PERM	4       /* SACK Permitted */
+#define TCPOPT_SACK	     5       /* SACK Block */
 #define TCPOPT_TIMESTAMP	8	/* Better RTT estimations/PAWS */
 #define TCPOPT_MD5SIG		19	/* MD5 Signature (RFC2385) */
 #define TCPOPT_COOKIE		253	/* Cookie extension (experimental) */
@@ -144,11 +148,11 @@
  *     TCP option lengths
  */
 
-#define TCPOLEN_MSS            4
-#define TCPOLEN_WINDOW         3
+#define TCPOLEN_MSS	    4
+#define TCPOLEN_WINDOW	 3
 #define TCPOLEN_SACK_PERM      2
 #define TCPOLEN_TIMESTAMP      10
-#define TCPOLEN_MD5SIG         18
+#define TCPOLEN_MD5SIG	 18
 #define TCPOLEN_COOKIE_BASE    2	/* Cookie-less header extension */
 #define TCPOLEN_COOKIE_PAIR    3	/* Cookie pair header extension */
 #define TCPOLEN_COOKIE_MIN     (TCPOLEN_COOKIE_BASE+TCP_COOKIE_MIN)
@@ -165,7 +169,8 @@
 #define TCPOLEN_MSS_ALIGNED		4
 
 /* TCP thin-stream limits */
-#define TCP_THIN_LINEAR_RETRIES 6       /* After 6 linear retries, do exp. backoff */
+/* After 6 linear retries, do exp. backoff */
+#define TCP_THIN_LINEAR_RETRIES 6
 
 #define serval_tcp_flag_byte(th) (((u_int8_t *)th)[13])
 
@@ -209,7 +214,7 @@ extern int sysctl_serval_tcp_tw_reuse;
 extern int sysctl_serval_tcp_frto;
 extern int sysctl_serval_tcp_frto_response;
 extern int sysctl_serval_tcp_low_latency;
-//extern int sysctl_serval_tcp_dma_copybreak;
+/* extern int sysctl_serval_tcp_dma_copybreak; */
 extern int sysctl_serval_tcp_nometrics_save;
 extern int sysctl_serval_tcp_moderate_rcvbuf;
 extern int sysctl_serval_tcp_tso_win_divisor;
@@ -246,7 +251,8 @@ static inline int serval_keepalive_probes(const struct serval_tcp_sock *tp)
 	return tp->keepalive_probes ? : sysctl_serval_tcp_keepalive_probes;
 }
 
-static inline u32 serval_keepalive_time_elapsed(const struct serval_tcp_sock *tp)
+static inline u32 serval_keepalive_time_elapsed(
+	const struct serval_tcp_sock *tp)
 {
 	return min_t(u32, tcp_time_stamp - tp->tp_ack.lrcvtime,
 			  tcp_time_stamp - tp->rcv_tstamp);
@@ -254,7 +260,8 @@ static inline u32 serval_keepalive_time_elapsed(const struct serval_tcp_sock *tp
 
 static inline int serval_tcp_fin_time(const struct sock *sk)
 {
-	int fin_timeout = serval_tcp_sk(sk)->linger2 ? : sysctl_serval_tcp_fin_timeout;
+	int fin_timeout = serval_tcp_sk(sk)->linger2
+		? : sysctl_serval_tcp_fin_timeout;
 	const int rto = serval_tcp_sk(sk)->rto;
 
 	if (fin_timeout < (rto << 2) - (rto >> 1))
@@ -276,7 +283,7 @@ static inline unsigned int serval_tcp_optlen(const struct sk_buff *skb)
 
 
 static inline void serval_tcp_dec_quickack_mode(struct sock *sk,
-                                                const unsigned int pkts)
+						const unsigned int pkts)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 
@@ -344,9 +351,9 @@ static inline int serval_tcp_paws_check(
 	return 0;
 }
 
-static inline int 
+static inline int
 serval_tcp_paws_reject(const struct serval_tcp_options_received *rx_opt,
-                       int rst)
+		       int rst)
 {
 	if (serval_tcp_paws_check(rx_opt, 0))
 		return 0;
@@ -368,9 +375,9 @@ serval_tcp_paws_reject(const struct serval_tcp_options_received *rx_opt,
 	return 1;
 }
 
-void serval_tcp_parse_options(struct sk_buff *skb, 
-                              struct serval_tcp_options_received *opt_rx,
-                              u8 **hvpp, int estab);
+void serval_tcp_parse_options(struct sk_buff *skb,
+			      struct serval_tcp_options_received *opt_rx,
+			      u8 **hvpp, int estab);
 
 int serval_tcp_syn_recv_state_process(struct sock *sk, struct sk_buff *skb);
 int serval_tcp_syn_sent_state_process(struct sock *sk, struct sk_buff *skb);
@@ -378,8 +385,8 @@ int serval_tcp_syn_sent_state_process(struct sock *sk, struct sk_buff *skb);
 int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb);
 int serval_tcp_connection_build_synack(struct sock *sk,
 				       struct dst_entry *dst,
-                                       struct request_sock *rsk, 
-                                       struct sk_buff *skb);
+				       struct request_sock *rsk,
+				       struct sk_buff *skb);
 int serval_tcp_connection_build_ack(struct sock *sk,
 				    struct sk_buff *skb);
 
@@ -388,7 +395,7 @@ int serval_tcp_connection_build_ack(struct sock *sk,
 #include <linux/seq_file.h>
 
 int serval_tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
-                         sk_read_actor_t recv_actor);
+			 sk_read_actor_t recv_actor);
 #endif
 
 void serval_tcp_initialize_rcv_mss(struct sock *sk);
@@ -400,9 +407,9 @@ unsigned int serval_tcp_sync_mss(struct sock *sk, u32 pmtu);
 unsigned int serval_tcp_current_mss(struct sock *sk);
 
 
-static inline int serval_tcp_use_frto(struct sock *sk) 
+static inline int serval_tcp_use_frto(struct sock *sk)
 {
-        return 0;
+	return 0;
 }
 
 static inline void serval_tcp_enter_frto(struct sock *sk)
@@ -412,7 +419,7 @@ static inline void serval_tcp_enter_frto(struct sock *sk)
 void serval_tcp_enter_loss(struct sock *sk, int how);
 void serval_tcp_clear_retrans(struct serval_tcp_sock *tp);
 
-static inline void 
+static inline void
 serval_tcp_clear_options(struct serval_tcp_options_received *rx_opt)
 {
 	rx_opt->tstamp_ok = rx_opt->sack_ok = 0;
@@ -421,7 +428,7 @@ serval_tcp_clear_options(struct serval_tcp_options_received *rx_opt)
 }
 
 /* Bound MSS / TSO packet size with the half of the window */
-static inline int serval_tcp_bound_to_half_wnd(struct serval_tcp_sock *tp, 
+static inline int serval_tcp_bound_to_half_wnd(struct serval_tcp_sock *tp,
 					       int pktsize)
 {
 	int cutoff;
@@ -451,14 +458,14 @@ void __serval_tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 void serval_tcp_cwnd_application_limited(struct sock *sk);
 
 /* from STCP */
-static inline void 
+static inline void
 serval_tcp_clear_retrans_hints_partial(struct serval_tcp_sock *tp)
 {
 	tp->lost_skb_hint = NULL;
 	tp->scoreboard_skb_hint = NULL;
 }
 
-static inline void 
+static inline void
 serval_tcp_clear_all_retrans_hints(struct serval_tcp_sock *tp)
 {
 	serval_tcp_clear_retrans_hints_partial(tp);
@@ -486,25 +493,25 @@ static inline struct sk_buff *serval_tcp_write_queue_tail(struct sock *sk)
 	return skb_peek_tail(&sk->sk_write_queue);
 }
 
-static inline struct sk_buff *serval_tcp_write_queue_next(struct sock *sk, 
+static inline struct sk_buff *serval_tcp_write_queue_next(struct sock *sk,
 						   struct sk_buff *skb)
 {
 	return skb_queue_next(&sk->sk_write_queue, skb);
 }
 
-static inline struct sk_buff *serval_tcp_write_queue_prev(struct sock *sk, 
+static inline struct sk_buff *serval_tcp_write_queue_prev(struct sock *sk,
 						   struct sk_buff *skb)
 {
 	return skb_queue_prev(&sk->sk_write_queue, skb);
 }
 
-#define serval_tcp_for_write_queue(skb, sk)					\
+#define serval_tcp_for_write_queue(skb, sk) \
 	skb_queue_walk(&(sk)->sk_write_queue, skb)
 
-#define serval_tcp_for_write_queue_from(skb, sk)				\
+#define serval_tcp_for_write_queue_from(skb, sk) \
 	skb_queue_walk_from(&(sk)->sk_write_queue, skb)
 
-#define serval_tcp_for_write_queue_from_safe(skb, tmp, sk)			\
+#define serval_tcp_for_write_queue_from_safe(skb, tmp, sk) \
 	skb_queue_walk_from_safe(&(sk)->sk_write_queue, skb, tmp)
 
 static inline struct sk_buff *serval_tcp_send_head(struct sock *sk)
@@ -513,12 +520,13 @@ static inline struct sk_buff *serval_tcp_send_head(struct sock *sk)
 }
 
 static inline int serval_tcp_skb_is_last(const struct sock *sk,
-				  const struct sk_buff *skb)
+	const struct sk_buff *skb)
 {
 	return skb_queue_is_last(&sk->sk_write_queue, skb);
 }
 
-static inline void serval_tcp_advance_send_head(struct sock *sk, struct sk_buff *skb)
+static inline void serval_tcp_advance_send_head(struct sock *sk,
+	struct sk_buff *skb)
 {
 	if (serval_tcp_skb_is_last(sk, skb))
 		sk->sk_send_head = NULL;
@@ -526,7 +534,8 @@ static inline void serval_tcp_advance_send_head(struct sock *sk, struct sk_buff 
 		sk->sk_send_head = serval_tcp_write_queue_next(sk, skb);
 }
 
-static inline void serval_tcp_check_send_head(struct sock *sk, struct sk_buff *skb_unlinked)
+static inline void serval_tcp_check_send_head(struct sock *sk,
+	struct sk_buff *skb_unlinked)
 {
 	if (sk->sk_send_head == skb_unlinked)
 		sk->sk_send_head = NULL;
@@ -537,13 +546,14 @@ static inline void serval_tcp_init_send_head(struct sock *sk)
 	sk->sk_send_head = NULL;
 }
 
-static inline void __serval_tcp_add_write_queue_tail(struct sock *sk, struct sk_buff *skb)
+static inline void __serval_tcp_add_write_queue_tail(struct sock *sk,
+	struct sk_buff *skb)
 {
 	__skb_queue_tail(&sk->sk_write_queue, skb);
 }
 
-static inline void serval_tcp_add_write_queue_tail(struct sock *sk, 
-                                                   struct sk_buff *skb)
+static inline void serval_tcp_add_write_queue_tail(struct sock *sk,
+						   struct sk_buff *skb)
 {
 	__serval_tcp_add_write_queue_tail(sk, skb);
 
@@ -556,7 +566,8 @@ static inline void serval_tcp_add_write_queue_tail(struct sock *sk,
 	}
 }
 
-static inline void __serval_tcp_add_write_queue_head(struct sock *sk, struct sk_buff *skb)
+static inline void __serval_tcp_add_write_queue_head(struct sock *sk,
+	struct sk_buff *skb)
 {
 	__skb_queue_head(&sk->sk_write_queue, skb);
 }
@@ -580,8 +591,8 @@ static inline void serval_tcp_insert_write_queue_before(struct sk_buff *new,
 		sk->sk_send_head = new;
 }
 
-static inline void serval_tcp_unlink_write_queue(struct sk_buff *skb, 
-                                                 struct sock *sk)
+static inline void serval_tcp_unlink_write_queue(struct sk_buff *skb,
+						 struct sock *sk)
 {
 	__skb_unlink(skb, &sk->sk_write_queue);
 }
@@ -596,8 +607,8 @@ static inline void serval_tcp_push_pending_frames(struct sock *sk)
 	if (serval_tcp_send_head(sk)) {
 		struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 
-		__serval_tcp_push_pending_frames(sk, 
-                                                 serval_tcp_current_mss(sk), 
+		__serval_tcp_push_pending_frames(sk,
+						 serval_tcp_current_mss(sk),
 						 tp->nonagle);
 	}
 }
@@ -656,7 +667,7 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 u32 __serval_tcp_select_window(struct sock *sk);
 
 void __serval_tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
-                                      int nonagle);
+				      int nonagle);
 
 extern int serval_tcp_retransmit_skb(struct sock *, struct sk_buff *);
 extern void serval_tcp_retransmit_timer(struct sock *sk);
@@ -667,21 +678,21 @@ void serval_tcp_push_one(struct sock *sk, unsigned int mss_now);
 
 static inline int serval_tcp_win_from_space(int space)
 {
-	return sysctl_serval_tcp_adv_win_scale<=0 ?
+	return sysctl_serval_tcp_adv_win_scale <= 0 ?
 		(space>>(-sysctl_serval_tcp_adv_win_scale)) :
 		space - (space>>sysctl_serval_tcp_adv_win_scale);
 }
 
-/* Note: caller must be prepared to deal with negative returns */ 
+/* Note: caller must be prepared to deal with negative returns */
 static inline int serval_tcp_space(const struct sock *sk)
 {
 	return serval_tcp_win_from_space(sk->sk_rcvbuf -
 					 atomic_read(&sk->sk_rmem_alloc));
-} 
+}
 
 static inline int serval_tcp_full_space(const struct sock *sk)
 {
-	return serval_tcp_win_from_space(sk->sk_rcvbuf); 
+	return serval_tcp_win_from_space(sk->sk_rcvbuf);
 }
 
 
@@ -716,7 +727,7 @@ static inline u32 __serval_tcp_set_rto(const struct serval_tcp_sock *tp)
 
 void serval_tcp_set_rto(struct sock *sk);
 
-static inline void __serval_tcp_fast_path_on(struct serval_tcp_sock *tp, 
+static inline void __serval_tcp_fast_path_on(struct serval_tcp_sock *tp,
 					     u32 snd_wnd)
 {
 	tp->pred_flags = htonl((tp->tcp_header_len << 26) |
@@ -750,7 +761,7 @@ __u32 serval_tcp_init_cwnd(struct serval_tcp_sock *tp, struct dst_entry *dst);
  * we must be able to allow cwnd to burst at least this much in order
  * to not pull it back when holes are filled.
  */
-static __inline__ __u32 serval_tcp_max_burst(const struct serval_tcp_sock *tp)
+static inline __u32 serval_tcp_max_burst(const struct serval_tcp_sock *tp)
 {
 	return tp->reordering;
 }
@@ -763,7 +774,7 @@ static inline u32 serval_tcp_wnd_end(const struct serval_tcp_sock *tp)
 
 int serval_tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight);
 
-static inline void serval_tcp_minshall_update(struct serval_tcp_sock *tp, 
+static inline void serval_tcp_minshall_update(struct serval_tcp_sock *tp,
 					      unsigned int mss,
 					      const struct sk_buff *skb)
 {
@@ -777,7 +788,7 @@ static inline void serval_tcp_check_probe_timer(struct sock *sk)
 
 	if (!tp->packets_out && !tp->pending)
 		serval_tsk_reset_xmit_timer(sk, STSK_TIME_PROBE0,
-                                            tp->rto, SERVAL_TCP_RTO_MAX);
+					    tp->rto, SERVAL_TCP_RTO_MAX);
 
 }
 
@@ -813,7 +824,7 @@ static inline __sum16 __serval_tcp_checksum_complete(struct sk_buff *skb)
 static inline int serval_tcp_checksum_complete(struct sk_buff *skb)
 {
 	return !skb_csum_unnecessary(skb) &&
-                __serval_tcp_checksum_complete(skb);
+		__serval_tcp_checksum_complete(skb);
 }
 /* Prequeue for VJ style copy to user, combined with checksumming. */
 
@@ -856,10 +867,10 @@ static inline int serval_tcp_prequeue(struct sock *sk, struct sk_buff *skb)
 		BUG_ON(sock_owned_by_user(sk));
 
 		while ((skb1 = __skb_dequeue(&tp->ucopy.prequeue)) != NULL) {
-                        /* We handle backlog elsewhere */
+			/* We handle backlog elsewhere */
 			/* sk_backlog_rcv(sk, skb1); */
 
-                        serval_tcp_do_rcv(sk, skb1);
+			serval_tcp_do_rcv(sk, skb1);
 			/* NET_INC_STATS_BH(sock_net(sk),
 					 LINUX_MIB_TCPPREQUEUEDROPPED); */
 		}
@@ -870,8 +881,8 @@ static inline int serval_tcp_prequeue(struct sock *sk, struct sk_buff *skb)
 					   POLLIN | POLLRDNORM | POLLRDBAND);
 		if (!serval_tsk_ack_scheduled(sk))
 			serval_tsk_reset_xmit_timer(sk, STSK_TIME_DACK,
-                                                    (3 * serval_tcp_rto_min(sk)) / 4,
-                                                    SERVAL_TCP_RTO_MAX);
+				(3 * serval_tcp_rto_min(sk)) / 4,
+				SERVAL_TCP_RTO_MAX);
 	}
 	return 1;
 }
@@ -889,7 +900,7 @@ void serval_tcp_init_metrics(struct sock *sk);
 
 int serval_tcp_trim_head(struct sock *sk, struct sk_buff *skb, u32 len);
 int serval_tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
-                        unsigned int mss_now);
+			unsigned int mss_now);
 int serval_tcp_may_send_now(struct sock *sk);
 
 static inline void serval_tcp_set_ca_state(struct sock *sk, const u8 ca_state)
@@ -901,7 +912,7 @@ static inline void serval_tcp_set_ca_state(struct sock *sk, const u8 ca_state)
 	tp->ca_state = ca_state;
 }
 
-static inline void serval_tcp_ca_event(struct sock *sk, 
+static inline void serval_tcp_ca_event(struct sock *sk,
 				       const enum tcp_ca_event event)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -974,7 +985,7 @@ static inline unsigned int serval_tcp_left_out(const struct serval_tcp_sock *tp)
  *	"Packets left network, but not honestly ACKed yet" PLUS
  *	"Packets fast retransmitted"
  */
-static inline 
+static inline
 unsigned int serval_tcp_packets_in_flight(const struct serval_tcp_sock *tp)
 {
 	return tp->packets_out - serval_tcp_left_out(tp) + tp->retrans_out;
@@ -982,7 +993,7 @@ unsigned int serval_tcp_packets_in_flight(const struct serval_tcp_sock *tp)
 
 #define SERVAL_TCP_INFINITE_SSTHRESH	0x7fffffff
 
-static inline 
+static inline
 int serval_tcp_in_initial_slowstart(const struct serval_tcp_sock *tp)
 {
 	return tp->snd_ssthresh >= SERVAL_TCP_INFINITE_SSTHRESH;
@@ -999,23 +1010,13 @@ static inline unsigned int serval_tcp_stream_is_thin(struct serval_tcp_sock *tp)
 
 void serval_tcp_cleanup_rbuf(struct sock *sk, int copied);
 
-static inline char *tcphdr_to_str(const struct tcphdr *th)
-{
-	static char buf[100];
-        snprintf(buf, sizeof(buf) - 1, 
-                 "[SYN=%d ACK=%d FIN=%d seq=%u ack=%u doff=%u check=%u window=%u]", 
-                 th->syn, th->ack, th->fin, ntohl(th->seq), 
-                 ntohl(th->ack_seq), th->doff << 2, ntohs(th->check), ntohs(th->window));
-
-	return buf;       
-}
 int serval_tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
-                                 struct tcphdr *th, unsigned len);
+				 struct tcphdr *th, unsigned len);
 
-int serval_tcp_rcv_established(struct sock *sk, 
-                               struct sk_buff *skb,
-                               struct tcphdr *th, 
-                               unsigned len);
+int serval_tcp_rcv_established(struct sock *sk,
+			       struct sk_buff *skb,
+			       struct tcphdr *th,
+			       unsigned len);
 
 void serval_tcp_send_probe0(struct sock *sk);
 
@@ -1024,11 +1025,12 @@ void serval_tcp_send_probe0(struct sock *sk);
  *  (union is compatible to any of its members)
  *  This means this part of the code is -fstrict-aliasing safe now.
  */
-union serval_tcp_word_hdr { 
+union serval_tcp_word_hdr {
 	struct tcphdr hdr;
-	__be32 		  words[5];
-}; 
+	__be32 words[5];
+};
 
-#define serval_tcp_flag_word(tp) ( ((union serval_tcp_word_hdr *)(tp))->words [3]) 
+#define serval_tcp_flag_word(tp) \
+	(((union serval_tcp_word_hdr *)(tp))->words[3])
 
 #endif /* _SERVAL_TCP_H_ */

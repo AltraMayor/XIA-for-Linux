@@ -6,7 +6,7 @@ struct ctl_table_header;
 /* XXX It should be part of Serval's principal context per struct net. */
 /* Control variables for Serval. */
 struct netns_serval {
-        unsigned int sysctl_sal_max_retransmits;
+	unsigned int sysctl_sal_max_retransmits;
 	struct ctl_table_header *ctl;
 };
 
