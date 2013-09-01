@@ -38,9 +38,9 @@ static inline int serval_udp_checksum_complete(struct sk_buff *skb)
 		__serval_udp_checksum_complete(skb);
 }
 
-static inline int serval_udp_csum_init(struct sk_buff *skb, 
-                                       struct udphdr *uh,
-                                       int proto)
+static inline int serval_udp_csum_init(struct sk_buff *skb,
+				       struct udphdr *uh,
+				       int proto)
 {
 	/* These addresses don't make sense in XIA. */
 	const __be32 saddr = 0;
@@ -49,11 +49,13 @@ static inline int serval_udp_csum_init(struct sk_buff *skb,
 	if (uh->check == 0) {
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	} else if (skb->ip_summed == CHECKSUM_COMPLETE) {
-		if (!csum_tcpudp_magic(saddr, daddr, skb->len, proto,skb->csum))
+		if (!csum_tcpudp_magic(saddr, daddr, skb->len,
+			proto, skb->csum))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 	}
 	if (!skb_csum_unnecessary(skb))
-		skb->csum = csum_tcpudp_nofold(saddr, daddr, skb->len, proto,0);
+		skb->csum = csum_tcpudp_nofold(saddr, daddr, skb->len,
+			proto, 0);
 	return 0;
 }
 

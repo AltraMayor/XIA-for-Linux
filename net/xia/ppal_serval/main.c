@@ -11,7 +11,7 @@
 
 /* XXX Move it to struct xip_serval_ctx. */
 struct netns_serval net_serval = {
-        .sysctl_sal_max_retransmits = SAL_RETRANSMITS_MAX,
+	.sysctl_sal_max_retransmits = SAL_RETRANSMITS_MAX,
 };
 
 int srvc_vxt __read_mostly = -1;
@@ -544,7 +544,7 @@ void serval_sock_init(struct serval_sock *ssk)
 
 	serval_sal_init_ctrl_queue(sk);
 
-	ssk->rcv_seq.nxt = 0;        
+	ssk->rcv_seq.nxt = 0;
 	ssk->snd_seq.una = 0;
 	ssk->snd_seq.nxt = 0;
 	/* Default to stop-and-wait behavior (wnd = 1). */
@@ -611,71 +611,71 @@ void serval_sock_done(struct sock *sk)
 	/* If there is still a user around, notify it.
 	 * Otherwise, destroy the socket now.
 	 */
-	if (!sock_flag(sk, SOCK_DEAD)) 
-		sk->sk_state_change(sk); 
+	if (!sock_flag(sk, SOCK_DEAD))
+		sk->sk_state_change(sk);
 	else
-		serval_sock_destroy(sk); 
+		serval_sock_destroy(sk);
 }
 
 int serval_listen_stop(struct sock *sk)
 {
-        struct serval_sock *ssk = sk_ssk(sk);
+	struct serval_sock *ssk = sk_ssk(sk);
 	struct fib_xid_table *xtbl =
 		xip_find_my_ppal_ctx_vxt(sock_net(sk), flow_vxt)->xpc_xtbl;
 
 	/* Destroy queue of sockets that haven't completed the three-way
 	 * handshake.
 	 */
-        while (!list_empty(&ssk->syn_queue)) {
-                struct serval_request_sock *srsk = list_first_entry(
+	while (!list_empty(&ssk->syn_queue)) {
+		struct serval_request_sock *srsk = list_first_entry(
 			&ssk->syn_queue, struct serval_request_sock, lh);
 
-                /* Deleting SYN queued request socket. */
-                list_del(&srsk->lh);
+		/* Deleting SYN queued request socket. */
+		list_del(&srsk->lh);
 		fib_rm_fxid(xtbl, &srsk->flow_fxid);
 		free_fxid(xtbl, &srsk->flow_fxid);
-                sk->sk_ack_backlog--;
+		sk->sk_ack_backlog--;
 		srsk_put(srsk);
-        }
+	}
 
 	/* Destroy queue of sockets that completed the three-way handshake. */
-        while (!list_empty(&ssk->accept_queue)) {
-                struct serval_request_sock *srsk = list_first_entry(
+	while (!list_empty(&ssk->accept_queue)) {
+		struct serval_request_sock *srsk = list_first_entry(
 			&ssk->accept_queue, struct serval_request_sock, lh);
 		struct sock *child = srsk->req.sk;
 
-                list_del(&srsk->lh);
+		list_del(&srsk->lh);
 		srsk->req.sk = NULL;
 
 		/* XXX Do we need to disable BH? */
-                local_bh_disable();
-                bh_lock_sock(child);
-                WARN_ON(sock_owned_by_user(child));
-                sock_hold(child);
+		local_bh_disable();
+		bh_lock_sock(child);
+		WARN_ON(sock_owned_by_user(child));
+		sock_hold(child);
 
-                sk->sk_prot->disconnect(child, O_NONBLOCK);
-                sk->sk_prot->unhash(child);
+		sk->sk_prot->disconnect(child, O_NONBLOCK);
+		sk->sk_prot->unhash(child);
 
-                /* Orphaning will mark the sock with flag DEAD,
-                 * allowing the sock to be destroyed.
+		/* Orphaning will mark the sock with flag DEAD,
+		 * allowing the sock to be destroyed.
 		 */
-                sock_orphan(child);
-                /* XXX Does we need to call
+		sock_orphan(child);
+		/* XXX Does we need to call
 		 * percpu_counter_inc(sk->sk_prot->orphan_count); ???
 		 */
 
-                sock_put(child);
-                bh_unlock_sock(child);
-                local_bh_enable();
+		sock_put(child);
+		bh_unlock_sock(child);
+		local_bh_enable();
 
 		/* Drop reference that was at @srsk->req.sk. */
-                sock_put(child);
+		sock_put(child);
 
-                sk->sk_ack_backlog--;
-                srsk_put(srsk);
-        }
+		sk->sk_ack_backlog--;
+		srsk_put(srsk);
+	}
 
-        return 0;
+	return 0;
 }
 
 int serval_sock_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
@@ -815,7 +815,7 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 		rc = sock_intr_errno(timeo);
 		if (signal_pending(current))
 			goto out;
-        }
+	}
 
 	/* We must be in SERVAL_REQUEST or later state. All those
 	 * states are valid "connected" states, except for CLOSED.
@@ -938,30 +938,30 @@ static unsigned int serval_poll(struct file *file, struct socket *sock,
 	unsigned int mask;
 
 	sock_poll_wait(file, sk_sleep(sk), wait);
-        if (sk->sk_state == SAL_LISTEN) {
-                struct serval_sock *ssk = sk_ssk(sk);
-                return list_empty(&ssk->accept_queue) ? 0 :
-                        (POLLIN | POLLRDNORM);
-        }
+	if (sk->sk_state == SAL_LISTEN) {
+		struct serval_sock *ssk = sk_ssk(sk);
+		return list_empty(&ssk->accept_queue) ? 0 :
+			(POLLIN | POLLRDNORM);
+	}
 
-        mask = 0;
+	mask = 0;
 
 	if (sk->sk_err)
 		mask = POLLERR;
 
 	if (sk->sk_shutdown == SHUTDOWN_MASK ||
-            sk->sk_state == SAL_CLOSED)
+	    sk->sk_state == SAL_CLOSED)
 		mask |= POLLHUP;
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
 		mask |= POLLIN | POLLRDNORM | POLLRDHUP;
 
 	if ((1 << sk->sk_state) & ~(SALF_REQUEST | SALF_RESPOND)) {
-                if (atomic_read(&sk->sk_rmem_alloc) > 0)
+		if (atomic_read(&sk->sk_rmem_alloc) > 0)
 			mask |= POLLIN | POLLRDNORM;
 
 		if (!(sk->sk_shutdown & SEND_SHUTDOWN)) {
 			if (sk_stream_wspace(sk) >=
-                            sk_stream_min_wspace(sk)) {
+			    sk_stream_min_wspace(sk)) {
 				mask |= POLLOUT | POLLWRNORM;
 			} else {  /* send SIGIO later */
 				set_bit(SOCK_ASYNC_NOSPACE,
@@ -973,7 +973,7 @@ static unsigned int serval_poll(struct file *file, struct socket *sock,
 				 * IO signal will be lost.
 				 */
 				if (sk_stream_wspace(sk) >=
-                                    sk_stream_min_wspace(sk))
+				    sk_stream_min_wspace(sk))
 					mask |= POLLOUT | POLLWRNORM;
 			}
 		}
@@ -1095,7 +1095,7 @@ static void serval_sock_unhash_s_f(struct sock *sk,
 		srvc_xtbl = xip_find_my_ppal_ctx_vxt(net, srvc_vxt)->xpc_xtbl;
 		fib_rm_fxid(srvc_xtbl, &ssk->srvc_fxid);
 		sock_prot_inuse_add(net, sk->sk_prot, -1);
-        }
+	}
 
 	if (unhash_flow && ssk->local_flowid_hashed) {
 		ssk->local_flowid_hashed = false;
@@ -1209,7 +1209,7 @@ static int serval_shutdown(struct socket *sock, int how)
 
 	release_sock(sk);
 
-        return rc;
+	return rc;
 }
 
 static int serval_sendmsg(struct kiocb *iocb, struct socket *sock,
@@ -1319,7 +1319,7 @@ static struct xia_socket_proc serval_sock_proc __read_mostly = {
  */
 
 /* XXX One should use hardware wherever it's available. */
-unsigned int checksum_mode = 0;
+unsigned int checksum_mode;	/* Implicitly initialized to zero. */
 module_param(checksum_mode, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(checksum_mode, "Set checksum mode (0=software, 1=hardware)");
 
@@ -1370,10 +1370,10 @@ static int __init xia_serval_init(void)
 
 	serval_tcp_init();
 
-        rc = serval_sysctl_register(&init_net);
-        if (rc < 0) {
-                pr_err("ERROR: Cannot register Serval sysctl interface\n");
-                goto flow_rt;
+	rc = serval_sysctl_register(&init_net);
+	if (rc < 0) {
+		pr_err("ERROR: Cannot register Serval sysctl interface\n");
+		goto flow_rt;
 	}
 
 	rc = xia_add_socket(&serval_sock_proc);

@@ -32,7 +32,7 @@ struct flow_id {
  *	TCP_LAST_ACK,
  *	TCP_LISTEN,
  *	TCP_CLOSING,
- *	TCP_MAX_STATES	
+ *	TCP_MAX_STATES
  */
 enum {
 	__SAL_MIN_STATE = 0,
@@ -79,7 +79,7 @@ enum {
  *
  * Client	  SYN		Server	Src: ServiceID_Client
  *		------>			Dst: ServiceID_Server
- * WHY: 
+ * WHY:
  *	ServiceID_Client is going to be the signature the client will use
  *	for future control operations. It also lets the server know
  *	ServiceID_Client that otherwise wouldn't be known.
@@ -138,52 +138,53 @@ struct serval_sock {
 	/* The XIP DST that fowards toward @peer_srvc_addr. */
 	struct xip_dst		*peer_srvc_xdst;
 
-        int                     mig_dev_if;
-        u32                     mig_daddr;
+	int		     mig_dev_if;
+	u32		     mig_daddr;
 
 	/* 1 free byte. */
-        /* SAL state, used for, e.g., migration */
+	/* SAL state, used for, e.g., migration */
 	u8			sal_state;
 	/* If @local_srvcid_hashed is true, @srvc_fxid is hashed. */
 	u8			local_srvcid_hashed;
 	/* If @local_flowid_hashed is true, @flow_fxid is hashed. */
 	u8			local_flowid_hashed;
 
-        struct serval_sock_af_ops *af_ops;
- 	struct timer_list	retransmit_timer;        
+	struct serval_sock_af_ops *af_ops;
+	struct timer_list	retransmit_timer;
+	/* TImer for expiration of SAL_TIMEWAIT state. */
 	struct timer_list	tw_timer;
 	/* XXX There must be a timer to clean up this queue, otherwise
 	 * malicious SYN packets can clog a listening socket.
 	 */
-        struct list_head        syn_queue;
-        struct list_head        accept_queue;
-	struct sk_buff          *ctrl_queue;
+	struct list_head	syn_queue;
+	struct list_head	accept_queue;
+	struct sk_buff	  *ctrl_queue;
 	struct sk_buff		*ctrl_send_head;
-        u8                      local_nonce[SAL_NONCE_SIZE];
-        u8                      peer_nonce[SAL_NONCE_SIZE];
-        struct {
-                u32        una;
-                u32        nxt;
-                u32        wnd;
-                u32        iss;
-        } snd_seq;	/* SeND SEQuence. */
-        struct {
-                u32        nxt;
-                u32        wnd;
-                u32        iss;
-        } rcv_seq;	/* ReCeiVe SEQuence. */
+	u8		      local_nonce[SAL_NONCE_SIZE];
+	u8		      peer_nonce[SAL_NONCE_SIZE];
+	struct {
+		u32	una;
+		u32	nxt;
+		u32	wnd;
+		u32	iss;
+	} snd_seq;	/* SeND SEQuence. */
+	struct {
+		u32	nxt;
+		u32	wnd;
+		u32	iss;
+	} rcv_seq;	/* ReCeiVe SEQuence. */
 	/* timestamp of last received packet */
-        u32	                last_rcv_tstamp;
-        u8                      retransmits;
-        u8                      backoff;
-        /* 2 bytes free. */
-        u32                     rto; /* Retransmission timeout in jiffies. */
-        u32                     srtt;
-	u32                     mdev;  /* medium deviation */
+	u32			last_rcv_tstamp;
+	u8		      retransmits;
+	u8		      backoff;
+	/* 2 bytes free. */
+	u32		     rto; /* Retransmission timeout in jiffies. */
+	u32		     srtt;
+	u32		     mdev;  /* medium deviation */
 	/* maximal mdev for the last rtt period */
-	u32                     mdev_max;
-	u32                     rttvar;	/* smoothed mdev_max */
-	u32                     rtt_seq; /* sequence number to update rttvar */
+	u32		     mdev_max;
+	u32		     rttvar;	/* smoothed mdev_max */
+	u32		     rtt_seq; /* sequence number to update rttvar */
 };
 
 static inline struct serval_sock *xiask_ssk(struct xia_sock *xia)
@@ -303,7 +304,7 @@ struct sal_hdr {
 	/* SAL Header Length plus lenght of all extension headers present
 	 * in number of 32-bit words.
 	 */
-        uint8_t  shl;
+	uint8_t  shl;
 
 	/* XXX This field is not necessary, it can/should be inferred from
 	 * the destination ServiceID or FlowID.
@@ -311,9 +312,9 @@ struct sal_hdr {
 	 * serval_sal_update_transport_csum() in
 	 * serval_sal.c:serval_sal_resolve_service().
 	 */
-        uint8_t  protocol;
+	uint8_t  protocol;
 
-        uint16_t check;
+	uint16_t check;
 };
 
 /* Generic extension header */
@@ -321,13 +322,13 @@ struct sal_ext {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	uint8_t	res:4,
 		type:4;
-#elif defined (__BIG_ENDIAN_BITFIELD)
+#elif defined(__BIG_ENDIAN_BITFIELD)
 	uint8_t	type:4,
-                res:4;
+		res:4;
 #else
 #error	"Please fix <asm/byteorder.h>"
 #endif
-        uint8_t length;
+	uint8_t length;
 };
 
 /* These defines can be used for convenient access to the fields in
@@ -348,30 +349,30 @@ enum sal_ext_type {
 };
 
 struct sal_control_ext {
-        struct sal_ext exthdr;
+	struct sal_ext exthdr;
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	uint8_t	res1:2,
-                fin:1,
-                rst:1,
-                nack:1,
-                ack:1,
-                rsyn:1,
+		fin:1,
+		rst:1,
+		nack:1,
+		ack:1,
+		rsyn:1,
 		syn:1;
-#elif defined (__BIG_ENDIAN_BITFIELD)
+#elif defined(__BIG_ENDIAN_BITFIELD)
 	uint8_t	syn:1,
-                rsyn:1,
-  		ack:1,
-                nack:1,
-                rst:1,
-                fin:1,
-                res1:2;
+		rsyn:1,
+		ack:1,
+		nack:1,
+		rst:1,
+		fin:1,
+		res1:2;
 #else
 #error	"Please fix <asm/byteorder.h>"
 #endif
-        uint8_t  res2;
-        uint32_t verno; /* Version number of control information. */
-        uint32_t ackno; /* Acknowledgement number of control information. */
-        uint8_t  nonce[SAL_NONCE_SIZE];
+	uint8_t  res2;
+	uint32_t verno; /* Version number of control information. */
+	uint32_t ackno; /* Acknowledgement number of control information. */
+	uint8_t  nonce[SAL_NONCE_SIZE];
 };
 
 /* XXX Does one need this function? */
