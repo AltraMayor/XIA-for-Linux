@@ -72,6 +72,12 @@ enum {
 #include <net/xia_socket.h>
 #include <net/xia_fib.h>
 
+struct serval_rt_id {
+	struct fib_xid			fxid;
+	struct xip_dst_anchor   	anchor;
+	struct serval_sock __rcu	*ssk;
+};
+
 #define SOCK_TYPE		0
 #define REQUEST_SOCK_TYPE	1
 
@@ -106,19 +112,17 @@ struct serval_sock {
 	struct xia_sock		xia_sk;
 
 	/* FIB XID related fields for ServiceID. */
-	struct fib_xid		srvc_fxid;
-	struct xip_dst_anchor   srvc_anchor;
+	struct serval_rt_id	*srvc_rtid;
 
 	/* FIB XID related fields for FlowID.
 	 *
-	 * The local FlowID is in field @flow_fxid.fx_xid when
+	 * The local FlowID is in field @flow_rtid->fxid.fx_xid when
 	 * @local_flowid_set is true.
 	 *
 	 * In other to obtain the full address, one has to replace
 	 * the single sink in @xia_sk.xia_saddr with the local FlowID.
 	 */
-	struct fib_xid		flow_fxid;
-	struct xip_dst_anchor   flow_anchor;
+	struct serval_rt_id	*flow_rtid;
 
 	/* Hold the full address to the peer's ServiceID.
 	 *
@@ -141,13 +145,9 @@ struct serval_sock {
 	int		     mig_dev_if;
 	u32		     mig_daddr;
 
-	/* 1 free byte. */
+	/* 3 free bytes. */
 	/* SAL state, used for, e.g., migration */
 	u8			sal_state;
-	/* If @local_srvcid_hashed is true, @srvc_fxid is hashed. */
-	u8			local_srvcid_hashed;
-	/* If @local_flowid_hashed is true, @flow_fxid is hashed. */
-	u8			local_flowid_hashed;
 
 	struct serval_sock_af_ops *af_ops;
 	struct timer_list	retransmit_timer;
@@ -194,18 +194,23 @@ static inline struct serval_sock *xiask_ssk(struct xia_sock *xia)
 		: NULL;
 }
 
-static inline struct serval_sock *srvc_fxid_ssk(struct fib_xid *fxid)
+static inline struct serval_rt_id *fxid_rtid(struct fib_xid *fxid)
 {
 	return likely(fxid)
-		? container_of(fxid, struct serval_sock, srvc_fxid)
+		? container_of(fxid, struct serval_rt_id, fxid)
 		: NULL;
 }
 
-static inline struct serval_sock *flow_fxid_ssk(struct fib_xid *fxid)
+/* Must hold an RCU read lock. */
+static inline struct serval_sock *rtid_ssk(struct serval_rt_id *rtid)
 {
-	return likely(fxid)
-		? container_of(fxid, struct serval_sock, flow_fxid)
-		: NULL;
+	return rcu_dereference(rtid->ssk);
+}
+
+/* Must hold an RCU read lock. */
+static inline struct serval_sock *rtid_fxid_ssk(struct fib_xid *fxid)
+{
+	return rtid_ssk(fxid_rtid(fxid));
 }
 
 /* XXX Drop `const' given it's not real here due to the casts.
