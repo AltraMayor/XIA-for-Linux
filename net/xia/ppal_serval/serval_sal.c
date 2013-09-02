@@ -758,11 +758,11 @@ void serval_sal_close(struct sock *sk, long timeout)
 	case SAL_CLOSED:
 		goto adjudge_to_death;
 
+	case SAL_INIT:
 	case SAL_REQUEST:
 	case SAL_LASTACK:
 		serval_sal_done(sk);
-		release_sock(sk);
-		return;
+		goto adjudge_to_death;
 
 	case SAL_FINWAIT1:
 	case SAL_FINWAIT2:
