@@ -1322,7 +1322,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	BUG_ON(!xia_sk_bound(&ssk->xia_sk));
 	xia_set_src(&nssk->xia_sk, &ssk->xia_sk.xia_saddr,
 		ssk->xia_sk.xia_snum);
-	nssk->local_srvcid_hashed = false;
+	nssk->srvc_rtid = NULL;
 
 	/* Set up control fields. */
 	memcpy(nssk->local_nonce, srsk->local_nonce, SAL_NONCE_SIZE);
@@ -1336,8 +1336,6 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	serval_sock_set_state(&nssk->xia_sk.sk, SAL_RESPOND);
 
 	/* Hash the sock to make it demuxable */
-	init_fxid(&nssk->flow_fxid, srsk->flow_fxid.fx_xid,
-		XRTABLE_LOCAL_INDEX, SOCK_TYPE);
 	if (serval_swap_srsk_ssk_flowid(&srsk->flow_fxid, nssk))
 		goto nssk;
 
@@ -2410,10 +2408,10 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 	} else {
 		/* Src: FlowID. */
 		BUG_ON(!xia_sk_bound(xia));
-		BUG_ON(!ssk->local_flowid_hashed);
+		BUG_ON(!ssk->flow_rtid);
 		src = xia->xia_saddr.s_row;
 		src_sink_type = XIDTYPE_FLOWID;
-		src_sink_id = ssk->flow_fxid.fx_xid;
+		src_sink_id = ssk->flow_rtid->fxid.fx_xid;
 		src_n = xia->xia_snum;
 
 		/* Dest: FlowID. */
