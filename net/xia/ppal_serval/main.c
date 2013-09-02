@@ -25,15 +25,19 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
+	const struct serval_sock *ssk;
 	struct nlmsghdr *nlh;
-	u32 portid = NETLINK_CB(cb->skb).portid;
-	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct xia_xid dst;
-	const struct serval_sock *ssk;
 
-	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+	ssk = rtid_fxid_ssk(fxid);
+	if (!ssk) {
+		/* This can happen while @ssk->srvc_rtid is being released. */
+		return 0;
+	}
+
+	nlh = nlmsg_put(skb, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
+		RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -53,7 +57,6 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 
 	dst.xid_type = xtbl_ppalty(xtbl);
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
-	ssk = srvc_fxid_ssk(fxid);
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
 		nla_put_u8(skb, RTA_PROTOINFO, ssk->xia_sk.sk.sk_state)))
 		goto nla_put_failure;
@@ -68,12 +71,9 @@ nla_put_failure:
 /* Don't call this function! Use free_fxid instead. */
 static void local_free_srvc(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct serval_sock *ssk = srvc_fxid_ssk(fxid);
-	xdst_free_anchor(&ssk->srvc_anchor);
-	/* We do not sock_put(&ssk->xia_sk.sk) because @srvc_fxid is released
-	 * before @ssk, and we do not deallocate memory here because
-	 * @srvc_fxid is part of @ssk.
-	 */
+	struct serval_rt_id *rtid = fxid_rtid(fxid);
+	xdst_free_anchor(&rtid->anchor);
+	kfree(rtid);
 }
 
 /* XXX	Add support for local ServiceID migration.
@@ -101,14 +101,25 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb)
 {
+	const struct serval_sock *ssk;
 	struct nlmsghdr *nlh;
-	u32 portid = NETLINK_CB(cb->skb).portid;
-	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct xia_xid dst;
 
-	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+	if (fxid->fx_entry_type == SOCK_TYPE) {
+		ssk = rtid_fxid_ssk(fxid);
+		if (!ssk) {
+			/* This can happen while @ssk->flow_rtid is being
+			 * released.
+			 */
+			return 0;
+		}
+	} else {
+		ssk = NULL;
+	}
+
+	nlh = nlmsg_put(skb, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
+		RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -134,7 +145,6 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	switch (fxid->fx_entry_type) {
 	case SOCK_TYPE: {
 		/* Add the other side of a socket. */
-		const struct serval_sock *ssk = flow_fxid_ssk(fxid);
 		if (ssk->peer_srvc_set) {
 			struct xia_addr src;
 			/* XXX We only have an RCU read lock here,
@@ -144,11 +154,12 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			 */
 			copy_n_and_shade_xia_addr_from_addr(&src,
 				&ssk->peer_srvc_addr, ssk->peer_srvc_num);
-			if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src) ||
-				nla_put_u8(skb, RTA_PROTOINFO,
-					ssk->xia_sk.sk.sk_state)))
+			if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src)))
 				goto nla_put_failure;
 		}
+		if (unlikely(nla_put_u8(skb, RTA_PROTOINFO,
+			ssk->xia_sk.sk.sk_state)))
+			goto nla_put_failure;
 		break;
 	}
 
@@ -185,12 +196,9 @@ static void local_free_flow(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	switch (fxid->fx_entry_type) {
 	case SOCK_TYPE: {
-		struct serval_sock *ssk = flow_fxid_ssk(fxid);
-		xdst_free_anchor(&ssk->flow_anchor);
-		/* We do not sock_put(&ssk->xia_sk.sk) because @flow_fxid is
-		 * released before @ssk, and we do not deallocate memory here
-		 * because @flow_fxid is part of @ssk.
-		 */
+		struct serval_rt_id *rtid = fxid_rtid(fxid);
+		xdst_free_anchor(&rtid->anchor);
+		kfree(rtid);
 		break;
 	}
 
@@ -404,7 +412,8 @@ static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
 	switch (fxid->fx_table_id) {
 	case XRTABLE_LOCAL_INDEX: {
 		/* It's a local ServiceID. */
-		struct serval_sock *ssk = srvc_fxid_ssk(fxid);
+		struct serval_rt_id *rtid = fxid_rtid(fxid);
+		struct serval_sock *ssk = rtid_ssk(rtid);
 
 		/* A ServiceID cannot be a passthrough. */
 		xdst->passthrough_action = XDA_ERROR;
@@ -421,7 +430,7 @@ static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
 			xdst->dst.input = local_output_input;
 			xdst->dst.output = local_output_output;
 		}
-		xdst_attach_to_anchor(xdst, anchor_index, &ssk->srvc_anchor);
+		xdst_attach_to_anchor(xdst, anchor_index, &rtid->anchor);
 		rcu_read_unlock();
 		return XRP_ACT_FORWARD;
 	}
@@ -472,8 +481,8 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 
 		switch (fxid->fx_entry_type) {
 		case SOCK_TYPE: {
-			struct serval_sock *ssk = flow_fxid_ssk(fxid);
-			xdst->info = ssk;
+			struct serval_rt_id *rtid = fxid_rtid(fxid);
+			xdst->info = rtid_ssk(rtid);
 			if (xdst->input) {
 				xdst->dst.input = local_input_input;
 				xdst->dst.output = bug_dst_io_method;
@@ -482,7 +491,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 				xdst->dst.output = local_output_output;
 			}
 			xdst_attach_to_anchor(xdst, anchor_index,
-				&ssk->flow_anchor);
+				&rtid->anchor);
 			break;
 		}
 
@@ -533,8 +542,8 @@ void serval_sock_init(struct serval_sock *ssk)
 
 	sk->sk_state = 0;
 	ssk->sal_state = SAL_RSYN_INITIAL;
-	xdst_init_anchor(&ssk->srvc_anchor);
-	xdst_init_anchor(&ssk->flow_anchor);
+	ssk->srvc_rtid = NULL;
+	ssk->flow_rtid = NULL;
 	INIT_LIST_HEAD(&ssk->accept_queue);
 	INIT_LIST_HEAD(&ssk->syn_queue);
 	setup_timer(&ssk->retransmit_timer, serval_sal_rexmit_timeout,
@@ -569,9 +578,9 @@ void serval_sock_destroy(struct sock *sk)
 	struct xip_dst *xdst;
 
 	WARN_ON(sk->sk_state != SAL_CLOSED);
-	WARN_ON(ssk->local_srvcid_hashed);
-	WARN_ON(ssk->local_flowid_hashed);
 	WARN_ON(ssk->peer_srvc_xdst && !ssk->peer_srvc_set);
+	WARN_ON(ssk->srvc_rtid);
+	WARN_ON(ssk->flow_rtid);
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
 		LIMIT_NETDEBUG(KERN_WARNING
@@ -678,13 +687,65 @@ int serval_listen_stop(struct sock *sk)
 	return 0;
 }
 
+static inline struct serval_rt_id *rtid_alloc(gfp_t flags)
+{
+	return kmalloc(sizeof(struct serval_rt_id), flags);
+}
+
+/* Don't call this function, use rtid_init() or __rtid_init() instead. */
+static inline void __rtid_init_common(struct serval_rt_id *rtid,
+	struct serval_sock *ssk)
+{
+	xdst_init_anchor(&rtid->anchor);
+	RCU_INIT_POINTER(rtid->ssk, ssk);
+}
+
+static void __rtid_init(struct serval_rt_id *rtid, struct serval_sock *ssk,
+	int table_id, int entry_type)
+{
+	__init_fxid(&rtid->fxid, table_id, entry_type);
+	__rtid_init_common(rtid, ssk);
+}
+
+static void rtid_init(struct serval_rt_id *rtid, struct serval_sock *ssk,
+	const u8 *xid, int table_id, int entry_type)
+{
+	init_fxid(&rtid->fxid, xid, table_id, entry_type);
+	__rtid_init_common(rtid, ssk);
+}
+
+/* Don't call this function, use rtid_free() or rtid_free_norcu() instead. */
+static inline void __rtid_free_common(struct serval_rt_id *rtid)
+{
+	RCU_INIT_POINTER(rtid->ssk, NULL);
+}
+
+/* ATTENTION, only call this function after rtid_init() or __rtid_init()
+ * has been called on @rtid.
+ */
+static void rtid_free_norcu(struct fib_xid_table *xtbl,
+	struct serval_rt_id *rtid)
+{
+	__rtid_free_common(rtid);
+	free_fxid_norcu(xtbl, &rtid->fxid);
+}
+
+/* ATTENTION, only call this function after rtid_init() or __rtid_init()
+ * has been called on @rtid.
+ */
+static void rtid_free(struct fib_xid_table *xtbl, struct serval_rt_id *rtid)
+{
+	__rtid_free_common(rtid);
+	free_fxid(xtbl, &rtid->fxid);
+}
+
 int serval_sock_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, addr, uaddr);
 	struct xia_row *ssink = &addr->sxia_addr.s_row[node_n - 1];
 	struct xip_deferred_negdep_flush *dnf;
+	struct serval_rt_id *rtid;
 	struct serval_sock *ssk;
-	const u8 *id;
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *xtbl;
 	struct net *net;
@@ -698,32 +759,37 @@ int serval_sock_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	if (!dnf)
 		return -ENOMEM;
 
+	rtid = rtid_alloc(GFP_KERNEL);
+	if (!rtid) {
+		rc = -ENOMEM;
+		goto dnf;
+	}
 	ssk = sk_ssk(sk);
-	id = ssink->s_xid.xid_id;
-	init_fxid(&ssk->srvc_fxid, id, XRTABLE_LOCAL_INDEX, 0);
+	rtid_init(rtid, ssk, ssink->s_xid.xid_id, XRTABLE_LOCAL_INDEX, 0);
 
 	net = sock_net(sk);
 	ctx = xip_find_my_ppal_ctx_vxt(net, srvc_vxt);
 	xtbl = ctx->xpc_xtbl;
 
-	rc = fib_add_fxid(xtbl, &ssk->srvc_fxid);
-	/* We don't sock_hold(sk) because @ssk->srvc_fxid is always released
-	 * before @ssk is freed.
-	 */
+	rc = fib_add_fxid(xtbl, &rtid->fxid);
 	if (rc) {
-		free_fxid_norcu(xtbl, &ssk->srvc_fxid);
-		fib_free_dnf(dnf);
-		return rc == -EEXIST ? -EADDRINUSE : rc;
+		rc = rc == -EEXIST ? -EADDRINUSE : rc;
+		goto rtid;
 	}
 
 	fib_defer_dnf(dnf, net, XIDTYPE_SRVCID);
 
-	ssk->local_srvcid_hashed = true;
+	ssk->srvc_rtid = rtid;
 	sock_prot_inuse_add(net, sk->sk_prot, 1);
 	return 0;
+
+rtid:
+	rtid_free_norcu(xtbl, rtid);
+dnf:
+	fib_free_dnf(dnf);
+	return rc;
 }
 
-static int serval_sock_hash_flowid(struct sock *sk);
 static void serval_sock_unhash_s_f(struct sock *sk,
 	int unhash_srvc, int unhash_flow);
 
@@ -750,7 +816,10 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 		rc = -EALREADY;
 		break;
 
-	case SS_UNCONNECTED:
+	case SS_UNCONNECTED: {
+		struct serval_rt_id *rtid;
+		struct fib_xid_table *xtbl;
+
 		if (sk->sk_state == SAL_LISTEN) {
 			rc = -EISCONN;
 			goto out;
@@ -764,19 +833,32 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 			rc = -ESNOTBOUND;
 			goto out;
 		}
-		BUG_ON(!ssk->local_srvcid_hashed);
-
-		serval_sock_set_state(sk, SAL_REQUEST);
+		BUG_ON(!ssk->srvc_rtid);
 
 		/* Allocate a FlowID. */
-		__init_fxid(&ssk->flow_fxid, XRTABLE_LOCAL_INDEX, SOCK_TYPE);
-		BUILD_BUG_ON(sizeof(struct flow_id) != XIA_XID_MAX);
-		serval_sock_get_flowid(ssk->flow_fxid.fx_xid);
-		rc = serval_sock_hash_flowid(sk);
-		if (rc) {
-			serval_sock_set_state(sk, SAL_CLOSED);
+		rtid = rtid_alloc(GFP_KERNEL);
+		if (!rtid) {
+			rc = -ENOMEM;
 			goto out;
 		}
+		__rtid_init(rtid, ssk, XRTABLE_LOCAL_INDEX, SOCK_TYPE);
+		BUILD_BUG_ON(sizeof(struct flow_id) != XIA_XID_MAX);
+		serval_sock_get_flowid(rtid->fxid.fx_xid);
+
+		/* Hash new FlowID. */
+		BUG_ON(ssk->flow_rtid);
+		serval_sock_set_state(sk, SAL_REQUEST);
+		xtbl = xip_find_my_ppal_ctx_vxt(sock_net(sk),
+			flow_vxt)->xpc_xtbl;
+		rc = fib_add_fxid(xtbl, &rtid->fxid);
+		if (rc) {
+			serval_sock_set_state(sk, SAL_CLOSED);
+			rtid_free_norcu(xtbl, rtid);
+			goto out;
+		}
+		ssk->flow_rtid = rtid;
+		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
+
 		rc = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (rc < 0) {
 			/* Only unhash the FlowID to allow applications to
@@ -795,6 +877,7 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 		 */
 		rc = -EINPROGRESS;
 		break;
+	}
 
 	default:
 		rc = -EINVAL;
@@ -1008,8 +1091,8 @@ int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
 	struct serval_sock *new_ssk)
 {
 	struct xip_deferred_negdep_flush *dnf;
+	struct serval_rt_id *rtid;
 	struct net *net;
-	struct xip_ppal_ctx *ctx;
 	struct fib_xid_table *xtbl;
 	struct fib_xid *found_fxid;
 	u32 bucket;
@@ -1018,28 +1101,35 @@ int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
 	if (!dnf)
 		return -ENOMEM;
 
+	rtid = rtid_alloc(GFP_ATOMIC);
+	if (!rtid) {
+		fib_free_dnf(dnf);
+		return -ENOMEM;
+	}
+	rtid_init(rtid, new_ssk, cur_fxid->fx_xid,
+		XRTABLE_LOCAL_INDEX, SOCK_TYPE);
+
 	net = sock_net(&new_ssk->xia_sk.sk);
-	ctx = xip_find_my_ppal_ctx_vxt(net, flow_vxt);
-	xtbl = ctx->xpc_xtbl;
+	xtbl = xip_find_my_ppal_ctx_vxt(net, flow_vxt)->xpc_xtbl;
 	found_fxid = xia_find_xid_lock(&bucket, xtbl, cur_fxid->fx_xid);
 	if (unlikely(!found_fxid)) {
 		/* This case should only happen if another thread was faster
 		 * than us and has already removed @cur_fxid.
 		 */
-		BUG_ON(fib_add_fxid_locked(bucket, xtbl, &new_ssk->flow_fxid));
+		BUG_ON(fib_add_fxid_locked(bucket, xtbl, &rtid->fxid));
 		fib_unlock_bucket(xtbl, bucket);
 		fib_defer_dnf(dnf, net, xtbl_ppalty(xtbl));
 		goto out;
 	}
 
 	BUG_ON(found_fxid != cur_fxid);
-	fib_replace_fxid_locked(xtbl, cur_fxid, &new_ssk->flow_fxid);
+	fib_replace_fxid_locked(xtbl, cur_fxid, &rtid->fxid);
 	fib_unlock_bucket(xtbl, bucket);
 	free_fxid(xtbl, cur_fxid);
 	fib_free_dnf(dnf);
 
 out:
-	new_ssk->local_flowid_hashed = true;
+	new_ssk->flow_rtid = rtid;
 	sock_prot_inuse_add(net, new_ssk->xia_sk.sk.sk_prot, 1);
 	return 0;
 }
@@ -1050,72 +1140,39 @@ int __serval_sock_hash_flowid(struct net *net, struct fib_xid *fxid)
 	return fib_add_fxid(ctx->xpc_xtbl, fxid);
 }
 
-/* Bind the FlowID fxid (field flow_fxid) of a Serval socket to
- * the FlowID routing table.
- *
- * NOTE
- *	Field flow_fxid must already have the FlowID assigned.
- */
-static int serval_sock_hash_flowid(struct sock *sk)
-{
-	struct serval_sock *ssk = sk_ssk(sk);
-	int rc;
-
-	/* @sk must be bound to allow one to derive the source address with
-	 * the FlowID.
-	 */
-	if (!xia_sk_bound(&ssk->xia_sk))
-		return -ESNOTBOUND;
-
-	if (sk->sk_state != SAL_REQUEST && sk->sk_state != SAL_RESPOND)
-		return -EINVAL;
-
-	BUG_ON(ssk->local_flowid_hashed);
-	rc = __serval_sock_hash_flowid(sock_net(sk), &ssk->flow_fxid);
-	if (!rc) {
-		ssk->local_flowid_hashed = true;
-		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
-	}
-	return rc;
-}
-
 static void serval_sock_unhash_s_f(struct sock *sk,
 	int unhash_srvc, int unhash_flow)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 	struct net *net = sock_net(sk);
-	struct fib_xid_table *srvc_xtbl = NULL;
-	struct fib_xid_table *flow_xtbl = NULL;
+	struct serval_rt_id *rtid;
 
-	if (unhash_srvc && ssk->local_srvcid_hashed) {
-		ssk->local_srvcid_hashed = false;
+	if (unhash_srvc && ssk->srvc_rtid) {
+		struct fib_xid_table *srvc_xtbl;
+
+		rtid = ssk->srvc_rtid;
+		ssk->srvc_rtid = NULL;
 		xia_reset_src(&ssk->xia_sk);
 
 		/* Removing socket @sk from the service table. */
 		srvc_xtbl = xip_find_my_ppal_ctx_vxt(net, srvc_vxt)->xpc_xtbl;
-		fib_rm_fxid(srvc_xtbl, &ssk->srvc_fxid);
+		fib_rm_fxid(srvc_xtbl, &rtid->fxid);
+		rtid_free(srvc_xtbl, rtid);
 		sock_prot_inuse_add(net, sk->sk_prot, -1);
 	}
 
-	if (unhash_flow && ssk->local_flowid_hashed) {
-		ssk->local_flowid_hashed = false;
+	if (unhash_flow && ssk->flow_rtid) {
+		struct fib_xid_table *flow_xtbl;
+
+		rtid = ssk->flow_rtid;
+		ssk->flow_rtid = NULL;
 
 		/* Removing socket @sk from the flow table. */
 		flow_xtbl = xip_find_my_ppal_ctx_vxt(net, flow_vxt)->xpc_xtbl;
-		fib_rm_fxid(flow_xtbl, &ssk->flow_fxid);
+		fib_rm_fxid(flow_xtbl, &rtid->fxid);
+		rtid_free(flow_xtbl, rtid);
 		sock_prot_inuse_add(net, sk->sk_prot, -1);
 	}
-
-	if (!srvc_xtbl && !flow_xtbl)
-		return;
-
-	/* We must wait here because, @ssk may be reused before RCU synchs.*/
-	synchronize_rcu();
-
-	if (srvc_xtbl)
-		free_fxid_norcu(srvc_xtbl, &ssk->srvc_fxid);
-	if (flow_xtbl)
-		free_fxid_norcu(flow_xtbl, &ssk->flow_fxid);
 }
 
 void serval_sock_unhash(struct sock *sk)
@@ -1147,7 +1204,7 @@ static int serval_listen(struct socket *sock, int backlog)
 		rc = -ESNOTBOUND;
 		goto out;
 	}
-	BUG_ON(!ssk->local_srvcid_hashed);
+	BUG_ON(!ssk->srvc_rtid);
 
 	serval_sock_set_state(sk, SAL_LISTEN);
 	sk->sk_ack_backlog = 0;
