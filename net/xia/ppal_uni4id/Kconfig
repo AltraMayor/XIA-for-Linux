@@ -1,0 +1,13 @@
+config XIA_PPAL_UNI4ID
+	tristate "United 4ID Principal (EXPERIMENTAL)"
+	default m
+	help
+	  United 4ID (Uni4ID) principal brings to Linux XIA
+	  compatibility with Click XIA's 4ID.
+	  For principal developers, United 4ID's code showcases
+	  routing redirects as a mean for principal composition since
+	  United 4ID in Linux XIA is a hollow principal that only
+	  delegates work to U4ID and I4ID principals.
+	  If you need interoperability between Click and Linux XIA,
+	  you likely want to add this principal as well.
+	  If you are unsure how to answer this question, answer M.
