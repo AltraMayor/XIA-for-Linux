@@ -93,26 +93,21 @@ static struct pernet_operations uni4id_net_ops __read_mostly = {
 /* UDP 4ID: XIP over UDP. */
 #define XIDTYPE_U4ID (__cpu_to_be32(0x16))
 
-struct uni4id_xid {
-	u32	ip_addr;
-	u16	udp_port;
-	u16	zero1;
-	u32	zero2;
-	u32	zero3;
-	u32	zero4;
+static const u8 uni_xid_prefix[] = {
+	/* 0     1     2     3     4     5     6     7 */
+	0x45, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+	/* 8     9    10    11    12    13    14    15 */
+	0xfa, 0xfa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
 static int uni4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
-	struct uni4id_xid *from_xid;
+	BUILD_BUG_ON(sizeof(uni_xid_prefix) != 16);
+	BUILD_BUG_ON(XIA_XID_MAX != 20);
 
-	BUILD_BUG_ON(sizeof(struct uni4id_xid) != XIA_XID_MAX);	
-
-	from_xid = (struct uni4id_xid *)xid;
-	if (from_xid->zero1 || from_xid->zero2 || from_xid->zero3 ||
-		from_xid->zero4) {
+	if (memcmp(xid, uni_xid_prefix, sizeof(uni_xid_prefix))) {
 		struct xip_ppal_ctx *ctx;
 
 		/* Get rid of misformed XIDs. */
@@ -126,8 +121,27 @@ static int uni4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	}
 
 	/* Calculate next XID. */
-	next_xid->xid_type = from_xid->udp_port ? XIDTYPE_U4ID : XIDTYPE_I4ID;
-	memmove(next_xid->xid_id, xid, XIA_XID_MAX);
+	next_xid->xid_type = XIDTYPE_U4ID;
+	next_xid->xid_id[ 0] = xid[16];
+	next_xid->xid_id[ 1] = xid[17];
+	next_xid->xid_id[ 2] = xid[18];
+	next_xid->xid_id[ 3] = xid[19];
+	next_xid->xid_id[ 4] = 0x35;
+	next_xid->xid_id[ 5] = 0xd5;
+	next_xid->xid_id[ 6] = 0x00;
+	next_xid->xid_id[ 7] = 0x00;
+	next_xid->xid_id[ 8] = 0x00;
+	next_xid->xid_id[ 9] = 0x00;
+	next_xid->xid_id[10] = 0x00;
+	next_xid->xid_id[11] = 0x00;
+	next_xid->xid_id[12] = 0x00;
+	next_xid->xid_id[13] = 0x00;
+	next_xid->xid_id[14] = 0x00;
+	next_xid->xid_id[15] = 0x00;
+	next_xid->xid_id[16] = 0x00;
+	next_xid->xid_id[17] = 0x00;
+	next_xid->xid_id[18] = 0x00;
+	next_xid->xid_id[19] = 0x00;
 	return XRP_ACT_REDIRECT;
 }
 
