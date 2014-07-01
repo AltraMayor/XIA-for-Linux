@@ -1375,11 +1375,6 @@ static struct xia_socket_proc serval_sock_proc __read_mostly = {
  * S_IRUGO|S_IWUSR = root can change
  */
 
-/* XXX One should use hardware wherever it's available. */
-unsigned int checksum_mode;	/* Implicitly initialized to zero. */
-module_param(checksum_mode, uint, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(checksum_mode, "Set checksum mode (0=software, 1=hardware)");
-
 extern void serval_tcp_init(void);
 extern int serval_sysctl_register(struct net *net);
 extern void serval_sysctl_unregister(struct net *net);
