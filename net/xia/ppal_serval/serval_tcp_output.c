@@ -1954,13 +1954,7 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 
 	serval_tcp_options_write((__be32 *)(th + 1), tp, &opts);
 
-	/* XXX The following was true for IP, but not for XIP. so
-	 * simplify the code:
-	 * On SYN the checksum is deferred until after resolution.
-	 * This is because we do not know the route and src,dst IP at
-	 * this point, and these are needed for the checksum.
-	 */
-
+	__serval_tcp_v4_send_check(skb);
 	return 0;
 }
 
