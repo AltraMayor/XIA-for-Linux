@@ -1409,7 +1409,7 @@ static int __init xia_serval_init(void)
 	if (rc)
 		goto flow_vxt;
 
-	rc = ppal_add_map("srvcid", XIDTYPE_SRVCID);
+	rc = ppal_add_map("serval", XIDTYPE_SRVCID);
 	if (rc)
 		goto net;
 
