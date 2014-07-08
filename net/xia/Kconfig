@@ -17,4 +17,5 @@ source "net/xia/ppal_serval/Kconfig"
 source "net/xia/ppal_uni4id/Kconfig"
 source "net/xia/ppal_u4id/Kconfig"
 source "net/xia/ppal_xdp/Kconfig"
+source "net/xia/ppal_zf/Kconfig"
 endif # if XIA

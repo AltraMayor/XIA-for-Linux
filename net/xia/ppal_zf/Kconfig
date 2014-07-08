@@ -1,0 +1,7 @@
+config XIA_PPAL_ZF
+	tristate "zFilter Principal (EXPERIMENTAL)"
+	default m
+	help
+	  zFilter principal brings a form of multicast to XIA in which
+	  routers do not keep state per multicast group, but per its links.
+	  If you are unsure how to answer this question, answer M.
