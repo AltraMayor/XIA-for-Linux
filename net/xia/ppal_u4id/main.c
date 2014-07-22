@@ -188,24 +188,22 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	init_fxid(&lu4id->common, cfg->xfc_dst->xid_id,
 		XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lu4id->anchor);
-
 	lu4id->sock = NULL;
+	INIT_WORK(&lu4id->del_work, u4id_local_del_work);
+
 	rc = create_lu4id_socket(lu4id, xtbl->fxt_net, cfg->xfc_dst->xid_id);
 	if (rc)
-		goto free;
-
-	INIT_WORK(&lu4id->del_work, u4id_local_del_work);
+		goto lu4id;
 
 	rc = fib_build_newroute(&lu4id->common, xtbl, cfg, NULL);
 	if (rc)
-		goto free_sock;
+		goto lu4id;
 
-	return rc;
+	goto out;
 
-free_sock:
+lu4id:
 	u4id_local_del_work(&lu4id->del_work);
-free:
-	free_fxid_norcu(xtbl, &lu4id->common);
+out:
 	return rc;
 }
 
