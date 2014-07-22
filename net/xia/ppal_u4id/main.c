@@ -460,8 +460,6 @@ static int main_input_output(struct sk_buff *skb)
 	__be32 dest_ip_addr;
 	__be16 dest_port;
 
-	int rc;
-
 	/* Check that there's enough headroom in the @skb to
 	 * insert the IP and UDP headers. If not enough,
 	 * expand it to make room. Adjust truesize.
@@ -489,6 +487,12 @@ static int main_input_output(struct sk_buff *skb)
 	u4id_ctx = ctx_u4id(xip_find_ppal_ctx_rcu(skb_dst(skb)->dev->nd_net,
 		XIDTYPE_U4ID));
 	sk = u4id_ctx->tunnel_sock->sk;
+	sock_hold(sk);
+	skb->sk = sk;
+	WARN_ON(skb->destructor);
+	skb->destructor = u4id_sock_free;
+	rcu_read_unlock();
+	u4id_ctx = NULL; /* Helping to find future bugs in a long function. */
 
 	inet = inet_sk(sk);
 
@@ -516,11 +520,7 @@ static int main_input_output(struct sk_buff *skb)
 	}
 
 	/* Set up @skb. */
-	sock_hold(sk);
-	skb->sk = sk;
 	skb->protocol = __cpu_to_be16(ETH_P_IP);
-	WARN_ON(skb->destructor);
-	skb->destructor = u4id_sock_free;
 	skb->local_df = 1;
 
 	/* Set up IP DST. */
@@ -533,20 +533,17 @@ static int main_input_output(struct sk_buff *skb)
 	net = sock_net(sk);
 	rt = ip_route_output_flow(net, &fl4, sk);
 	if (IS_ERR(rt)) {
-		rc = PTR_ERR(rt);
-		rt = NULL;
+		int rc = PTR_ERR(rt);
 		if (rc == -ENETUNREACH)
 			IP_INC_STATS_BH(net, IPSTATS_MIB_OUTNOROUTES);
-		goto out;
+		kfree_skb(skb);
+		return rc;
 	}
-	sk_dst_set(sk, dst_clone(&rt->dst));
+	skb_dst_set(skb, dst_clone(&rt->dst));
+	ip_rt_put(rt);
 
 	/* Send UDP/IP packet with XIP and data as payload. */
-	rc = ip_queue_xmit(skb, flowi4_to_flowi(&fl4));
-out:
-	ip_rt_put(rt);
-	rcu_read_unlock();
-	return rc;
+	return ip_queue_xmit(skb, flowi4_to_flowi(&fl4));
 }
 
 static int process_main_input(struct sk_buff *skb, int dec_hop_limit)
