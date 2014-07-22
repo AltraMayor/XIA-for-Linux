@@ -91,8 +91,6 @@ static inline struct fib_xid_u4id_local *fxid_lu4id(struct fib_xid *fxid)
  */
 static int u4id_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 {
-	int rc;
-
 	if (!sk)
 		goto pass_up;
 
@@ -116,9 +114,7 @@ static int u4id_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	}
 
 	/* Deliver @skb to XIA routing mechanism via lo. */
-	rc = dev_queue_xmit(skb);
-
-	return rc;
+	return dev_queue_xmit(skb);
 
 pass_up:
 	return 1;
@@ -444,14 +440,12 @@ static int main_input_output(struct sk_buff *skb)
 	struct flowi4 fl4;
 	struct sock *sk;
 
-	struct xip_dst *xdst;
 	struct xip_u4id_ctx *u4id_ctx;
 	struct u4id_tunnel_dest *tunnel;
 
 	struct udphdr *uh;
 	int uhlen = sizeof(*uh);
 	int xip_and_data_len = skb->len;
-	__wsum csum = 0;
 	__be32 dest_ip_addr;
 	__be16 dest_port;
 
@@ -475,8 +469,7 @@ static int main_input_output(struct sk_buff *skb)
 	nf_reset(skb);
 
 	/* Fetch U4ID from XDST entry to get IP address and port. */
-	xdst = skb_xdst(skb);
-	tunnel = (struct u4id_tunnel_dest *)xdst->info;
+	tunnel = (struct u4id_tunnel_dest *)skb_xdst(skb)->info;
 	dest_ip_addr = tunnel->dest_ip_addr;
 	dest_port = tunnel->dest_port;
 
@@ -496,10 +489,12 @@ static int main_input_output(struct sk_buff *skb)
 	uh->dest = dest_port;
 	uh->len = htons(uhlen + xip_and_data_len);
 
+	/* XXX It'd be nice to support hardware checksummig. */
 	if (disable_checksum) {
 		skb->ip_summed = CHECKSUM_NONE;
 		uh->check = 0;
 	} else {
+		__wsum csum;
 		skb->ip_summed = CHECKSUM_COMPLETE;
 		csum = udp_csum(skb);
 		uh->check = csum_tcpudp_magic(inet->inet_saddr, dest_ip_addr,
@@ -513,6 +508,7 @@ static int main_input_output(struct sk_buff *skb)
 	sock_hold(sk);
 	skb->sk = sk;
 	skb->protocol = __cpu_to_be16(ETH_P_IP);
+	WARN_ON(skb->destructor);
 	skb->destructor = u4id_sock_free;
 	skb->local_df = 1;
 
@@ -696,11 +692,11 @@ static void __exit xia_u4id_exit(void)
 	ppal_del_map(XIDTYPE_U4ID);
 	xip_del_router(&u4id_rt_proc);
 	xia_unregister_pernet_subsys(&u4id_net_ops);
+	BUG_ON(vxt_unregister_xidty(XIDTYPE_U4ID));
 
 	rcu_barrier();
 	flush_scheduled_work();
 
-	BUG_ON(vxt_unregister_xidty(XIDTYPE_U4ID));
 	printk(KERN_ALERT "XIA Principal U4ID UNloaded\n");
 }
 
