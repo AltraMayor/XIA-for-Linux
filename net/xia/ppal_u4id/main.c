@@ -251,10 +251,8 @@ nla_put_failure:
 static void local_free_u4id(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_u4id_local *lu4id = fxid_lu4id(fxid);
-	if (lu4id->sock)
-		schedule_work(&lu4id->del_work);
-	else
-		u4id_local_del_work(&lu4id->del_work);
+	BUG_ON(!lu4id->sock);
+	schedule_work(&lu4id->del_work);
 }
 
 static const xia_ppal_all_rt_eops_t u4id_all_rt_eops = {
