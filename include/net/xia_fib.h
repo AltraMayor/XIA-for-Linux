@@ -469,6 +469,21 @@ int xia_iterate_xids(struct fib_xid_table *xtbl,
 		struct fib_xid *fxid, void *arg),
 	void *arg);
 
+/** xia_iterate_xids_rcu - Visit all XIDs in @xtbl.
+ * NOTE
+ *	The caller must hold an RCU read lock.
+ *
+ *	If @rcu_callback returns non-zero, the iterator is aborted.
+ *
+ * RETURN
+ *	Zero if all xids were visited, or the value that @locked_callback
+ *	returned when it aborted.
+ */
+int xia_iterate_xids_rcu(struct fib_xid_table *xtbl,
+	int (*rcu_callback)(struct fib_xid_table *xtbl,
+		struct fib_xid *fxid, const void *arg),
+	const void *arg);
+
 /** fib_add_fxid - Add @fxid into @xtbl.
  * RETURN
  *	-EEXIST in case an fxid with same XID is already in @xtbl.
