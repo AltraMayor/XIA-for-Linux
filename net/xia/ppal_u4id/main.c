@@ -570,7 +570,7 @@ static int handle_skb_to_ipv4(struct sk_buff *skb,
 	return ip_queue_xmit(skb, flowi4_to_flowi(&fl4));
 }
 
-static int main_input_output(struct sk_buff *skb)
+static int u4id_output(struct sk_buff *skb)
 {
 	struct sock *sk;
 	struct u4id_tunnel_dest *tunnel;
@@ -610,53 +610,6 @@ static int main_input_output(struct sk_buff *skb)
 	/* Send UDP packet with XIP and data as payload. */
 	return handle_skb_to_ipv4(skb, dest_ip_addr, dest_port);
 }
-
-static int process_main_input(struct sk_buff *skb, int dec_hop_limit)
-{
-	/* XXX We should test that forwarding is enable per struct net.
-	 * See example in net/ipv6/ip6_output.c:ip6_forward.
-	 */
-	if (skb->pkt_type != PACKET_HOST)
-		goto drop;
-
-	if (dec_hop_limit) {
-		struct xiphdr *xiph = xip_hdr(skb);
-		if (!xiph->hop_limit) {
-			/* XXX Is this warning necessary? If so,
-			 * shouldn't it report more?
-			 */
-			LIMIT_NETDEBUG(
-				KERN_WARNING pr_fmt("%s: hop limit reached\n"),
-				__func__);
-			goto drop;
-		}
-		xiph->hop_limit--;
-	}
-
-	return 0;
-
-drop:
-	kfree_skb(skb);
-	return NET_RX_DROP;
-}
-
-static int main_input_input(struct sk_buff *skb)
-{
-	int rc = process_main_input(skb, 1);
-	if (rc)
-		return rc;
-	return dst_output(skb);
-}
-
-static int main_output_input(struct sk_buff *skb)
-{
-	int rc = process_main_input(skb, 0);
-	if (rc)
-		return rc;
-	return dst_output(skb);
-}
-
-#define main_output_output main_input_output
 
 static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
@@ -715,13 +668,8 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	BUG_ON(xdst->dst.dev);
 	xdst->dst.dev = net->loopback_dev;
 	dev_hold(xdst->dst.dev);
-	if (xdst->input) {
-		xdst->dst.input = main_input_input;
-		xdst->dst.output = main_input_output;
-	} else {
-		xdst->dst.input = main_output_input;
-		xdst->dst.output = main_output_output;
-	}
+	xdst->dst.input = xdst_def_hop_limit_input_method;
+	xdst->dst.output = u4id_output;
 	xdst_attach_to_anchor(xdst, anchor_index, &u4id_ctx->forward_anchor);
 	rcu_read_unlock();
 	return XRP_ACT_FORWARD;
