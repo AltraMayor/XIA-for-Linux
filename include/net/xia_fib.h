@@ -466,8 +466,8 @@ struct fib_xid *xia_find_xid_lock(u32 *pbucket, struct fib_xid_table *xtbl,
  */
 int xia_iterate_xids(struct fib_xid_table *xtbl,
 	int (*locked_callback)(struct fib_xid_table *xtbl,
-		struct fib_xid *fxid, void *arg),
-	void *arg);
+		struct fib_xid *fxid, const void *arg),
+	const void *arg);
 
 /** xia_iterate_xids_rcu - Visit all XIDs in @xtbl.
  * NOTE

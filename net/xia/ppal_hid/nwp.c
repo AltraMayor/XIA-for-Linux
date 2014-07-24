@@ -454,9 +454,9 @@ static inline int announcement_hdr_len(struct net_device *dev)
 }
 
 static int __announce_on_dev(struct fib_xid_table *xtbl,
-	struct fib_xid *fxid, void *arg)
+	struct fib_xid *fxid, const void *arg)
 {
-	struct announcement_state *state;
+	const struct announcement_state *state;
 	struct sk_buff *skb;
 	struct net_device *dev;
 	struct announcement_hdr *nwp;
