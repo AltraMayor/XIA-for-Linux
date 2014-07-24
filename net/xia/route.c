@@ -767,6 +767,36 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 }
 EXPORT_SYMBOL_GPL(xdst_invalidate_redirect);
 
+int xdst_def_hop_limit_input_method(struct sk_buff *skb)
+{
+	/* XXX We should test that forwarding is enable per struct net.
+	 * See example in net/ipv6/ip6_output.c:ip6_forward.
+	 */
+	if (skb->pkt_type != PACKET_HOST)
+		goto drop;
+
+	if (skb_xdst(skb)->input) {
+		struct xiphdr *xiph = xip_hdr(skb);
+		if (!xiph->hop_limit) {
+			/* XXX Is this warning necessary? If so,
+			 * shouldn't it report more?
+			 */
+			LIMIT_NETDEBUG(
+				KERN_WARNING pr_fmt("%s: hop limit reached\n"),
+				__func__);
+			goto drop;
+		}
+		xiph->hop_limit--;
+	}
+
+	return dst_output(skb);
+
+drop:
+	kfree_skb(skb);
+	return NET_RX_DROP;
+}
+EXPORT_SYMBOL_GPL(xdst_def_hop_limit_input_method);
+
 /*
  *	Principal routing
  */

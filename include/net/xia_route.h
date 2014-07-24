@@ -177,6 +177,17 @@ struct xip_dst {
 	} anchors[XIA_OUTDEGREE_MAX];
 };
 
+/* Principals can assign xdst_def_hop_limit_input_method() to
+ * @xdst->dst.input whenever all that is needed is to account for
+ * hop limit.
+ *
+ * NOTE
+ *	xdst_def_hop_limit_input_method() accounts for @xdst->input,
+ *	so it can be used for both cases: _input_input and
+ *	_output_input sufixes.
+ */
+int xdst_def_hop_limit_input_method(struct sk_buff *skb);
+
 void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
 	struct xip_dst_anchor *anchor);
 
