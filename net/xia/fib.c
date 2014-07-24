@@ -393,8 +393,8 @@ EXPORT_SYMBOL_GPL(xia_find_xid_lock);
 
 int xia_iterate_xids(struct fib_xid_table *xtbl,
 	int (*locked_callback)(struct fib_xid_table *xtbl,
-		struct fib_xid *fxid, void *arg),
-	void *arg)
+		struct fib_xid *fxid, const void *arg),
+	const void *arg)
 {
 	struct fib_xid_buckets *abranch;
 	int aindex;
