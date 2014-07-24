@@ -427,6 +427,33 @@ out:
 }
 EXPORT_SYMBOL_GPL(xia_iterate_xids);
 
+int xia_iterate_xids_rcu(struct fib_xid_table *xtbl,
+	int (*rcu_callback)(struct fib_xid_table *xtbl,
+		struct fib_xid *fxid, const void *arg),
+	const void *arg)
+{
+	struct fib_xid_buckets *abranch;
+	int aindex;
+	u32 bucket;
+	int rc = 0;
+
+	abranch = rcu_dereference(xtbl->fxt_active_branch);
+	aindex = xtbl_branch_index(xtbl, abranch);
+	for (bucket = 0; bucket < abranch->divisor; bucket++) {
+		struct fib_xid *fxid;
+		struct hlist_head *head = __xidhead(abranch->buckets, bucket);
+		hlist_for_each_entry_rcu(fxid, head, fx_branch_list[aindex]) {
+			rc = rcu_callback(xtbl, fxid, arg);
+			if (rc)
+				goto out;
+		}
+	}
+
+out:
+	return rc;
+}
+EXPORT_SYMBOL_GPL(xia_iterate_xids_rcu);
+
 /* Grow table as needed. */
 static void rehash_work(struct work_struct *work)
 {

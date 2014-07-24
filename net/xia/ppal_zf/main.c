@@ -14,7 +14,8 @@
 struct xip_zf_ctx {
 	struct xip_ppal_ctx	ctx;
 
-	/* No extra field. */
+	/* Anchor any match in the FIB. */
+	struct xip_dst_anchor	positive_anchor;
 };
 
 static inline struct xip_zf_ctx *ctx_zf(struct xip_ppal_ctx *ctx)
@@ -229,12 +230,14 @@ static struct xip_zf_ctx *create_zf_ctx(void)
 	if (!zf_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&zf_ctx->ctx, XIDTYPE_ZF);
+	xdst_init_anchor(&zf_ctx->positive_anchor);
 	return zf_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_zf_ctx(struct xip_zf_ctx *zf_ctx)
 {
+	xdst_free_anchor(&zf_ctx->positive_anchor);
 	xip_release_ppal_ctx(&zf_ctx->ctx);
 	kfree(zf_ctx);
 }
@@ -281,13 +284,73 @@ static struct pernet_operations zf_net_ops __read_mostly = {
 /*
  *	ZF Routing
  */
+static int zf_input(struct sk_buff *skb)
+{
+	/* TODO */
+	kfree_skb(skb);
+	return NET_RX_DROP;
+}
+
+static int zf_output(struct sk_buff *skb)
+{
+	/* TODO */
+	kfree_skb(skb);
+	return NET_RX_DROP;
+}
+
+static int zf_match(const u8 *xid, const u8 *link_id)
+{
+	const u32 *xid32 = (const u32 *)xid;
+	const u32 *link_id32 = (const u32 *)link_id;
+	int i;
+
+	BUILD_BUG_ON(XIA_XID_MAX % sizeof(u32));
+
+	for (i = 0; i < (XIA_XID_MAX / sizeof(u32)); i++) {
+		if ((*xid32 & *link_id32) != *link_id32)
+			return 0;
+		xid32++;
+		link_id32++;
+	}
+
+	return 1;
+}
+
+static int match_any_xid_rcu(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid, const void *arg)
+{
+	return zf_match(arg, fxid->fx_xid);
+}
 
 static int zf_deliver(struct xip_route_proc *rproc, struct net *net,
 	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
 	struct xip_dst *xdst)
 {
-	/* TODO */
-	BUG();
+	struct xip_ppal_ctx *ctx;
+	struct xip_zf_ctx *zf_ctx;
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
+	zf_ctx = ctx_zf(ctx);
+
+	if (!xia_iterate_xids_rcu(ctx->xpc_xtbl, match_any_xid_rcu, xid)) {
+		/* There's no matches. */
+		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
+
+	xdst->passthrough_action = XDA_METHOD;
+	xdst->sink_action = XDA_ERROR;
+	BUG_ON(xdst->dst.dev);
+	xdst->dst.dev = net->loopback_dev;
+	dev_hold(xdst->dst.dev);
+	xdst->dst.input = zf_input;
+	xdst->dst.output = zf_output;
+
+	xdst_attach_to_anchor(xdst, anchor_index, &zf_ctx->positive_anchor);
+	rcu_read_unlock();
+	return XRP_ACT_FORWARD;
 }
 
 static struct xip_route_proc zf_rt_proc __read_mostly = {
