@@ -32,6 +32,22 @@ static inline int xip_hdr_len(const struct xiphdr *xiph)
 	return xip_hdr_size(xiph->num_dst, xiph->num_src);
 }
 
+static inline struct xia_row *xip_last_row(struct xia_row *addr,
+	int num_dst, int last_node)
+{
+	return last_node == XIA_ENTRY_NODE_INDEX
+		? &addr[num_dst - 1]
+		: &addr[last_node];
+}
+
+static inline void xip_select_edge(__u8 *plast_node, struct xia_row *last_row,
+	int index)
+{
+	__u8 *pe = &last_row->s_edge.a[index];
+	*plast_node = *pe;
+	xia_mark_edge(pe);
+}
+
 /* Max Payload Length. */
 #define XIP_MAXPLEN	0xffff
 
@@ -351,6 +367,9 @@ void xip_del_router(struct xip_route_proc *rproc);
 
 struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 	struct xia_row *addr, int num_dst, u8 *plast_node, int input);
+
+/* A friendlier version of xip_mark_addr_and_get_dst(). */
+int xip_route(struct sk_buff *skb, int input);
 
 void skb_pull_xiphdr(struct sk_buff *skb);
 

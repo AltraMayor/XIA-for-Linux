@@ -1008,14 +1008,6 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
 	return XRP_ACT_ABRUPT_FAILURE;
 }
 
-static inline void select_edge(u8 *plast_node, struct xia_row *last_row,
-	int index)
-{
-	u8 *pe = &last_row->s_edge.a[index];
-	*plast_node = *pe;
-	xia_mark_edge(pe);
-}
-
 /* XXX An ICMP-like error should be genererated here. */
 static inline int xip_dst_not_supported(char *direction, struct sk_buff *skb)
 {
@@ -1104,7 +1096,7 @@ tail_call:
 		BUG_ON(sink);
 
 		/* Record that we're going for a recursion. */
-		select_edge(plast_node, *plast_row, chosen_edge);
+		xip_select_edge(plast_node, *plast_row, chosen_edge);
 
 		/* Let the garbagge collector know that @xdst is being used. */
 		dst_use_noref(&xdst->dst, jiffies);
@@ -1115,7 +1107,7 @@ tail_call:
 
 	case XDA_ERROR:
 		/* Help debugging. */
-		select_edge(plast_node, *plast_row, chosen_edge);
+		xip_select_edge(plast_node, *plast_row, chosen_edge);
 
 		return &xdst_error;
 
@@ -1124,7 +1116,7 @@ tail_call:
 		return NULL;
 
 	case XDA_METHOD_AND_SELECT_EDGE:
-		select_edge(plast_node, *plast_row, chosen_edge);
+		xip_select_edge(plast_node, *plast_row, chosen_edge);
 		/* Fall through. */
 
 	case XDA_METHOD:
@@ -1224,11 +1216,8 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 	struct xia_row *addr, int num_dst, u8 *plast_node, int input)
 {
 	int last_node = *plast_node;
-	struct xia_row *last_row;
+	struct xia_row *last_row = xip_last_row(addr, num_dst, last_node);
 	struct xip_dst *xdst;
-
-	last_row = last_node == XIA_ENTRY_NODE_INDEX ?
-		&addr[num_dst - 1] : &addr[last_node];
 
 	/* Basis. */
 	if (unlikely(is_it_a_sink(last_row, last_node, num_dst))) {
@@ -1247,16 +1236,17 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 }
 EXPORT_SYMBOL_GPL(xip_mark_addr_and_get_dst);
 
-static inline int xip_route(struct sk_buff *skb, struct xia_row *addr,
-		int num_dst, u8 *plast_node, int input)
+int xip_route(struct sk_buff *skb, int input)
 {
+	struct xiphdr *xiph = xip_hdr(skb);
 	struct xip_dst *xdst = xip_mark_addr_and_get_dst(skb_net(skb),
-		addr, num_dst, plast_node, input);
+		xiph->dst_addr, xiph->num_dst, &xiph->last_node, input);
 	if (IS_ERR(xdst))
 		return PTR_ERR(xdst);
 	skb_dst_set(skb, &xdst->dst);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xip_route);
 
 /*
  *	Handling XIP incoming packets
@@ -1320,8 +1310,7 @@ static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 	/* Initialise the virtual path cache for the packet.
 	 * It describes how the packet travels inside Linux networking.
 	 */
-	if (!skb_dst(skb) && xip_route(skb, xiph->dst_addr, xiph->num_dst,
-		&xiph->last_node, 1))
+	if (!skb_dst(skb) && xip_route(skb, 1))
 		goto drop;
 
 	return dst_input(skb);
