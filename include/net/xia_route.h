@@ -218,6 +218,38 @@ static inline void xdst_put(struct xip_dst *xdst)
  */
 void def_ppal_destroy(struct xip_dst *xdst);
 
+/* Remove @xdst from the DST table of @xdst->net, and hold a refcount
+ *	to it.
+ *
+ * RETURN
+ *	Zero if @xdst was NOT in the DST table.
+ *	IMPORTANT! In this case, there's no refcount to @xdst.
+ *	This can happen either because @xdst wasn't in the DST table derived
+ *	from its @xdst->net (bug), or it wasn't in any DST table at all.
+ *	Notice that just checking @next isn't enough because it may have
+ *	a non-NULL value just to avoid disrupting RCU readers.
+ *
+ *	One otherwise. A refcount is held in this case.
+ *
+ * NOTE
+ *	IMPORTANT! Caller must wait an RCU synch before adding
+ *	@xdst again to a DST table, or releasing its memory.
+ *	See xdst_rcu_free() to release after an RCU synch.
+ */
+int del_xdst_and_hold(struct xip_dst *xdst);
+
+/* @xdst must not be in any DST table!
+ *
+ * This function waits for RCU synchonization before releasing @xdst.
+ *
+ * See del_xdst_and_hold() to remove @xdst from the DST table.
+ *
+ * IMPORTANT: given that this function will call xdst_free_begin(),
+ * which, in turn, calls detach_anchors(), one would be better off checking
+ * detach_anchors()'s calling constraints before using this function.
+ */
+void xdst_rcu_free(struct xip_dst *xdst);
+
 extern struct dst_ops xip_dst_ops_template;
 static inline struct net *dstops_net(struct dst_ops *ops)
 {

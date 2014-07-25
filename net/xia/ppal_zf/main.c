@@ -284,19 +284,6 @@ static struct pernet_operations zf_net_ops __read_mostly = {
 /*
  *	ZF Routing
  */
-static int zf_input(struct sk_buff *skb)
-{
-	/* TODO */
-	kfree_skb(skb);
-	return NET_RX_DROP;
-}
-
-static int zf_output(struct sk_buff *skb)
-{
-	/* TODO */
-	kfree_skb(skb);
-	return NET_RX_DROP;
-}
 
 static int zf_match(const u8 *xid, const u8 *link_id)
 {
@@ -316,6 +303,76 @@ static int zf_match(const u8 *xid, const u8 *link_id)
 	return 1;
 }
 
+/* Information added to DST entries. */
+struct zf_dst_info {
+	u8 xid[XIA_XID_MAX];
+};
+
+static struct zf_dst_info *create_zf_dst_info(const u8 *xid)
+{
+	struct zf_dst_info *info = kmalloc(sizeof(*info), GFP_ATOMIC);
+	if (!info)
+		return NULL;
+	memmove(info->xid, xid, XIA_XID_MAX);
+	return info;
+}
+
+struct iterate_arg {
+	const u8 *xid;
+	bool matched;
+	struct sk_buff *skb;
+};
+
+static int match_xids_rcu(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid, const void *arg)
+{
+	struct iterate_arg *iarg = (struct iterate_arg *)arg;
+	if (!zf_match(iarg->xid, fxid->fx_xid))
+		return 0;
+	iarg->matched = true;
+
+	switch (fxid->fx_table_id) {
+	case XRTABLE_LOCAL_INDEX:
+		/* TODO Copy skb, dig ZF XID, and
+		 * inject packet into XIP statck again.
+		 */
+		return 0;
+
+	case XRTABLE_MAIN_INDEX:
+		/* TODO Is fxid's DST entry valid? */
+		/* TODO If not, skip this entry, and refresh all DST entries. */
+
+		/* TODO Copy skb. */
+		/* TODO Call DST entry on skb. */
+		return 0;
+	}
+	BUG();
+}
+
+static int zf_output(struct sk_buff *skb)
+{
+	struct xip_dst *xdst = skb_xdst(skb);
+	struct zf_dst_info *info = (struct zf_dst_info *)xdst->info;
+	struct net *net = xdst_net(xdst);
+	struct iterate_arg arg =
+		{.xid = info->xid, .matched = false, .skb = skb};
+	struct xip_ppal_ctx *ctx;
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
+	BUG_ON(xia_iterate_xids_rcu(ctx->xpc_xtbl, match_xids_rcu, &arg));
+	rcu_read_unlock();
+
+	if (!arg.matched) {
+		/* Flush this DST entry. */
+		if (del_xdst_and_hold(xdst))
+			xdst_rcu_free(xdst);
+	}
+
+	kfree_skb(skb);
+	return NET_RX_SUCCESS;
+}
+
 static int match_any_xid_rcu(struct fib_xid_table *xtbl,
 	struct fib_xid *fxid, const void *arg)
 {
@@ -328,6 +385,7 @@ static int zf_deliver(struct xip_route_proc *rproc, struct net *net,
 {
 	struct xip_ppal_ctx *ctx;
 	struct xip_zf_ctx *zf_ctx;
+	struct zf_dst_info *info;
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
@@ -340,12 +398,21 @@ static int zf_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_NEXT_EDGE;
 	}
 
+	info = create_zf_dst_info(xid);
+	if (unlikely(!info)) {
+		rcu_read_unlock();
+		/* Not enough memory to conclude this operation. */
+		return XRP_ACT_ABRUPT_FAILURE;
+	}
+	xdst->info = info;
+	xdst->ppal_destroy = def_ppal_destroy;
+
 	xdst->passthrough_action = XDA_METHOD;
 	xdst->sink_action = XDA_ERROR;
 	BUG_ON(xdst->dst.dev);
 	xdst->dst.dev = net->loopback_dev;
 	dev_hold(xdst->dst.dev);
-	xdst->dst.input = zf_input;
+	xdst->dst.input = xdst_def_hop_limit_input_method;
 	xdst->dst.output = zf_output;
 
 	xdst_attach_to_anchor(xdst, anchor_index, &zf_ctx->positive_anchor);
