@@ -320,31 +320,112 @@ static struct zf_dst_info *create_zf_dst_info(const u8 *xid)
 struct iterate_arg {
 	const u8 *xid;
 	bool matched;
+	bool forwarded_local;
 	struct sk_buff *skb;
 };
+
+/* Return true if the packet is ill formed. */
+static int dig_last_node(struct sk_buff *skb)
+{
+	struct xiphdr *xiph = xip_hdr(skb);
+	int chosen_edge = skb_xdst(skb)->chosen_edge;
+	struct xia_row *last_row = xip_last_row(xiph->dst_addr, xiph->num_dst,
+		xiph->last_node);
+
+	BUG_ON(chosen_edge < 0 || chosen_edge >= XIA_OUTDEGREE_MAX);
+	xip_select_edge(&xiph->last_node, last_row, chosen_edge);
+
+	/* One cannot use is_row_valid() instead of the test below
+	 * because XIA_ENTRY_NODE_INDEX could wrongly show up as an edge.
+	 */
+	BUG_ON(xiph->last_node >= xiph->num_dst);
+
+	/* A ZF XID followed by local LinkID cannot be a sink.
+	 * Notice that the packet may not have a ZF XID since the ZF XID may
+	 * have come from a routing redirect.
+	 */
+	last_row = xip_last_row(xiph->dst_addr, xiph->num_dst, xiph->last_node);
+	return is_it_a_sink(last_row, xiph->last_node, xiph->num_dst);
+}
+
+static int forward_local(struct iterate_arg *iarg,
+	struct fib_xid_zf_local *lzf)
+{
+	struct sk_buff *cpy_skb;
+	int rc;
+
+	/* It doesn't make sense to foward multiple local matches,
+	 * so we only forward the first successful one.
+	 */
+	if (iarg->forwarded_local)
+		goto out;
+
+	cpy_skb = pskb_copy(iarg->skb, GFP_ATOMIC);
+	if (!cpy_skb) {
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: no atomic memory to forward a patcket with the chosen local ZF edge\n"));
+		goto out;
+	}
+
+	if (dig_last_node(cpy_skb)) {
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward ill-formed patcket with the chosen local ZF edge\n"));
+		/* If one cannot dig the last node once,
+		 * one cannot dig it for all local entries.
+		 * Thus, we mark the packet as forwarded.
+		 */
+		goto failed_to_forward;
+	}
+
+	/* Route and forward @cpy_skb. */
+	skb_dst_drop(cpy_skb);
+	rc = xip_route(cpy_skb, 0);
+	if (rc) {
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after digging the local ZF edge: %i\n"),
+			rc);
+		/* If one cannot forward this packet once,
+		 * one cannot forward it for all local entries.
+		 * Thus, we mark the packet as forwarded.
+		 */
+		goto failed_to_forward;
+	}
+	rc = dst_output(cpy_skb);
+	if (rc)
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward a packet after digging the local ZF edge: %i\n"),
+			rc);
+	goto forwarded;
+
+failed_to_forward:
+	kfree_skb(cpy_skb);
+forwarded:
+	iarg->forwarded_local = true;
+out:
+	return 0;
+}
+
+static int forward_main(struct iterate_arg *iarg,
+	struct fib_xid_zf_main *mzf)
+{
+
+	/* TODO Copy skb. */
+	/* TODO Route with a fake address. */
+	/* TODO Call DST entry on skb. */
+	return 0;
+}
 
 static int match_xids_rcu(struct fib_xid_table *xtbl,
 	struct fib_xid *fxid, const void *arg)
 {
 	struct iterate_arg *iarg = (struct iterate_arg *)arg;
+
 	if (!zf_match(iarg->xid, fxid->fx_xid))
 		return 0;
 	iarg->matched = true;
 
 	switch (fxid->fx_table_id) {
 	case XRTABLE_LOCAL_INDEX:
-		/* TODO Copy skb, dig ZF XID, and
-		 * inject packet into XIP statck again.
-		 */
-		return 0;
+		return forward_local(iarg, fxid_lzf(fxid));
 
 	case XRTABLE_MAIN_INDEX:
-		/* TODO Is fxid's DST entry valid? */
-		/* TODO If not, skip this entry, and refresh all DST entries. */
-
-		/* TODO Copy skb. */
-		/* TODO Call DST entry on skb. */
-		return 0;
+		return forward_main(iarg, fxid_mzf(fxid));
 	}
 	BUG();
 }
@@ -355,7 +436,8 @@ static int zf_output(struct sk_buff *skb)
 	struct zf_dst_info *info = (struct zf_dst_info *)xdst->info;
 	struct net *net = xdst_net(xdst);
 	struct iterate_arg arg =
-		{.xid = info->xid, .matched = false, .skb = skb};
+		{.xid = info->xid, .matched = false,
+		.forwarded_local = false, .skb = skb};
 	struct xip_ppal_ctx *ctx;
 
 	rcu_read_lock();
@@ -408,7 +490,7 @@ static int zf_deliver(struct xip_route_proc *rproc, struct net *net,
 	xdst->ppal_destroy = def_ppal_destroy;
 
 	xdst->passthrough_action = XDA_METHOD;
-	xdst->sink_action = XDA_ERROR;
+	xdst->sink_action = XDA_METHOD;
 	BUG_ON(xdst->dst.dev);
 	xdst->dst.dev = net->loopback_dev;
 	dev_hold(xdst->dst.dev);
