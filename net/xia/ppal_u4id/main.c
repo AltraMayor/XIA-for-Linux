@@ -7,10 +7,9 @@
 #include <net/xia_dag.h>
 #include <net/xia_fib.h>
 #include <net/xia_output.h>
+#include <net/xia_u4id.h>
 #include <net/xia_vxidty.h>
 #include <uapi/linux/udp.h>
-
-#define XIDTYPE_U4ID		(__cpu_to_be32(0x16))
 
 /*
  *	U4ID context

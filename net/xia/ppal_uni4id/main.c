@@ -2,6 +2,7 @@
 #include <net/xia_fib.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
+#include <net/xia_u4id.h>
 #include <net/xia_vxidty.h>
 
 /* United 4ID Principal */
@@ -85,13 +86,11 @@ static struct pernet_operations uni4id_net_ops __read_mostly = {
  *	United 4ID Routing
  */
 
-/* XXX The following XID types should come from their respective
- * principals' header files once they are available.
+/* XXX The following XID type should come from its
+ * principal's header file once it is available.
  */
 /* IP 4ID: XIP over IP. */
 #define XIDTYPE_I4ID (__cpu_to_be32(0x15))
-/* UDP 4ID: XIP over UDP. */
-#define XIDTYPE_U4ID (__cpu_to_be32(0x16))
 
 static const u8 uni_xid_prefix[] = {
 	/* 0     1     2     3     4     5     6     7 */
