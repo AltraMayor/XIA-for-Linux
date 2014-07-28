@@ -17,18 +17,21 @@
 
 struct xip_u4id_ctx {
 	struct xip_ppal_ctx	ctx;
-	struct socket		*tunnel_sock;
 
-	/* Anchor for non-local, well-formed U4ID XIDs,
-	 * which represent tunnel destinations. Note
-	 * that an edge for this kind of XID will
-	 * always be followed, since the IP destination
-	 * will be assumed to be reachable.
-	 */
-	struct xip_dst_anchor	forward_anchor;
+	struct socket __rcu	*tunnel_sock;
 
 	/* Anchor for ill-formed U4ID XIDs. */
 	struct xip_dst_anchor	ill_anchor;
+
+	/* Anchor for non-local, well-formed U4IDs,
+	 * which represent tunnel destinations.
+	 * When one of the local U4IDs is a tunnel
+	 * source then the destination is assumed
+	 * to be reachable, so this anchor is
+	 * positive. When there is no tunnel source,
+	 * this anchor is negative.
+	 */
+	struct xip_dst_anchor	forward_anchor;
 };
 
 static inline struct xip_u4id_ctx *ctx_u4id(struct xip_ppal_ctx *ctx)
@@ -76,6 +79,16 @@ struct fib_xid_u4id_local {
 	struct xip_dst_anchor	anchor;
 	struct socket		*sock;
 	struct work_struct	del_work;
+
+	/* True if @sock represents a tunnel source. */
+	bool			tunnel;
+
+	/* True if checksums are disabled when using
+	 * @sock as a tunnel source.
+	 */
+	bool			checksum_disabled;
+
+	/* Two free bytes. */
 };
 
 static inline struct fib_xid_u4id_local *fxid_lu4id(struct fib_xid *fxid)
@@ -171,14 +184,26 @@ static void u4id_local_del_work(struct work_struct *work)
 	kfree(lu4id);
 }
 
+/* XXX This function should support updating local entries for:
+ *       - changing the tunnel status of an entry.
+ *       - changing the checksum status of a tunnel entry.
+ */
 static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
 	struct fib_xid_u4id_local *lu4id;
+	struct xip_u4id_ctx *u4id_ctx;
+	struct local_u4id_info *lu4id_info;
 	int rc;
 
-	if (!u4id_well_formed(cfg->xfc_dst->xid_id))
+	if (!u4id_well_formed(cfg->xfc_dst->xid_id) || !cfg->xfc_protoinfo ||
+		cfg->xfc_protoinfo_len != sizeof(*lu4id_info))
 		return -EINVAL;
+
+	lu4id_info = cfg->xfc_protoinfo;
+	u4id_ctx = ctx_u4id(ctx);
+	if (lu4id_info->tunnel && u4id_ctx->tunnel_sock)
+		return -EEXIST;
 
 	lu4id = kmalloc(sizeof(*lu4id), GFP_KERNEL);
 	if (!lu4id)
@@ -188,6 +213,8 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	xdst_init_anchor(&lu4id->anchor);
 	lu4id->sock = NULL;
 	INIT_WORK(&lu4id->del_work, u4id_local_del_work);
+	lu4id->tunnel = lu4id_info->tunnel;
+	lu4id->checksum_disabled = lu4id_info->checksum_disabled;
 
 	rc = create_lu4id_socket(lu4id, xtbl->fxt_net, cfg->xfc_dst->xid_id);
 	if (rc)
@@ -197,12 +224,73 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (rc)
 		goto lu4id;
 
+	/* We need to initialize the tunnel after the entry is
+	 * added, so that u4id_deliver can not see the tunnel
+	 * even when adding a local entry fails.
+	 */
+	if (lu4id_info->tunnel) {
+		lu4id->sock->sk->sk_no_check = lu4id_info->checksum_disabled
+			? UDP_CSUM_NOXMIT
+			: UDP_CSUM_DEFAULT;
+		rcu_assign_pointer(u4id_ctx->tunnel_sock, lu4id->sock);
+		/* Wait an RCU cycle before flushing the anchor.
+		 * Otherwise, a thread could see the tunnel socket as
+		 * NULL in u4id_deliver, but before it can add a
+		 * negative dependency the tunnel socket is added and
+		 * the negative dependencies flushed. Then the negative
+		 * dependency to be added in u4id_deliver is incorrect
+		 * and won't be flushed soon.
+		 */
+		synchronize_rcu();
+		xdst_free_anchor(&u4id_ctx->forward_anchor);
+	}
+
 	goto out;
 
 lu4id:
 	u4id_local_del_work(&lu4id->del_work);
 out:
 	return rc;
+}
+
+static int local_delroute(struct xip_ppal_ctx *ctx,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	struct fib_xid *fxid;
+	struct xip_u4id_ctx *u4id_ctx = NULL;
+
+	fxid = xia_find_xid_rcu(xtbl, cfg->xfc_dst->xid_id);
+	if (!fxid)
+		return -ENOENT;
+
+	if (fxid_lu4id(fxid)->tunnel) {
+		u4id_ctx = ctx_u4id(ctx);
+		BUG_ON(!u4id_ctx->tunnel_sock);
+		RCU_INIT_POINTER(u4id_ctx->tunnel_sock, NULL);
+	}
+
+	fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
+
+	/* Wait an RCU cycle before flushing positive dependencies.
+	 * Otherwise, a thread in u4id_deliver could see the tunnel
+	 * socket as available, but before it could add a positive
+	 * dependency another thread could delete the tunnel and
+	 * flush the positive dependencies. Then the first thread
+	 * would be adding an incorrect positive dependency for a
+	 * tunnel source that no longer exists.
+	 *
+	 * Even if we're not deleting the tunnel, this is still
+	 * relevant for the free_fxid_norcu call below.
+	 */
+	synchronize_rcu();
+
+	if (fxid_lu4id(fxid)->tunnel) {
+		BUG_ON(!u4id_ctx);
+		xdst_free_anchor(&u4id_ctx->forward_anchor);
+	}
+
+	free_fxid_norcu(xtbl, fxid);
+	return 0;
 }
 
 static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
@@ -214,6 +302,7 @@ static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct xia_xid dst;
+	struct local_u4id_info lu4id_info;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
 		NLM_F_MULTI);
@@ -239,6 +328,12 @@ static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
 		goto nla_put_failure;
 
+	lu4id_info.tunnel = fxid_lu4id(fxid)->tunnel;
+	lu4id_info.checksum_disabled = fxid_lu4id(fxid)->checksum_disabled;
+	if (unlikely(nla_put(skb, RTA_PROTOINFO, sizeof(lu4id_info),
+		&lu4id_info)))
+		goto nla_put_failure;
+
 	return nlmsg_end(skb, nlh);
 
 nla_put_failure:
@@ -257,66 +352,11 @@ static void local_free_u4id(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 static const xia_ppal_all_rt_eops_t u4id_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
-		.delroute = fib_default_local_delroute,
+		.delroute = local_delroute,
 		.dump_fxid = local_dump_u4id,
 		.free_fxid = local_free_u4id,
 	},
 };
-
-/*
- *	Tunnel socket
- */
-
-/* INADDR_ANY must already be in network byte order. */
-#define DEF_TUNNEL_INET_ADDR	INADDR_ANY
-#define DEF_TUNNEL_UDP_PORT	0x41d0
-
-/* Parameters for configuring the tunnel
- * socket's IP address, port, and checksum.
- */
-static char	*tunnel_addr;
-static u16	tunnel_port = DEF_TUNNEL_UDP_PORT;
-static bool	disable_checksum;
-
-module_param(tunnel_addr, charp, 0);
-MODULE_PARM_DESC(tunnel_addr, "IPv4 address for tunnel source");
-module_param(tunnel_port, short, 0);
-MODULE_PARM_DESC(tunnel_port, "UDP port for tunnel source");
-module_param(disable_checksum, bool, 0);
-MODULE_PARM_DESC(disable_checksum, "Disable UDP checksum for tunnel source");
-
-static int create_u4id_tunnel_sock(struct xip_u4id_ctx *u4id_ctx,
-	struct net *net)
-{
-	struct socket *sock;
-	struct sockaddr_in sa;
-	int rc;
-
-	rc = __sock_create(net, AF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock, 1);
-	if (rc)
-		goto out;
-
-	sa.sin_family = AF_INET;
-	sa.sin_addr.s_addr = tunnel_addr
-		? in_aton(tunnel_addr)
-		: DEF_TUNNEL_INET_ADDR;
-	sa.sin_port = htons(tunnel_port);
-
-	rc = kernel_bind(sock, (struct sockaddr *)&sa, sizeof(sa));
-	if (rc)
-		goto sock;
-
-	if (disable_checksum)
-		sock->sk->sk_no_check = UDP_CSUM_NOXMIT;
-
-	u4id_ctx->tunnel_sock = sock;
-	goto out;
-
-sock:
-	destroy_sock(sock);
-out:
-	return rc;
-}
 
 /*
  *	Network namespace
@@ -328,21 +368,34 @@ static struct xip_u4id_ctx *create_u4id_ctx(void)
 	if (!u4id_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&u4id_ctx->ctx, XIDTYPE_U4ID);
-	xdst_init_anchor(&u4id_ctx->forward_anchor);
 	xdst_init_anchor(&u4id_ctx->ill_anchor);
-	u4id_ctx->tunnel_sock = NULL;
+	xdst_init_anchor(&u4id_ctx->forward_anchor);
+	RCU_INIT_POINTER(u4id_ctx->tunnel_sock, NULL);
 	return u4id_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_u4id_ctx(struct xip_u4id_ctx *u4id_ctx)
 {
-	if (u4id_ctx->tunnel_sock) {
-		destroy_sock(u4id_ctx->tunnel_sock);
-		u4id_ctx->tunnel_sock = NULL;
-	}
-	xdst_free_anchor(&u4id_ctx->ill_anchor);
+	/* There are no other writers for the tunnel socket, since
+	 * no local entries can be added or removed by the user
+	 * since xip_del_ppal_ctx has already been called.
+	 */
+	RCU_INIT_POINTER(u4id_ctx->tunnel_sock, NULL);
+
+	/* There is no need to find the struct fib_xid_u4id_local
+	 * that held the tunnel socket in order to set its
+	 * tunnel field to false. The only read of the tunnel
+	 * field happens in local_delroute, which can no longer
+	 * be invoked since xip_del_ppal_ctx has already been called.
+	 *
+	 * Therefore, a local entry can incorrectly yet harmlessly hold
+	 * a tunnel field of true for a brief time until it is freed
+	 * even though the tunnel is no longer active.
+	 */
+
 	xdst_free_anchor(&u4id_ctx->forward_anchor);
+	xdst_free_anchor(&u4id_ctx->ill_anchor);
 	xip_release_ppal_ctx(&u4id_ctx->ctx);
 	kfree(u4id_ctx);
 }
@@ -357,13 +410,6 @@ static int __net_init u4id_net_init(struct net *net)
 		rc = -ENOMEM;
 		goto out;
 	}
-
-	/* XXX A container should not be forced to have
-	 * a tunnel socket when it is not using XIA.
-	 */
-	rc = create_u4id_tunnel_sock(u4id_ctx, net);
-	if (rc)
-		goto u4id_ctx;
 
 	rc = init_xid_table(&u4id_ctx->ctx, net, &xia_main_lock_table,
 		u4id_all_rt_eops);
@@ -429,6 +475,7 @@ static int main_input_output(struct sk_buff *skb)
 
 	struct xip_u4id_ctx *u4id_ctx;
 	struct u4id_tunnel_dest *tunnel;
+	struct socket *tunnel_sock;
 
 	struct udphdr *uh;
 	int uhlen = sizeof(*uh);
@@ -458,17 +505,26 @@ static int main_input_output(struct sk_buff *skb)
 	dest_ip_addr = tunnel->dest_ip_addr;
 	dest_port = tunnel->dest_port;
 
-	/* Get socket info. */
+	/* Get socket information. The tunnel socket is *not* guaranteed to
+	 * be here. If this point was reached between deleting the tunnel
+	 * socket and flushing the forward anchor, it will be NULL.
+	 */
 	rcu_read_lock();
 	u4id_ctx = ctx_u4id(xip_find_ppal_ctx_rcu(skb_dst(skb)->dev->nd_net,
 		XIDTYPE_U4ID));
-	sk = u4id_ctx->tunnel_sock->sk;
+	tunnel_sock = rcu_dereference(u4id_ctx->tunnel_sock);
+	if (!tunnel_sock) {
+		rcu_read_unlock();
+		kfree_skb(skb);
+		return NET_XMIT_DROP;
+	}
+	sk = tunnel_sock->sk;
 	sock_hold(sk);
-	skb->sk = sk;
-	WARN_ON(skb->destructor);
-	skb->destructor = u4id_sock_free;
 	rcu_read_unlock();
 	u4id_ctx = NULL; /* Helping to find future bugs in a long function. */
+	skb->sk = sk;
+	BUG_ON(skb->destructor);
+	skb->destructor = u4id_sock_free;
 
 	inet = inet_sk(sk);
 
@@ -481,18 +537,21 @@ static int main_input_output(struct sk_buff *skb)
 	uh->len = htons(uhlen + xip_and_data_len);
 
 	/* XXX It'd be nice to support hardware checksummig. */
-	if (disable_checksum) {
+	switch (sk->sk_no_check) {
+	case UDP_CSUM_NOXMIT:
 		skb->ip_summed = CHECKSUM_NONE;
 		uh->check = 0;
-	} else {
-		__wsum csum;
+		break;
+	case UDP_CSUM_DEFAULT:
 		skb->ip_summed = CHECKSUM_COMPLETE;
-		csum = udp_csum(skb);
 		uh->check = csum_tcpudp_magic(inet->inet_saddr, dest_ip_addr,
 			skb->len - skb_transport_offset(skb),
-			sk->sk_protocol, csum);
+			sk->sk_protocol, udp_csum(skb));
 		if (uh->check == 0)
 			uh->check = CSUM_MANGLED_0;
+		break;
+	default:
+		BUG();
 	}
 
 	/* Set up @skb. */
@@ -604,6 +663,14 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	}
 
 	/* Assume an unknown, well-formed U4ID is a tunnel destination. */
+	if (!rcu_dereference(u4id_ctx->tunnel_sock)) {
+		xdst_attach_to_anchor(xdst, anchor_index,
+			&u4id_ctx->forward_anchor);
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
+
+	/* Tunnel socket exists; set up XDST entry. */
 	tunnel = create_u4id_tunnel_dest(xid);
 	if (unlikely(!tunnel)) {
 		rcu_read_unlock();
