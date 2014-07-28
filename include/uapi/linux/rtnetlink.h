@@ -295,7 +295,7 @@ enum rtattr_type_t {
 	RTA_PREFSRC,
 	RTA_METRICS,
 	RTA_MULTIPATH,
-	RTA_PROTOINFO, /* no longer used */
+	RTA_PROTOINFO, /* Only used by XIA */
 	RTA_FLOW,
 	RTA_CACHEINFO,
 	RTA_SESSION, /* no longer used */

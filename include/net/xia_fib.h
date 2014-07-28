@@ -27,7 +27,7 @@ struct xia_fib_config {
 	/* See rtm_type in linux/rtnetlink.h */
 	u8			xfc_type;
 	u8			xfc_lladdr_len;
-	/* 1 byte unused */
+	u8			xfc_protoinfo_len;
 
 	u32			xfc_flags;
 
@@ -35,6 +35,7 @@ struct xia_fib_config {
 	struct net_device	*xfc_odev;
 	struct xia_xid		*xfc_gw;
 	u8			*xfc_lladdr;
+	void			*xfc_protoinfo;
 
 	u32			xfc_nlflags;
 	struct nl_info		xfc_nlinfo;

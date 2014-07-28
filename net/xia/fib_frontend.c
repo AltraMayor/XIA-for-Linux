@@ -5,13 +5,20 @@
 #include <net/xia_fib.h>
 #include <net/xia_route.h>
 
-#define XID_NLATTR	{ .len = sizeof(struct xia_xid) }
+#define FIELD_TYPE(t,f)		typeof(((struct t *)0)->f)
+
+#define XID_NLATTR		{ .len = sizeof(struct xia_xid) }
+#define PROTOINFO_NLATTR	{					\
+	.type = NLA_BINARY,						\
+	.len = ((FIELD_TYPE(xia_fib_config, xfc_protoinfo_len))(~0U))	\
+}
 
 static const struct nla_policy rtm_xia_policy[RTA_MAX + 1] = {
 	[RTA_DST]		= XID_NLATTR,
 	[RTA_OIF]		= { .type = NLA_U32 },
 	[RTA_GATEWAY]		= XID_NLATTR,
 	[RTA_LLADDR]		= { .type = NLA_BINARY, .len = MAX_ADDR_LEN },
+	[RTA_PROTOINFO]		= PROTOINFO_NLATTR,
 };
 
 static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
@@ -67,6 +74,10 @@ static int rtm_to_fib_config(struct net *net, struct sk_buff *skb,
 		case RTA_LLADDR:
 			cfg->xfc_lladdr = nla_data(attr);
 			cfg->xfc_lladdr_len = nla_len(attr);
+			break;
+		case RTA_PROTOINFO:
+			cfg->xfc_protoinfo = nla_data(attr);
+			cfg->xfc_protoinfo_len = nla_len(attr);
 			break;
 		default:
 			return -EINVAL;
