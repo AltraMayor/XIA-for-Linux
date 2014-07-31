@@ -156,8 +156,20 @@ struct xip_dst {
 	 */
 	s8			chosen_edge;
 
-	/* Extra information for dst.input and dst.output methods. */
+	/* Extra information for dst.input and dst.output methods.
+	 * This field should only be used by the principal that sets
+	 * the positive anchor.
+	 */
 	void			*info;
+
+	/* When the principal that sets the positive anchor needs to
+	 * release something during the release of this structure,
+	 * this principal should define this method;
+	 * otherwise leave it undefined.
+	 * A typical use is to release a memory block held at field @info;
+	 * for this case, consider using def_ppal_destroy().
+	 */
+	void			(*ppal_destroy)(struct xip_dst *xdst);
 
 	struct {
 		struct xip_dst_anchor		*anchor;
@@ -187,6 +199,13 @@ static inline void xdst_put(struct xip_dst *xdst)
 {
 	dst_release(&xdst->dst);
 }
+
+/* In case all a principal wants is to release (i.e. calling kfree())
+ * @xdst->info, this function should be used for convenience.
+ * If you need a personalized method, check that your DST entries
+ * are freed before your module is unloaded.
+ */
+void def_ppal_destroy(struct xip_dst *xdst);
 
 extern struct dst_ops xip_dst_ops_template;
 static inline struct net *dstops_net(struct dst_ops *ops)

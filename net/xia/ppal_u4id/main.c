@@ -405,33 +405,16 @@ typedef void (*dst_destroy_method_t)(struct dst_entry *dst);
 struct u4id_tunnel_dest {
 	__be32	dest_ip_addr;
 	__be16	dest_port;
-
-	dst_destroy_method_t next_destroy;
 };
 
-static struct u4id_tunnel_dest *create_u4id_tunnel_dest(const u8 *xid,
-	dst_destroy_method_t next_destroy)
+static struct u4id_tunnel_dest *create_u4id_tunnel_dest(const u8 *xid)
 {
 	struct u4id_tunnel_dest *tunnel = kmalloc(sizeof(*tunnel), GFP_ATOMIC);
 	if (!tunnel)
 		return NULL;
 	tunnel->dest_ip_addr = *(__be32 *)xid;
 	tunnel->dest_port = *(__be16 *)(xid + sizeof(tunnel->dest_ip_addr));
-	tunnel->next_destroy = next_destroy;
 	return tunnel;
-}
-
-/* Callback function invoked when a DST entry is destroyed. */
-static void destroy_u4id_tunnel_dest(struct dst_entry *dst)
-{
-	struct xip_dst *xdst = dst_xdst(dst);
-	struct u4id_tunnel_dest *tunnel = (struct u4id_tunnel_dest *)xdst->info;
-	dst_destroy_method_t next_destroy = tunnel->next_destroy;
-
-	xdst->info = NULL;
-	kfree(tunnel);
-	if (next_destroy)
-		return next_destroy(dst);
 }
 
 /* Automatically called when the @skb is freed. */
@@ -625,14 +608,14 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	}
 
 	/* Assume an unknown, well-formed U4ID is a tunnel destination. */
-	tunnel = create_u4id_tunnel_dest(xid, xdst->dst.ops->destroy);
+	tunnel = create_u4id_tunnel_dest(xid);
 	if (unlikely(!tunnel)) {
 		rcu_read_unlock();
 		/* Not enough memory to conclude this operation. */
 		return XRP_ACT_ABRUPT_FAILURE;
 	}
 	xdst->info = tunnel;
-	xdst->dst.ops->destroy = destroy_u4id_tunnel_dest;
+	xdst->ppal_destroy = def_ppal_destroy;
 
 	xdst->passthrough_action = XDA_METHOD;
 	xdst->sink_action = XDA_ERROR;
