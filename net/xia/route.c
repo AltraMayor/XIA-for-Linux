@@ -46,6 +46,9 @@ static unsigned int xip_mtu(const struct dst_entry *dst)
 
 static void xip_dst_destroy(struct dst_entry *dst)
 {
+	struct xip_dst *xdst = dst_xdst(dst);
+	if (xdst->ppal_destroy)
+		xdst->ppal_destroy(xdst);
 	dst_destroy_metrics_generic(dst);
 }
 
@@ -239,6 +242,13 @@ static inline void xdst_rcu_free(struct xip_dst *xdst)
 	xdst_free_begin(xdst);
 	call_rcu(&xdst->dst.rcu_head, _xdst_rcu_free);
 }
+
+void def_ppal_destroy(struct xip_dst *xdst)
+{
+	kfree(xdst->info);
+	xdst->info = NULL;
+}
+EXPORT_SYMBOL_GPL(def_ppal_destroy);
 
 static inline struct dst_entry **dsthead(struct net *net, u32 key_hash)
 {
