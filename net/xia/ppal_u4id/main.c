@@ -398,9 +398,6 @@ static struct pernet_operations u4id_net_ops __read_mostly = {
  *	U4ID Routing
  */
 
-
-typedef void (*dst_destroy_method_t)(struct dst_entry *dst);
-
 /* Tunnel destination information held in a DST entry. */
 struct u4id_tunnel_dest {
 	__be32	dest_ip_addr;
