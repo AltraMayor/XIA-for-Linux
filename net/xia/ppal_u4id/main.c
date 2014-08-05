@@ -465,94 +465,75 @@ static void u4id_sock_free(struct sk_buff *skb)
 	sock_put(skb->sk);
 }
 
-static int main_input_output(struct sk_buff *skb)
+static struct sock *get_tunnel_sock(struct net *net)
 {
-	struct net *net;
-	struct inet_sock *inet;
-	struct rtable *rt;
-	struct flowi4 fl4;
+	struct xip_u4id_ctx *u4id_ctx;
+	struct socket *tunnel_sock;
 	struct sock *sk;
 
-	struct xip_u4id_ctx *u4id_ctx;
-	struct u4id_tunnel_dest *tunnel;
-	struct socket *tunnel_sock;
-
-	struct udphdr *uh;
-	int uhlen = sizeof(*uh);
-	int xip_and_data_len = skb->len;
-	__be32 dest_ip_addr;
-	__be16 dest_port;
-
-	/* Check that there's enough headroom in the @skb to
-	 * insert the IP and UDP headers. If not enough,
-	 * expand it to make room. Adjust truesize.
-	 */
-	if (skb_cow_head(skb, NET_SKB_PAD + sizeof(struct iphdr) + uhlen)) {
-		kfree_skb(skb);
-		return NET_XMIT_DROP;
-	}
-
-	skb_orphan(skb);
-
-	/* Reset @skb netfilter state. */
-	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
-	IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED |
-		IPSKB_REROUTED);
-	nf_reset(skb);
-
-	/* Fetch U4ID from XDST entry to get IP address and port. */
-	tunnel = (struct u4id_tunnel_dest *)skb_xdst(skb)->info;
-	dest_ip_addr = tunnel->dest_ip_addr;
-	dest_port = tunnel->dest_port;
-
-	/* Get socket information. The tunnel socket is *not* guaranteed to
-	 * be here. If this point was reached between deleting the tunnel
-	 * socket and flushing the forward anchor, it will be NULL.
-	 */
 	rcu_read_lock();
-	u4id_ctx = ctx_u4id(xip_find_ppal_ctx_rcu(skb_dst(skb)->dev->nd_net,
-		XIDTYPE_U4ID));
+	u4id_ctx = ctx_u4id(xip_find_ppal_ctx_rcu(net, XIDTYPE_U4ID));
 	tunnel_sock = rcu_dereference(u4id_ctx->tunnel_sock);
 	if (!tunnel_sock) {
 		rcu_read_unlock();
-		kfree_skb(skb);
-		return NET_XMIT_DROP;
+		return NULL;
 	}
 	sk = tunnel_sock->sk;
 	sock_hold(sk);
 	rcu_read_unlock();
-	u4id_ctx = NULL; /* Helping to find future bugs in a long function. */
-	skb->sk = sk;
-	BUG_ON(skb->destructor);
-	skb->destructor = u4id_sock_free;
+	return sk;
+}
 
-	inet = inet_sk(sk);
+static void push_udp_header(struct sk_buff *skb,
+	__be32 dest_ip_addr, __be16 dest_port)
+{
+	struct sock *sk = skb->sk;
+	struct inet_sock *inet = inet_sk(sk);
+
+	struct udphdr *uh;
+	int uhlen = sizeof(*uh);
+	int udp_payload_len = skb->len;
 
 	/* Set up UDP header. */
-	__skb_push(skb, uhlen);
+	skb_push(skb, uhlen);
 	skb_reset_transport_header(skb);
 	uh = udp_hdr(skb);
 	uh->source = inet->inet_sport;
 	uh->dest = dest_port;
-	uh->len = htons(uhlen + xip_and_data_len);
+	uh->len = htons(uhlen + udp_payload_len);
+	uh->check = 0;
 
 	/* XXX It'd be nice to support hardware checksummig. */
 	switch (sk->sk_no_check) {
 	case UDP_CSUM_NOXMIT:
 		skb->ip_summed = CHECKSUM_NONE;
-		uh->check = 0;
 		break;
 	case UDP_CSUM_DEFAULT:
 		skb->ip_summed = CHECKSUM_COMPLETE;
 		uh->check = csum_tcpudp_magic(inet->inet_saddr, dest_ip_addr,
-			skb->len - skb_transport_offset(skb),
-			sk->sk_protocol, udp_csum(skb));
+			skb->len, sk->sk_protocol, udp_csum(skb));
 		if (uh->check == 0)
 			uh->check = CSUM_MANGLED_0;
 		break;
 	default:
 		BUG();
 	}
+}
+
+static int handle_skb_to_ipv4(struct sk_buff *skb,
+	__be32 dest_ip_addr, __be16 dest_port)
+{
+	struct sock *sk = skb->sk;
+	struct inet_sock *inet = inet_sk(sk);
+	struct net *net = sock_net(sk);
+	struct flowi4 fl4;
+	struct rtable *rt;
+
+	/* Reset @skb netfilter state. */
+	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
+	IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED |
+		IPSKB_REROUTED);
+	nf_reset(skb);
 
 	/* Set up @skb. */
 	skb->protocol = __cpu_to_be16(ETH_P_IP);
@@ -565,7 +546,6 @@ static int main_input_output(struct sk_buff *skb)
 		inet_sk_flowi_flags(sk), dest_ip_addr, inet->inet_saddr,
 		dest_port, inet->inet_sport);
 	security_sk_classify_flow(sk, flowi4_to_flowi(&fl4));
-	net = sock_net(sk);
 	rt = ip_route_output_flow(net, &fl4, sk);
 	if (IS_ERR(rt)) {
 		int rc = PTR_ERR(rt);
@@ -577,8 +557,48 @@ static int main_input_output(struct sk_buff *skb)
 	skb_dst_set(skb, dst_clone(&rt->dst));
 	ip_rt_put(rt);
 
-	/* Send UDP/IP packet with XIP and data as payload. */
 	return ip_queue_xmit(skb, flowi4_to_flowi(&fl4));
+}
+
+static int main_input_output(struct sk_buff *skb)
+{
+	struct sock *sk;
+	struct u4id_tunnel_dest *tunnel;
+	__be32 dest_ip_addr;
+	__be16 dest_port;
+
+	/* Check that there's enough headroom in the @skb to
+	 * insert the IP and UDP headers. If not enough,
+	 * expand it to make room. Adjust truesize.
+	 */
+	if (skb_cow_head(skb,
+		NET_SKB_PAD + sizeof(struct iphdr) + sizeof(struct udphdr))) {
+		kfree_skb(skb);
+		return NET_XMIT_DROP;
+	}
+
+	/* The tunnel socket is *not* guaranteed to be here.
+	 * If this point was reached between deleting the tunnel socket and
+	 * flushing the forward anchor, it will be NULL.
+	 */
+	sk = get_tunnel_sock(dev_net(skb_dst(skb)->dev));
+	if (unlikely(!sk)) {
+		kfree_skb(skb);
+		return NET_XMIT_DROP;
+	}
+	skb_orphan(skb);
+	skb->sk = sk;
+	skb->destructor = u4id_sock_free;
+
+	/* Fetch U4ID from XDST entry to get IP address and port. */
+	tunnel = (struct u4id_tunnel_dest *)skb_xdst(skb)->info;
+	dest_ip_addr = tunnel->dest_ip_addr;
+	dest_port = tunnel->dest_port;
+
+	push_udp_header(skb, dest_ip_addr, dest_port);
+
+	/* Send UDP packet with XIP and data as payload. */
+	return handle_skb_to_ipv4(skb, dest_ip_addr, dest_port);
 }
 
 static int process_main_input(struct sk_buff *skb, int dec_hop_limit)
