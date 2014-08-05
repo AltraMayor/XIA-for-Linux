@@ -225,8 +225,8 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 		goto lu4id;
 
 	/* We need to initialize the tunnel after the entry is
-	 * added, so that u4id_deliver can not see the tunnel
-	 * even when adding a local entry fails.
+	 * added, so that u4id_deliver() does not see the tunnel
+	 * when adding the local entry fails.
 	 */
 	if (lu4id_info->tunnel) {
 		lu4id->sock->sk->sk_no_check = lu4id_info->checksum_disabled
@@ -234,12 +234,12 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 			: UDP_CSUM_DEFAULT;
 		rcu_assign_pointer(u4id_ctx->tunnel_sock, lu4id->sock);
 		/* Wait an RCU cycle before flushing the anchor.
-		 * Otherwise, a thread could see the tunnel socket as
-		 * NULL in u4id_deliver, but before it can add a
-		 * negative dependency the tunnel socket is added and
-		 * the negative dependencies flushed. Then the negative
-		 * dependency to be added in u4id_deliver is incorrect
-		 * and won't be flushed soon.
+		 * Otherwise, a thread in u4id_deliver() could see the tunnel
+		 * socket as NULL, but before it could add a negative
+		 * dependency, another thread running this function
+		 * adds the tunnel and flushes the negative dependencies.
+		 * Then the first thread would be adding an incorrect
+		 * negative dependency that won't be flushed soon.
 		 */
 		synchronize_rcu();
 		xdst_free_anchor(&u4id_ctx->forward_anchor);
@@ -257,39 +257,49 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
 	struct fib_xid *fxid;
-	struct xip_u4id_ctx *u4id_ctx = NULL;
+	struct fib_xid_u4id_local *lu4id;
 
-	fxid = xia_find_xid_rcu(xtbl, cfg->xfc_dst->xid_id);
+	fxid = fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
 	if (!fxid)
 		return -ENOENT;
+	lu4id = fxid_lu4id(fxid);
 
-	if (fxid_lu4id(fxid)->tunnel) {
-		u4id_ctx = ctx_u4id(ctx);
+	if (lu4id->tunnel) {
+		/* Notice that we remove the local entry, then
+		 * drop the tunnel socket in the same order
+		 * we add them in local_newroute() instead of
+		 * the reverse order for convenience.
+		 */
+
+		struct xip_u4id_ctx *u4id_ctx = ctx_u4id(ctx);
 		BUG_ON(!u4id_ctx->tunnel_sock);
 		RCU_INIT_POINTER(u4id_ctx->tunnel_sock, NULL);
-	}
 
-	fib_rm_xid(xtbl, cfg->xfc_dst->xid_id);
-
-	/* Wait an RCU cycle before flushing positive dependencies.
-	 * Otherwise, a thread in u4id_deliver could see the tunnel
-	 * socket as available, but before it could add a positive
-	 * dependency another thread could delete the tunnel and
-	 * flush the positive dependencies. Then the first thread
-	 * would be adding an incorrect positive dependency for a
-	 * tunnel source that no longer exists.
-	 *
-	 * Even if we're not deleting the tunnel, this is still
-	 * relevant for the free_fxid_norcu call below.
-	 */
-	synchronize_rcu();
-
-	if (fxid_lu4id(fxid)->tunnel) {
-		BUG_ON(!u4id_ctx);
+		/* Wait an RCU cycle before flushing positive dependencies.
+		 * Otherwise, a thread in u4id_deliver() could see the tunnel
+		 * socket as available, but before it could add a positive
+		 * dependency, another thread running this function
+		 * deletes the tunnel and flush the positive dependencies.
+		 * Then the first thread would be adding an incorrect
+		 * positive dependency for a tunnel source that
+		 * no longer exists.
+		 *
+		 * It's also needed for u4id_local_del_work() below.
+		 */
+		synchronize_rcu();
 		xdst_free_anchor(&u4id_ctx->forward_anchor);
+	} else {
+		/* Needed for u4id_local_del_work() below. */
+		synchronize_rcu();
 	}
 
-	free_fxid_norcu(xtbl, fxid);
+	/* We want to free @fxid before returning to make sure that
+	 * the socket associated to @fxid is released.
+	 * Otherwise, applications removing and adding the same entry
+	 * would ocasionally fail when the socket wasn't released while
+	 * the application try to add the entry back.
+	 */
+	u4id_local_del_work(&lu4id->del_work);
 	return 0;
 }
 
