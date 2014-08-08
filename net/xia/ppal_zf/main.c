@@ -404,10 +404,33 @@ out:
 static int forward_main(struct iterate_arg *iarg,
 	struct fib_xid_zf_main *mzf)
 {
+	struct sk_buff *cpy_skb;
+	struct xip_dst *xdst;
+	int rc;
 
-	/* TODO Copy skb. */
-	/* TODO Route with a fake address. */
-	/* TODO Call DST entry on skb. */
+	cpy_skb = pskb_copy(iarg->skb, GFP_ATOMIC);
+	if (!cpy_skb) {
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: no atomic memory to forward a patcket with the chosen main ZF edge\n"));
+		return 0;
+	}
+
+	/* Route and forward @cpy_skb. */
+	skb_dst_drop(cpy_skb);
+	xdst = skb_xdst(iarg->skb);
+	/* XXX This way of routing may lead to loops, which should be
+	 * gracefully handled.
+	 */
+	rc = xip_route_with_a_redirect(cpy_skb, &mzf->gw, xdst->chosen_edge, 0);
+	if (rc) {
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after redirecting the main ZF edge: %i\n"),
+			rc);
+		kfree_skb(cpy_skb);
+		return 0;
+	}
+	rc = dst_output(cpy_skb);
+	if (rc)
+		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward a packet after routing the main ZF edge: %i\n"),
+			rc);
 	return 0;
 }
 

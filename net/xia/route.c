@@ -121,7 +121,8 @@ static inline void update_edge_hash(u32 *pkey_hash, const struct xia_xid *xid)
 	*pkey_hash = jhash2((const u32 *)xid, n, *pkey_hash);
 }
 
-static u32 hash_edges(struct xia_row *addr, struct xia_row *row, int input)
+static u32 hash_edges(const struct xia_row *addr, const struct xia_row *row,
+	int input)
 {
 	int i;
 	u32 key_hash = start_edge_hash(input);
@@ -135,7 +136,7 @@ static u32 hash_edges(struct xia_row *addr, struct xia_row *row, int input)
 	return key_hash;
 }
 
-static void set_xdst_key(struct xip_dst *xdst, struct xia_row *addr,
+static void set_xdst_key(struct xip_dst *xdst, const struct xia_row *addr,
 	struct xia_row *row, int input, u32 key_hash)
 {
 	int i;
@@ -249,8 +250,8 @@ static inline struct dst_entry **dsthead(struct net *net, u32 key_hash)
 }
 
 /* Return true if @xdst has the same key of (@addr, @row, @input). */
-static int xdst_matches_addr(struct xip_dst *xdst, struct xia_row *addr,
-	struct xia_row *row, int input)
+static int xdst_matches_addr(struct xip_dst *xdst, const struct xia_row *addr,
+	const struct xia_row *row, int input)
 {
 	int i;
 
@@ -274,7 +275,7 @@ static int xdst_matches_addr(struct xip_dst *xdst, struct xia_row *addr,
 }
 
 static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash,
-	struct xia_row *addr, struct xia_row *row, int input)
+	const struct xia_row *addr, const struct xia_row *row, int input)
 {
 	/* The trailing `h' stands for hash because it's pointing to
 	 * an entry in a bucket list.
@@ -1042,8 +1043,8 @@ static struct xip_dst xdst_error = {
  */
 static inline struct xip_dst *use_dst_table_rcu(
 	struct xip_dst *xdst_hint, u32 *pkey_hash, int *pdrop,
-	struct net *net, struct xia_row *addr, u8 num_dst, u8 *plast_node,
-	struct xia_row **plast_row, int input)
+	struct net *net, struct xia_row *addr, const struct xia_row *xids_addr,
+	u8 num_dst, u8 *plast_node, struct xia_row **plast_row, int input)
 {
 	struct xip_dst *xdst;
 	struct xia_row *next_row;
@@ -1065,9 +1066,10 @@ tail_call:
 		/* This function isn't supposed to be called on sinks! */
 		BUG_ON(is_it_a_sink(*plast_row, *plast_node, num_dst));
 
-		*pkey_hash = hash_edges(addr, *plast_row, input);
+		*pkey_hash = hash_edges(xids_addr, *plast_row, input);
 
-		xdst = find_xdst_rcu(net, *pkey_hash, addr, *plast_row, input);
+		xdst = find_xdst_rcu(net, *pkey_hash, xids_addr,
+			*plast_row, input);
 		if (!xdst)
 			/* The DST table doesn't know how to handle this row. */
 			return NULL;
@@ -1127,8 +1129,17 @@ tail_call:
 	}
 }
 
-/* The returned reference to a struct xip_dst already has been held. */
-static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
+/* The returned reference to a struct xip_dst already has been held.
+ *
+ * The XIDs in @xids_addr are considered instead of the ones in @addr.
+ * Only the edges of @addr are marked, but edges are read from
+ * @addr AND @xids_addr.
+ * Therefore, they must start identical.
+ * This is meant to allow the caller to pass @addr twice if it doesn't need
+ * to have different XIDs.
+ */
+static struct xip_dst *choose_an_edge(struct net *net,
+	struct xia_row *addr, const struct xia_row *xids_addr,
 	u8 num_dst, u8 *plast_node, struct xia_row *last_row, int input)
 {
 	struct xip_dst *xdst;
@@ -1147,7 +1158,7 @@ static struct xip_dst *choose_an_edge(struct net *net, struct xia_row *addr,
 
 tail_call:
 	xdst = use_dst_table_rcu(xdst, &key_hash, &drop,
-		net, addr, num_dst, plast_node, &last_row, input);
+		net, addr, xids_addr, num_dst, plast_node, &last_row, input);
 	if (drop) {
 		BUG_ON(xdst);
 		goto out;
@@ -1161,7 +1172,7 @@ tail_call:
 	xdst = xip_dst_alloc(net, 0);
 	if (!xdst)
 		goto out;
-	set_xdst_key(xdst, addr, last_row, input, key_hash);
+	set_xdst_key(xdst, xids_addr, last_row, input, key_hash);
 
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		u8 e = last_row->s_edge.a[i];
@@ -1173,7 +1184,7 @@ tail_call:
 			 */
 			break;
 		}
-		next_xid = &addr[e].s_xid;
+		next_xid = &xids_addr[e].s_xid;
 
 		/* Is it forwardable? */
 		switch (deliver_rcu(net, next_xid, i, xdst)) {
@@ -1212,8 +1223,9 @@ out:
 	return xdst;
 }
 
-struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
-	struct xia_row *addr, int num_dst, u8 *plast_node, int input)
+static struct xip_dst *xip_mark_addr2_and_get_dst(struct net *net,
+	struct xia_row *addr, const struct xia_row *xids_addr,
+	int num_dst, u8 *plast_node, int input)
 {
 	int last_node = *plast_node;
 	struct xia_row *last_row = xip_last_row(addr, num_dst, last_node);
@@ -1228,13 +1240,54 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 	}
 
 	/* Inductive step. */
-	xdst = choose_an_edge(net, addr, num_dst, plast_node, last_row, input);
+	xdst = choose_an_edge(net, addr, xids_addr,
+		num_dst, plast_node, last_row, input);
 	if (unlikely(!xdst))
 		return ERR_PTR(-ENETUNREACH);
 
 	return xdst;
 }
+
+struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
+	struct xia_row *addr, int num_dst, u8 *plast_node, int input)
+{
+	return xip_mark_addr2_and_get_dst(net, addr, addr,
+		num_dst, plast_node, input);
+}
 EXPORT_SYMBOL_GPL(xip_mark_addr_and_get_dst);
+
+int xip_route_with_a_redirect(struct sk_buff *skb,
+	const struct xia_xid *next_xid, int chosen_edge, int input)
+{
+	struct xiphdr *xiph = xip_hdr(skb);
+	struct xia_addr redirected_addr;
+	struct xia_row *ra_last_row;
+	struct xip_dst *xdst;
+	int e;
+
+	/* Set @redirected_addr. */
+
+	/* @redirected_addr is on our stack, so it can't overlap with
+	 * @xiph->dst_addr. Therefore, memcpy() is safe.
+	 */
+	memcpy(redirected_addr.s_row, xiph->dst_addr,
+		xiph->num_dst * sizeof(struct xia_row));
+
+	/* Overwrite previous XID. */
+ 	ra_last_row = xip_last_row(redirected_addr.s_row,
+		xiph->num_dst, xiph->last_node);
+	e = ra_last_row->s_edge.a[chosen_edge];
+	redirected_addr.s_row[e].s_xid = *next_xid;
+
+	xdst = xip_mark_addr2_and_get_dst(skb_net(skb),
+		xiph->dst_addr, redirected_addr.s_row,
+		xiph->num_dst, &xiph->last_node, input);
+	if (IS_ERR(xdst))
+		return PTR_ERR(xdst);
+	skb_dst_set(skb, &xdst->dst);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(xip_route_with_a_redirect);
 
 int xip_route(struct sk_buff *skb, int input)
 {
