@@ -143,17 +143,9 @@ u32 serval_tcp_reno_ssthresh(struct sock *sk)
 	return max(tp->snd_cwnd >> 1U, 2U);
 }
 
-/* Lower bound on congestion window with halving. */
-u32 serval_tcp_reno_min_cwnd(const struct sock *sk)
-{
-	const struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-	return tp->snd_ssthresh/2;
-}
-
 struct tcp_congestion_ops serval_tcp_init_congestion_ops  = {
 	.name		= "",
 	.owner		= THIS_MODULE,
 	.ssthresh	= serval_tcp_reno_ssthresh,
 	.cong_avoid	= serval_tcp_reno_cong_avoid,
-	.min_cwnd	= serval_tcp_reno_min_cwnd,
 };
