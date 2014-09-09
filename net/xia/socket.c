@@ -564,7 +564,8 @@ static int xia_create(struct net *net, struct socket *sock,
 	sk->sk_destruct		= xia_sock_destruct;
 	sk->sk_protocol		= protocol;
 	sk->sk_backlog_rcv	= sk->sk_prot->backlog_rcv;
-	sk->sk_no_check		= 1;	/* Checksum off by default */
+	sk->sk_no_check_tx	= 1;	/* TX checksum off by default */
+	sk->sk_no_check_rx	= 1;	/* RX checksum off by default */
 	sk_refcnt_debug_inc(sk);
 
 	xia = xia_sk(sk);
