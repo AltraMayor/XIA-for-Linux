@@ -1378,7 +1378,7 @@ static int serval_sal_child_process(struct sock *parent,
 		if (rc == 0 && state == SAL_RESPOND &&
 			child->xia_sk.sk.sk_state != state) {
 			/* Waking up parent (listening) sock. */
-			parent->sk_data_ready(parent, 0);
+			parent->sk_data_ready(parent);
 		}
 	} else {
 		/* User got lock, add skb to backlog so that it will

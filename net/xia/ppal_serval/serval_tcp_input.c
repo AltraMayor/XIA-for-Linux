@@ -2709,7 +2709,7 @@ queue_and_out:
 			__kfree_skb(skb);
 		} else if (!sock_flag(sk, SOCK_DEAD)) {
 
-			sk->sk_data_ready(sk, 0);
+			sk->sk_data_ready(sk);
 		}
 		return;
 	}
@@ -3193,11 +3193,11 @@ static int serval_tcp_dma_try_early_copy(struct sock *sk, struct sk_buff *skb,
 		    (tcp_flag_word(tcp_hdr(skb)) & TCP_FLAG_PSH) ||
 		    (atomic_read(&sk->sk_rmem_alloc) > (sk->sk_rcvbuf >> 1))) {
 			tp->ucopy.wakeup = 1;
-			sk->sk_data_ready(sk, 0);
+			sk->sk_data_ready(sk);
 		}
 	} else if (chunk > 0) {
 		tp->ucopy.wakeup = 1;
-		sk->sk_data_ready(sk, 0);
+		sk->sk_data_ready(sk);
 	}
 out:
 	return copied_early;
@@ -3675,7 +3675,7 @@ no_ack:
 				if (eaten)
 					__kfree_skb(skb);
 				else
-					sk->sk_data_ready(sk, 0);
+					sk->sk_data_ready(sk);
 			}
 			return 0;
 		}
