@@ -717,11 +717,9 @@ static int serval_tcp_any_retrans_done(struct sock *sk)
  */
 static inline u32 serval_tcp_cwnd_min(const struct sock *sk)
 {
-	const struct tcp_congestion_ops *ca_ops =
-		serval_tcp_sk(sk)->ca_ops;
-
-	return ca_ops->min_cwnd ? ca_ops->min_cwnd(sk) :
-		serval_tcp_sk(sk)->snd_ssthresh;
+	/* Lower bound on congestion window with halving. */
+	const struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+	return tp->snd_ssthresh/2;
 }
 
 /* Decrease cwnd each second ack. */
