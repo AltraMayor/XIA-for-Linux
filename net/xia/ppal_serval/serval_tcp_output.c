@@ -940,12 +940,6 @@ static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	BUG_ON(!skb || !serval_tcp_skb_pcount(skb));
 
-	/* If congestion control is doing timestamping, we must
-	 * take such a timestamp before we potentially clone/copy.
-	 */
-	if (tp->ca_ops->flags & TCP_CONG_RTT_STAMP)
-		__net_timestamp(skb);
-
 	if (likely(clone_it)) {
 		if (unlikely(skb_cloned(skb)))
 			skb = pskb_copy(skb, gfp_mask);

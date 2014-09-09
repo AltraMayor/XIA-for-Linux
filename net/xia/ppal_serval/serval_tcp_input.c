@@ -1998,18 +1998,9 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 			s32 rtt_us = -1;
 
 			/* Is the ACK triggering packet unambiguous? */
-			if (!(flag & FLAG_RETRANS_DATA_ACKED)) {
-				/* High resolution needed and available? */
-
-				if (ca_ops->flags & TCP_CONG_RTT_STAMP &&
-					!ktime_equal(last_ackt,
-						net_invalid_timestamp()))
-					rtt_us = ktime_us_delta(
-						ktime_get_real(),
-						last_ackt);
-				else if (ca_seq_rtt > 0)
-					rtt_us = jiffies_to_usecs(ca_seq_rtt);
-			}
+			if (!(flag & FLAG_RETRANS_DATA_ACKED) &&
+				ca_seq_rtt > 0)
+				rtt_us = jiffies_to_usecs(ca_seq_rtt);
 
 			ca_ops->pkts_acked(sk, pkts_acked, rtt_us);
 		}
