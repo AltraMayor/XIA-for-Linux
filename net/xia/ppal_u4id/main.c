@@ -547,7 +547,7 @@ static int handle_skb_to_ipv4(struct sk_buff *skb,
 
 	/* Set up @skb. */
 	skb->protocol = __cpu_to_be16(ETH_P_IP);
-	skb->local_df = 1;
+	skb->ignore_df = 1;
 
 	/* Set up IP DST. */
 	skb_dst_drop(skb);
