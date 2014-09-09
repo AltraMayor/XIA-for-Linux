@@ -198,7 +198,7 @@ static inline void xdst_free_begin(struct xip_dst *xdst)
 
 	/* Clear references to a principal that may be unloading. */
 	xdst->dst.input = dst_discard;
-	xdst->dst.output = dst_discard;
+	xdst->dst.output = dst_discard_sk;
 }
 
 /* DO NOT call this function! Call xdst_free() or xdst_rcu_free() instead. */
@@ -347,7 +347,7 @@ static int xip_dst_unreachable_in(struct sk_buff *skb)
 	return xip_dst_unreachable("in", skb);
 }
 
-static int xip_dst_unreachable_out(struct sk_buff *skb)
+static int xip_dst_unreachable_out(struct sock *sk, struct sk_buff *skb)
 {
 	return xip_dst_unreachable("out", skb);
 }
@@ -1023,7 +1023,7 @@ static int xip_dst_not_supported_in(struct sk_buff *skb)
 	return xip_dst_not_supported("in", skb);
 }
 
-static int xip_dst_not_supported_out(struct sk_buff *skb)
+static int xip_dst_not_supported_out(struct sock *sk, struct sk_buff *skb)
 {
 	return xip_dst_not_supported("out", skb);
 }
