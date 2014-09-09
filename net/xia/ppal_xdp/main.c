@@ -221,7 +221,7 @@ static int local_input_input(struct sk_buff *skb)
 	struct xip_dst *xdst = skb_xdst(skb);
 	struct sock *sk = xdst->info;
 
-	if (sk_rcvqueues_full(sk, skb, sk->sk_rcvbuf))
+	if (sk_rcvqueues_full(sk, sk->sk_rcvbuf))
 		goto drop;
 
 	skb_pull_xiphdr(skb);

@@ -213,7 +213,7 @@ static int serval_udp_rcv(struct sock *sk, struct sk_buff *skb)
 		goto drop;
 
 	/* Drop if receive queue is full. */
-	if (sk_rcvqueues_full(sk, skb, sk->sk_rcvbuf))
+	if (sk_rcvqueues_full(sk, sk->sk_rcvbuf))
 		goto drop;
 
 	if (!sock_owned_by_user(sk))
