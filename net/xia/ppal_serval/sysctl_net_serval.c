@@ -12,7 +12,7 @@
 static unsigned int zero = 0;
 static unsigned int cent = 1000;
 
-static ctl_table serval_table[] = {
+static struct ctl_table serval_table[] = {
 	{
 		.procname = "sal_max_retransmits",
 		.data = &net_serval.sysctl_sal_max_retransmits,
