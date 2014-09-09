@@ -570,9 +570,9 @@ static int handle_skb_to_ipv4(struct sk_buff *skb,
 	return ip_queue_xmit(skb, flowi4_to_flowi(&fl4));
 }
 
-static int u4id_output(struct sk_buff *skb)
+static int u4id_output(struct sock *sk, struct sk_buff *skb)
 {
-	struct sock *sk;
+	struct sock *tunnel_sk;
 	struct u4id_tunnel_dest *tunnel;
 	__be32 dest_ip_addr;
 	__be16 dest_port;
@@ -591,13 +591,13 @@ static int u4id_output(struct sk_buff *skb)
 	 * If this point was reached between deleting the tunnel socket and
 	 * flushing the forward anchor, it will be NULL.
 	 */
-	sk = get_tunnel_sock(dev_net(skb_dst(skb)->dev));
-	if (unlikely(!sk)) {
+	tunnel_sk = get_tunnel_sock(dev_net(skb_dst(skb)->dev));
+	if (unlikely(!tunnel_sk)) {
 		kfree_skb(skb);
 		return NET_XMIT_DROP;
 	}
 	skb_orphan(skb);
-	skb->sk = sk;
+	skb->sk = tunnel_sk;
 	skb->destructor = u4id_sock_free;
 
 	/* Fetch U4ID from XDST entry to get IP address and port. */

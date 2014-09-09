@@ -370,14 +370,14 @@ drop:
 #endif
 
 /* XXX Move this function to XIA core and replace and all principals. */
-static int bug_dst_io_method(struct sk_buff *skb)
+static int bug_dst_out_method(struct sock *sk, struct sk_buff *skb)
 {
 	BUG();
 }
 
 #define local_output_input local_input_input
 
-static int local_output_output(struct sk_buff *skb)
+static int local_output_output(struct sock *sk, struct sk_buff *skb)
 {
 	struct net_device *dev = skb_dst(skb)->dev;
 
@@ -425,7 +425,7 @@ static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
 		dev_hold(xdst->dst.dev);
 		if (xdst->input) {
 			xdst->dst.input = local_input_input;
-			xdst->dst.output = bug_dst_io_method;
+			xdst->dst.output = bug_dst_out_method;
 		} else {
 			xdst->dst.input = local_output_input;
 			xdst->dst.output = local_output_output;
@@ -485,7 +485,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 			xdst->info = rtid_ssk(rtid);
 			if (xdst->input) {
 				xdst->dst.input = local_input_input;
-				xdst->dst.output = bug_dst_io_method;
+				xdst->dst.output = bug_dst_out_method;
 			} else {
 				xdst->dst.input = local_output_input;
 				xdst->dst.output = local_output_output;
@@ -500,7 +500,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 			xdst->info = srsk->parent_ssk;
 			if (xdst->input) {
 				xdst->dst.input = serval_sal_rsk_rcv;
-				xdst->dst.output = bug_dst_io_method;
+				xdst->dst.output = bug_dst_out_method;
 			} else {
 				xdst->dst.input = serval_sal_rsk_rcv;
 				xdst->dst.output = local_output_output;

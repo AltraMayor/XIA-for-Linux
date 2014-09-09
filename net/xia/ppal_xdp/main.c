@@ -250,14 +250,14 @@ drop:
 	return -1;
 }
 
-static int local_input_output(struct sk_buff *skb)
+static int local_input_output(struct sock *sk, struct sk_buff *skb)
 {
 	BUG();
 }
 
 #define local_output_input local_input_input
 
-static int local_output_output(struct sk_buff *skb)
+static int local_output_output(struct sock *sk, struct sk_buff *skb)
 {
 	struct net_device *dev = skb_dst(skb)->dev;
 

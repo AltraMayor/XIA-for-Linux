@@ -453,7 +453,7 @@ static int match_xids_rcu(struct fib_xid_table *xtbl,
 	BUG();
 }
 
-static int zf_output(struct sk_buff *skb)
+static int zf_output(struct sock *sk, struct sk_buff *skb)
 {
 	struct xip_dst *xdst = skb_xdst(skb);
 	struct zf_dst_info *info = (struct zf_dst_info *)xdst->info;
