@@ -3,7 +3,6 @@
 #include <linux/if_ether.h>
 #include <linux/jiffies.h>
 #include <linux/cache.h>
-#include <net/ip_vs.h>
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
 
@@ -753,7 +752,7 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 /* Insert all new entries in neighbor table. */
 static void read_announcement(struct sk_buff *skb)
 {
-	struct net *net = skb_net(skb);
+	struct net *net = dev_net(skb->dev);
 	struct announcement_hdr *nwp;
 	struct xip_hid_ctx *hid_ctx;
 	int count;

@@ -1,5 +1,6 @@
 #include <linux/export.h>
-#include <net/ip_vs.h>		/* Needed for skb_net(). */
+#include <linux/jhash.h>
+#include <net/netns/hash.h>
 #include <net/xia_fib.h>
 #include <net/xia_dag.h>
 #include <net/xia_output.h>	/* Needed for __xip_local_out(). */
@@ -1256,7 +1257,7 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 }
 EXPORT_SYMBOL_GPL(xip_mark_addr_and_get_dst);
 
-int xip_route_with_a_redirect(struct sk_buff *skb,
+int xip_route_with_a_redirect(struct net *net, struct sk_buff *skb,
 	const struct xia_xid *next_xid, int chosen_edge, int input)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
@@ -1279,7 +1280,7 @@ int xip_route_with_a_redirect(struct sk_buff *skb,
 	e = ra_last_row->s_edge.a[chosen_edge];
 	redirected_addr.s_row[e].s_xid = *next_xid;
 
-	xdst = xip_mark_addr2_and_get_dst(skb_net(skb),
+	xdst = xip_mark_addr2_and_get_dst(net,
 		xiph->dst_addr, redirected_addr.s_row,
 		xiph->num_dst, &xiph->last_node, input);
 	if (IS_ERR(xdst))
@@ -1289,10 +1290,10 @@ int xip_route_with_a_redirect(struct sk_buff *skb,
 }
 EXPORT_SYMBOL_GPL(xip_route_with_a_redirect);
 
-int xip_route(struct sk_buff *skb, int input)
+int xip_route(struct net *net, struct sk_buff *skb, int input)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
-	struct xip_dst *xdst = xip_mark_addr_and_get_dst(skb_net(skb),
+	struct xip_dst *xdst = xip_mark_addr_and_get_dst(net,
 		xiph->dst_addr, xiph->num_dst, &xiph->last_node, input);
 	if (IS_ERR(xdst))
 		return PTR_ERR(xdst);
@@ -1363,7 +1364,7 @@ static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
 	/* Initialise the virtual path cache for the packet.
 	 * It describes how the packet travels inside Linux networking.
 	 */
-	if (!skb_dst(skb) && xip_route(skb, 1))
+	if (!skb_dst(skb) && xip_route(dev_net(dev), skb, 1))
 		goto drop;
 
 	return dst_input(skb);
