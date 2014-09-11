@@ -322,6 +322,8 @@ struct iterate_arg {
 	bool matched;
 	bool forwarded_local;
 	struct sk_buff *skb;
+	struct xip_dst *xdst;
+	struct net *net;
 };
 
 /* Return true if the packet is ill formed. */
@@ -377,7 +379,7 @@ static int forward_local(struct iterate_arg *iarg,
 
 	/* Route and forward @cpy_skb. */
 	skb_dst_drop(cpy_skb);
-	rc = xip_route(cpy_skb, 0);
+	rc = xip_route(iarg->net, cpy_skb, 0);
 	if (rc) {
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after digging the local ZF edge: %i\n"),
 			rc);
@@ -405,7 +407,6 @@ static int forward_main(struct iterate_arg *iarg,
 	struct fib_xid_zf_main *mzf)
 {
 	struct sk_buff *cpy_skb;
-	struct xip_dst *xdst;
 	int rc;
 
 	cpy_skb = pskb_copy(iarg->skb, GFP_ATOMIC);
@@ -416,11 +417,11 @@ static int forward_main(struct iterate_arg *iarg,
 
 	/* Route and forward @cpy_skb. */
 	skb_dst_drop(cpy_skb);
-	xdst = skb_xdst(iarg->skb);
 	/* XXX This way of routing may lead to loops, which should be
 	 * gracefully handled.
 	 */
-	rc = xip_route_with_a_redirect(cpy_skb, &mzf->gw, xdst->chosen_edge, 0);
+	rc = xip_route_with_a_redirect(iarg->net, cpy_skb, &mzf->gw,
+		iarg->xdst->chosen_edge, 0);
 	if (rc) {
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after redirecting the main ZF edge: %i\n"),
 			rc);
@@ -459,8 +460,8 @@ static int zf_output(struct sock *sk, struct sk_buff *skb)
 	struct zf_dst_info *info = (struct zf_dst_info *)xdst->info;
 	struct net *net = xdst_net(xdst);
 	struct iterate_arg arg =
-		{.xid = info->xid, .matched = false,
-		.forwarded_local = false, .skb = skb};
+		{.xid = info->xid, .matched = false, .forwarded_local = false,
+		.skb = skb, .xdst = xdst, .net = net};
 	struct xip_ppal_ctx *ctx;
 
 	rcu_read_lock();

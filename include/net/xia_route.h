@@ -369,12 +369,12 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 	struct xia_row *addr, int num_dst, u8 *plast_node, int input);
 
 /* A friendlier version of xip_mark_addr_and_get_dst(). */
-int xip_route(struct sk_buff *skb, int input);
+int xip_route(struct net *net, struct sk_buff *skb, int input);
 
 /* Route @skb assuming that the edge @choosen_edge of the last node
  * redirects to @next_xid.
  */
-int xip_route_with_a_redirect(struct sk_buff *skb,
+int xip_route_with_a_redirect(struct net *net, struct sk_buff *skb,
 	const struct xia_xid *next_xid, int chosen_edge, int input);
 
 void skb_pull_xiphdr(struct sk_buff *skb);
