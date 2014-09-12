@@ -1,12 +1,8 @@
-#include <linux/inet.h>
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <net/udp.h>
-#include <net/route.h>
 #include <net/xia_dag.h>
 #include <net/xia_fib.h>
-#include <net/xia_output.h>
 #include <net/xia_u4id.h>
 #include <net/xia_vxidty.h>
 #include <uapi/linux/udp.h>
@@ -86,7 +82,7 @@ struct fib_xid_u4id_local {
 	/* True if checksums are disabled when using
 	 * @sock as a tunnel source.
 	 */
-	bool			checksum_disabled;
+	bool			no_check;
 
 	/* Two free bytes. */
 };
@@ -214,7 +210,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	lu4id->sock = NULL;
 	INIT_WORK(&lu4id->del_work, u4id_local_del_work);
 	lu4id->tunnel = lu4id_info->tunnel;
-	lu4id->checksum_disabled = lu4id_info->checksum_disabled;
+	lu4id->no_check = lu4id_info->no_check;
 
 	rc = create_lu4id_socket(lu4id, xtbl->fxt_net, cfg->xfc_dst->xid_id);
 	if (rc)
@@ -229,7 +225,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	 * when adding the local entry fails.
 	 */
 	if (lu4id_info->tunnel) {
-		lu4id->sock->sk->sk_no_check = lu4id_info->checksum_disabled
+		lu4id->sock->sk->sk_no_check = lu4id_info->no_check
 			? UDP_CSUM_NOXMIT
 			: UDP_CSUM_DEFAULT;
 		rcu_assign_pointer(u4id_ctx->tunnel_sock, lu4id->sock);
@@ -339,7 +335,7 @@ static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		goto nla_put_failure;
 
 	lu4id_info.tunnel = fxid_lu4id(fxid)->tunnel;
-	lu4id_info.checksum_disabled = fxid_lu4id(fxid)->checksum_disabled;
+	lu4id_info.no_check = fxid_lu4id(fxid)->no_check;
 	if (unlikely(nla_put(skb, RTA_PROTOINFO, sizeof(lu4id_info),
 		&lu4id_info)))
 		goto nla_put_failure;
