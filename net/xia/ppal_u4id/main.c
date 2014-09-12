@@ -1,6 +1,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <net/udp.h>
+#include <net/udp_tunnel.h>
 #include <net/xia_dag.h>
 #include <net/xia_fib.h>
 #include <net/xia_u4id.h>
@@ -38,12 +39,6 @@ static inline struct xip_u4id_ctx *ctx_u4id(struct xip_ppal_ctx *ctx)
 }
 
 static int my_vxt __read_mostly = -1;
-
-static inline void destroy_sock(struct socket *sock)
-{
-	kernel_sock_shutdown(sock, SHUT_RDWR);
-	sk_release_kernel(sock->sk);
-}
 
 /*
  *	Local U4IDs
@@ -130,39 +125,31 @@ pass_up:
 static int create_lu4id_socket(struct fib_xid_u4id_local *lu4id,
 	struct net *net, __u8 *xid_p)
 {
-	struct socket *sock;
-	struct sockaddr_in udp_addr;
+	struct udp_port_cfg udp_conf;
 	int rc;
 	__be32 xid_addr;
 	__be16 xid_port;
-
-	rc = __sock_create(net, AF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock, 1);
-	if (rc)
-		goto out;
 
 	/* Fetch IPv4 address and port number from U4ID XID. */
 	xid_addr = *(__be32 *)xid_p;
 	xid_p += sizeof(xid_addr);
 	xid_port = *(__be16 *)xid_p;
 
-	udp_addr.sin_family = AF_INET;
-	udp_addr.sin_addr.s_addr = xid_addr;
-	udp_addr.sin_port = xid_port;
+	memset(&udp_conf, 0, sizeof(udp_conf));
+	udp_conf.family = AF_INET;
+	udp_conf.local_ip.s_addr = xid_addr;
+	udp_conf.local_udp_port = xid_port;
+	udp_conf.use_udp_checksums = !lu4id->no_check;
 
-	rc = kernel_bind(sock, (struct sockaddr *)&udp_addr, sizeof(udp_addr));
+	rc = udp_sock_create(net, &udp_conf, &lu4id->sock);
 	if (rc)
-		goto sock;
+		goto out;
 
 	/* Mark socket as an encapsulation socket. */
-	udp_sk(sock->sk)->encap_type = UDP_ENCAP_XIPINUDP;
-	udp_sk(sock->sk)->encap_rcv = u4id_udp_encap_recv;
+	udp_sk(lu4id->sock->sk)->encap_type = UDP_ENCAP_XIPINUDP;
+	udp_sk(lu4id->sock->sk)->encap_rcv = u4id_udp_encap_recv;
 	udp_encap_enable();
 
-	lu4id->sock = sock;
-	goto out;
-
-sock:
-	destroy_sock(sock);
 out:
 	return rc;
 }
@@ -173,7 +160,8 @@ static void u4id_local_del_work(struct work_struct *work)
 	struct fib_xid_u4id_local *lu4id =
 		container_of(work, struct fib_xid_u4id_local, del_work);
 	if (lu4id->sock) {
-		destroy_sock(lu4id->sock);
+		kernel_sock_shutdown(lu4id->sock, SHUT_RDWR);
+		sk_release_kernel(lu4id->sock->sk);
 		lu4id->sock = NULL;
 	}
 	xdst_free_anchor(&lu4id->anchor);
