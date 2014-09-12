@@ -9,7 +9,7 @@
 
 struct local_u4id_info {
 	bool	tunnel;
-	bool	checksum_disabled;
+	bool	no_check;
 };
 
 #endif	/* _NET_XIA_U4ID_H */
