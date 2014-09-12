@@ -225,9 +225,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	 * when adding the local entry fails.
 	 */
 	if (lu4id_info->tunnel) {
-		lu4id->sock->sk->sk_no_check = lu4id_info->no_check
-			? UDP_CSUM_NOXMIT
-			: UDP_CSUM_DEFAULT;
+		lu4id->sock->sk->sk_no_check_tx = lu4id_info->no_check;
 		rcu_assign_pointer(u4id_ctx->tunnel_sock, lu4id->sock);
 		/* Wait an RCU cycle before flushing the anchor.
 		 * Otherwise, a thread in u4id_deliver() could see the tunnel
@@ -493,23 +491,9 @@ static void push_udp_header(struct sock *tunnel_sk, struct sk_buff *skb,
 	uh->source = inet->inet_sport;
 	uh->dest = dest_port;
 	uh->len = htons(uhlen + udp_payload_len);
-	uh->check = 0;
 
-	/* XXX It'd be nice to support hardware checksummig. */
-	switch (sk->sk_no_check) {
-	case UDP_CSUM_NOXMIT:
-		skb->ip_summed = CHECKSUM_NONE;
-		break;
-	case UDP_CSUM_DEFAULT:
-		skb->ip_summed = CHECKSUM_COMPLETE;
-		uh->check = csum_tcpudp_magic(inet->inet_saddr, dest_ip_addr,
-			skb->len, tunnel_sk->sk_protocol, udp_csum(skb));
-		if (uh->check == 0)
-			uh->check = CSUM_MANGLED_0;
-		break;
-	default:
-		BUG();
-	}
+	udp_set_csum(tunnel_sk->sk_no_check_tx, skb, inet->inet_saddr,
+		dest_ip_addr, uhlen + udp_payload_len);
 }
 
 static int handle_skb_to_ipv4(struct sock *tunnel_sk, struct sk_buff *skb,
