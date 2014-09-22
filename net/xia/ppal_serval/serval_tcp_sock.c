@@ -2,16 +2,15 @@
 #include "serval_tcp_sock.h"
 
 void serval_tsk_init_xmit_timers(struct sock *sk,
-			       void (*retransmit_handler)(unsigned long),
-			       void (*delack_handler)(unsigned long),
-			       void (*keepalive_handler)(unsigned long))
+				 void (*retransmit_handler)(unsigned long),
+				 void (*delack_handler)(unsigned long),
+				 void (*keepalive_handler)(unsigned long))
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 
 	setup_timer(&tp->retransmit_timer, retransmit_handler,
-			(unsigned long)sk);
-	setup_timer(&tp->delack_timer, delack_handler,
-			(unsigned long)sk);
+		    (unsigned long)sk);
+	setup_timer(&tp->delack_timer, delack_handler, (unsigned long)sk);
 	setup_timer(&sk->sk_timer, keepalive_handler, (unsigned long)sk);
 	tp->pending = tp->tp_ack.pending = 0;
 }

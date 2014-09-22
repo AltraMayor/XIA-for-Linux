@@ -16,7 +16,8 @@ static void serval_tcp_keepalive_timer(unsigned long data);
 void serval_tcp_init_xmit_timers(struct sock *sk)
 {
 	serval_tsk_init_xmit_timers(sk,	serval_tcp_write_timer,
-		serval_tcp_delack_timer, serval_tcp_keepalive_timer);
+				    serval_tcp_delack_timer,
+				    serval_tcp_keepalive_timer);
 }
 
 static void serval_tcp_write_err(struct sock *sk)
@@ -46,7 +47,7 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 	 * anything for long time, penalize it.
 	 */
 	if ((s32)(tcp_time_stamp - tp->lsndtime) > 2 * SERVAL_TCP_RTO_MAX ||
-		!do_reset)
+	    !do_reset)
 		shift++;
 
 	/* If some dubious ICMP arrived, penalize even more. */

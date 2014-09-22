@@ -11,7 +11,7 @@
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	gfp_t flags)
+				gfp_t flags)
 {
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
 	if (!ha)
@@ -56,12 +56,12 @@ static inline void free_ha(struct hrdw_addr *ha)
 }
 
 static int ha_exists(struct fib_xid_hid_main *mhid, struct net_device *dev,
-	const u8 *lladdr)
+		     const u8 *lladdr)
 {
 	struct hrdw_addr *pos_ha;
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		if (unlikely(pos_ha->dev == dev &&
-			!memcmp(pos_ha->ha, lladdr, dev->addr_len)))
+			     !memcmp(pos_ha->ha, lladdr, dev->addr_len)))
 			return 1;	/* Yes! */
 	}
 	return 0;
@@ -143,7 +143,7 @@ static void del_ha(struct hrdw_addr *ha)
 }
 
 static int del_ha_from_mhid(struct fib_xid_hid_main *mhid, const u8 *str_ha,
-	struct net_device *dev)
+			    struct net_device *dev)
 {
 	struct hrdw_addr *pos_ha, *nxt;
 
@@ -208,7 +208,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 		 */
 		rcu_read_lock();
 		ha = list_first_or_null_rcu(&hdev->neighs, struct hrdw_addr,
-			hdev_list);
+					    hdev_list);
 		if (!ha) {
 			rcu_read_unlock();
 			break;
@@ -234,7 +234,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 }
 
 int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr, u32 nl_flags)
+		 struct net_device *dev, const u8 *lladdr, u32 nl_flags)
 {
 	struct hrdw_addr *ha;
 	struct fib_xid_table *xtbl;
@@ -272,7 +272,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 
 		if (ha_exists(new_mhid, dev, lladdr)) {
 			if ((nl_flags & NLM_F_EXCL) ||
-				!(nl_flags & NLM_F_REPLACE)) {
+			    !(nl_flags & NLM_F_REPLACE)) {
 				rc = -EEXIST;
 				goto unlock_bucket;
 			}
@@ -343,7 +343,7 @@ ha:
 }
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
-	struct net_device *dev, const u8 *lladdr)
+		 struct net_device *dev, const u8 *lladdr)
 {
 	u32 bucket;
 	struct fib_xid *fxid;
@@ -453,7 +453,7 @@ static inline int announcement_hdr_len(struct net_device *dev)
 }
 
 static int __announce_on_dev(struct fib_xid_table *xtbl,
-	struct fib_xid *fxid, const void *arg)
+			     struct fib_xid *fxid, const void *arg)
 {
 	const struct announcement_state *state;
 	struct sk_buff *skb;
@@ -489,11 +489,11 @@ static int __announce_on_dev(struct fib_xid_table *xtbl,
 }
 
 static void send_nwp_frame(struct sk_buff *skb, const void *saddr,
-	const void *daddr)
+			   const void *daddr)
 {
 	/* Fill the device header. */
 	if (dev_hard_header(skb, skb->dev, ETH_P_NWP, daddr, saddr,
-		skb->len) < 0) {
+			    skb->len) < 0) {
 		kfree_skb(skb);
 		return;
 	}
@@ -517,7 +517,7 @@ static void announce_on_dev(struct fib_xid_table *xtbl, struct hid_dev *hdev)
 
 	if (mtu < min_annoucement) {
 		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
-			dev->name, mtu, min_annoucement);
+		       dev->name, mtu, min_annoucement);
 		dump_stack();
 		return;
 	}
@@ -629,7 +629,8 @@ void hid_release_hid_state(struct xip_hid_ctx *hid_ctx)
  */
 
 static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
-	unsigned int mtu, u8 **pphid_counter)
+					    unsigned int mtu,
+					    u8 **pphid_counter)
 {
 	int ll_hlen = LL_RESERVED_SPACE(dev);
 	int ll_tlen = dev->needed_tailroom;
@@ -641,7 +642,7 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 
 	if (mtu < min_list) {
 		pr_err("XIA HID NWP: Can't send a neighbor list because dev %s has MTU (%u) smaller than the smallest neighbor list frame (%i)\n",
-			dev->name, mtu, min_list);
+		       dev->name, mtu, min_list);
 		dump_stack();
 		return NULL;
 	}
@@ -858,7 +859,7 @@ static int process_neigh_list(struct sk_buff *skb)
 
 			/* Ignore errors. */
 			insert_neigh(hid_ctx, xid, dev, haddr_or_xid,
-				NLM_F_CREATE);
+				     NLM_F_CREATE);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
@@ -874,7 +875,7 @@ out:
 
 /* This function is based on net/ipv4/arp.c:arp_rcv */
 static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
-	struct packet_type *pt, struct net_device *orig_dev)
+		   struct packet_type *pt, struct net_device *orig_dev)
 {
 	struct general_hdr *ghdr;
 
@@ -883,12 +884,12 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	ghdr = (struct general_hdr *)skb_network_header(skb);
 	if (ghdr->version != NWP_VERSION		||
-		ghdr->type >= NWP_TYPE_MAX		||
-		ghdr->hid_count == 0			||
-		ghdr->haddr_len != dev->addr_len	||
-		dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
-		skb->pkt_type == PACKET_OTHERHOST	||
-		skb->pkt_type == PACKET_LOOPBACK)
+	    ghdr->type >= NWP_TYPE_MAX			||
+	    ghdr->hid_count == 0			||
+	    ghdr->haddr_len != dev->addr_len		||
+	    dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
+	    skb->pkt_type == PACKET_OTHERHOST		||
+            skb->pkt_type == PACKET_LOOPBACK)
 		goto freeskb;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);
@@ -928,7 +929,7 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 #endif
 	if (!hdev->dead) {
 		pr_err("%s: freeing alive hid_dev %p=%s\n",
-			__func__, hdev, dev->name);
+		       __func__, hdev, dev->name);
 		dump_stack();
 	}
 
@@ -975,7 +976,7 @@ static void hdev_destroy(struct hid_dev *hdev)
 }
 
 static int hid_netdev_event(struct notifier_block *nb,
-	unsigned long event, void *ptr)
+			    unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct hid_dev *hdev;

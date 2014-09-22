@@ -144,7 +144,7 @@ out:
 EXPORT_SYMBOL_GPL(xia_bind);
 
 int xia_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
-	int addr_len, int flags)
+		      int addr_len, int flags)
 {
 	struct sock *sk;
 	struct xia_sock *xia;
@@ -180,7 +180,7 @@ void xia_reset_dest(struct xia_sock *xia)
 EXPORT_SYMBOL_GPL(xia_reset_dest);
 
 void __xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n,
-	int last_node, struct xip_dst *xdst)
+		    int last_node, struct xip_dst *xdst)
 {
 	xia->xia_dnum = n;
 	xia->xia_dlast_node = last_node;
@@ -200,7 +200,8 @@ int xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n)
 	copy_n_and_shade_xia_addr(&xia->xia_daddr, dest, n);
 
 	xdst = xip_mark_addr_and_get_dst(sock_net(sk),
-		xia->xia_daddr.s_row, n, &xia->xia_dlast_node, 0);
+					 xia->xia_daddr.s_row, n,
+					 &xia->xia_dlast_node, 0);
 	if (IS_ERR(xdst))
 		return PTR_ERR(xdst);
 
@@ -211,7 +212,7 @@ int xia_set_dest(struct xia_sock *xia, const struct xia_row *dest, int n)
 EXPORT_SYMBOL_GPL(xia_set_dest);
 
 void copy_n_and_shade_xia_addr(struct xia_addr *dst,
-	const struct xia_row *rsrc, int n)
+			       const struct xia_row *rsrc, int n)
 {
 	struct xia_row *rdst = dst->s_row;
 
@@ -237,7 +238,7 @@ static inline void init_sockaddr_xia_but_addr(struct sockaddr_xia *sxia)
 }
 
 void copy_n_and_shade_sockaddr_xia(struct sockaddr_xia *dst,
-	const struct xia_row *rsrc, int n)
+				   const struct xia_row *rsrc, int n)
 {
 	init_sockaddr_xia_but_addr(dst);
 	copy_n_and_shade_xia_addr(&dst->sxia_addr, rsrc, n);
@@ -246,7 +247,7 @@ EXPORT_SYMBOL_GPL(copy_n_and_shade_sockaddr_xia);
 
 /* This does both peername and sockname. */
 int xia_getname(struct socket *sock, struct sockaddr *uaddr,
-	int *uaddr_len, int peer)
+		int *uaddr_len, int peer)
 {
 	struct xia_sock *xia = xia_sk(sock->sk);
 	DECLARE_SOCKADDR(struct sockaddr_xia *, sxia, uaddr);
@@ -255,12 +256,12 @@ int xia_getname(struct socket *sock, struct sockaddr *uaddr,
 		if (!xia->xia_daddr_set)
 			return -ENOTCONN;
 		copy_n_and_shade_sockaddr_xia_from_addr(sxia, &xia->xia_daddr,
-			xia->xia_dnum);
+							xia->xia_dnum);
 	} else {
 		if (!xia_sk_bound(xia))
 			return -ESNOTBOUND;
 		copy_n_and_shade_sockaddr_xia_from_addr(sxia, &xia->xia_saddr,
-			xia->xia_snum);
+							xia->xia_snum);
 	}
 
 	*uaddr_len = sizeof(*sxia);
@@ -322,7 +323,7 @@ int xia_shutdown(struct socket *sock, int how)
 EXPORT_SYMBOL_GPL(xia_shutdown);
 
 int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
-	struct msghdr *msg, size_t size)
+		struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
 
@@ -344,7 +345,7 @@ int xip_recv_error(struct sock *sk, struct msghdr *msg, int len)
 EXPORT_SYMBOL_GPL(xip_recv_error);
 
 int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
-	struct msghdr *msg, size_t size, int flags)
+		struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 	int addr_len = 0;
@@ -362,7 +363,7 @@ int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 EXPORT_SYMBOL_GPL(xia_recvmsg);
 
 ssize_t xia_sendpage(struct socket *sock, struct page *page,
-	int offset, size_t size, int flags)
+		     int offset, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 
@@ -525,7 +526,7 @@ static void xia_sock_destruct(struct sock *sk)
 }
 
 static int xia_create(struct net *net, struct socket *sock,
-		int protocol, int kern)
+		      int protocol, int kern)
 {
 	struct xia_socket_proc *sproc;
 	const struct xia_socket_type_proc *stproc;

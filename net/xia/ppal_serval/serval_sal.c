@@ -53,10 +53,10 @@ struct sal_context {
 };
 
 static int serval_sal_state_process(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx);
+				    const struct sal_context *ctx);
 
 static int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
-	int use_copy, gfp_t gfp_mask);
+				   int use_copy, gfp_t gfp_mask);
 
 static size_t verify_ext_length[] = {
 	[SAL_CONTROL_EXT] = sizeof(struct sal_control_ext),
@@ -103,7 +103,7 @@ static int parse_ext(struct sal_context *sal_ctx, struct sal_ext *ext, int rest)
 	int ext_len = ext->length;
 
 	if (ext_len > rest || ext->type >= __SAL_EXT_TYPE_MAX ||
-		ext_len != verify_ext_length[ext->type])
+	    ext_len != verify_ext_length[ext->type])
 		return -1;
 
 	return parse_ext_func[ext->type](sal_ctx, ext);
@@ -121,7 +121,7 @@ static int parse_ext(struct sal_context *sal_ctx, struct sal_ext *ext, int rest)
  */
 #define MAX_NUM_SAL_EXTENSIONS __SAL_EXT_TYPE_MAX
 static int serval_sal_parse_hdr(struct sal_context *sal_ctx,
-	struct sal_hdr *shdr)
+				struct sal_hdr *shdr)
 {
 	struct sal_ext *ext;
 	int rest, i;
@@ -163,7 +163,7 @@ static inline int has_valid_verno(uint32_t seg_seq, struct sock *sk)
 }
 
 static inline int packet_has_transport_hdr(const struct sk_buff *skb,
-	const struct sal_hdr *sh)
+					   const struct sal_hdr *sh)
 {
 	/* Have we pulled the serval header already? */
 	return (unsigned char *)sh == skb_transport_header(skb)
@@ -556,7 +556,8 @@ static void set_peer_srvc_xdst(struct serval_sock *ssk, struct xip_dst *xdst)
 }
 
 static void __set_peer_srvc(struct serval_sock *ssk,
-	const struct xia_row *dest, int n, int last_node, struct xip_dst *xdst)
+			    const struct xia_row *dest, int n,
+			    int last_node, struct xip_dst *xdst)
 {
 	ssk->peer_srvc_num = n;
 	ssk->peer_srvc_last_node = last_node;
@@ -566,7 +567,7 @@ static void __set_peer_srvc(struct serval_sock *ssk,
 }
 
 static int set_peer_srvc(struct serval_sock *ssk, const struct xia_row *dest,
-	int n)
+			 int n)
 {
 	struct xip_dst *xdst;
 
@@ -575,7 +576,8 @@ static int set_peer_srvc(struct serval_sock *ssk, const struct xia_row *dest,
 	copy_n_and_shade_xia_addr(&ssk->peer_srvc_addr, dest, n);
 
 	xdst = xip_mark_addr_and_get_dst(sock_net(&ssk->xia_sk.sk),
-		ssk->peer_srvc_addr.s_row, n, &ssk->peer_srvc_last_node, 0);
+					 ssk->peer_srvc_addr.s_row, n,
+					 &ssk->peer_srvc_last_node, 0);
 	if (IS_ERR(xdst))
 		return PTR_ERR(xdst);
 
@@ -628,7 +630,7 @@ void serval_sal_done(struct sock *sk)
 }
 
 static inline int serval_sock_set_sal_state(struct sock *sk,
-	unsigned int new_state)
+					    unsigned int new_state)
 {
 	BUG_ON(new_state >= __SAL_RSYN_MAX_STATE);
 	sk_ssk(sk)->sal_state = new_state;
@@ -732,7 +734,7 @@ void serval_sal_close(struct sock *sk, long timeout)
 	if ((1 << sk->sk_state) & (SALF_FINWAIT1 | SALF_FINWAIT2 |
 		SALF_TIMEWAIT | SALF_CLOSING)) {
 		LIMIT_NETDEBUG(KERN_ERR pr_fmt("XIP/Serval: close() called in post close state (= %i)\n"),
-			sk->sk_state);
+			       sk->sk_state);
 		return;
 	}
 
@@ -897,7 +899,8 @@ static struct sal_control_ext *push_ctrl_ext_hdr(struct sk_buff *skb)
  *	Caller must xdst_put().
  */
 static struct xip_dst *route_src_addr(struct net *net, struct sk_buff *skb,
-	struct xia_row **psrc, u8 *pnum_src, u8 *psrc_last_node)
+				      struct xia_row **psrc, u8 *pnum_src,
+				      u8 *psrc_last_node)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
 	struct xip_dst *xdst;
@@ -909,13 +912,14 @@ static struct xip_dst *route_src_addr(struct net *net, struct sk_buff *skb,
 	*pnum_src = xiph->num_src;
 	*psrc_last_node = XIA_ENTRY_NODE_INDEX;
 	xdst = xip_mark_addr_and_get_dst(net, *psrc, *pnum_src,
-		psrc_last_node, 0);
+					 psrc_last_node, 0);
 	return !IS_ERR(xdst) ? xdst : NULL;
 }
 
 static inline void push_xip_hdr(struct sk_buff *skb, struct xip_dst *xdst,
-	const struct xia_row *src, int src_n,
-	const struct xia_row *dest, int dest_n, int dest_last_node)
+				const struct xia_row *src, int src_n,
+				const struct xia_row *dest, int dest_n,
+				int dest_last_node)
 {
 	skb_push(skb, xip_hdr_size(dest_n, src_n));
 	skb_reset_network_header(skb);
@@ -923,20 +927,22 @@ static inline void push_xip_hdr(struct sk_buff *skb, struct xip_dst *xdst,
 }
 
 static inline void push_xip_hdr_bsrc(struct sk_buff *skb, struct xip_dst *xdst,
-	const struct xia_row *src, xid_type_t sink_type, const __u8 *sink_id,
-	int src_n, const struct xia_row *dest, int dest_n, int dest_last_node)
+				     const struct xia_row *src,
+				     xid_type_t sink_type, const __u8 *sink_id,
+				     int src_n, const struct xia_row *dest,
+				     int dest_n, int dest_last_node)
 {
 	skb_push(skb, xip_hdr_size(dest_n, src_n));
 	skb_reset_network_header(skb);
 	xip_fill_in_hdr_bsrc(skb, xdst, src, sink_type, sink_id, src_n,
-		dest, dest_n, dest_last_node);
+			     dest, dest_n, dest_last_node);
 }
 
 /* Ir an error is found, this function will ignore it, and not send
  * a reset packet.
  */
 static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+				  const struct sal_context *ctx)
 {
 	struct xip_dst *xdst;
 	struct xia_row *dest;
@@ -952,7 +958,7 @@ static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
 	if (skb_cow(skb, 0))
 		return; /* We cannot mark the source address. */
 	xdst = route_src_addr(sock_net(sk), skb, &dest, &num_dest,
-		&dest_last_node);
+			      &dest_last_node);
 	if (!xdst)
 		return; /* Packet @skb is not routable back. */
 
@@ -995,7 +1001,7 @@ static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
 	 */
 	ssk = sk_ssk(sk);
 	push_xip_hdr(rskb, xdst, ssk->xia_sk.xia_saddr.s_row,
-		ssk->xia_sk.xia_snum, dest, num_dest, dest_last_node);
+		     ssk->xia_sk.xia_snum, dest, num_dest, dest_last_node);
 
 	xip_local_out(rskb);
 }
@@ -1021,8 +1027,9 @@ void serval_sal_send_active_reset(struct sock *sk, gfp_t priority)
 }
 
 static int serval_sal_send_synack(struct sock *sk,
-	struct serval_request_sock *srsk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+				  struct serval_request_sock *srsk,
+				  struct sk_buff *skb,
+				  const struct sal_context *ctx)
 {
 	struct xip_dst *xdst;
 	struct xia_row *dest, *dest_sink;
@@ -1034,7 +1041,7 @@ static int serval_sal_send_synack(struct sock *sk,
 	if (skb_cow(skb, 0))
 		return -ENOMEM; /* We cannot mark the source address. */
 	xdst = route_src_addr(sock_net(sk), skb, &dest, &num_dest,
-		&dest_last_node);
+			      &dest_last_node);
 	if (!xdst)
 		return -ENETUNREACH; /* Packet @skb is not routable back. */
 
@@ -1043,8 +1050,8 @@ static int serval_sal_send_synack(struct sock *sk,
 	BUILD_BUG_ON(sizeof(dest_sink->s_xid.xid_id) != XIA_XID_MAX);
 	BUILD_BUG_ON(sizeof(srsk->peer_srvcid) != XIA_XID_MAX);
 	if (dest_sink->s_xid.xid_type != XIDTYPE_SRVCID ||
-		memcmp(dest_sink->s_xid.xid_id, &srsk->peer_srvcid,
-			XIA_XID_MAX)) {
+	    memcmp(dest_sink->s_xid.xid_id, &srsk->peer_srvcid,
+		   XIA_XID_MAX)) {
 		xdst_put(xdst);
 		return -EINVAL;
 	}
@@ -1065,7 +1072,7 @@ static int serval_sal_send_synack(struct sock *sk,
 	if (ssk->af_ops->conn_build_synack) {
 		/* XXX Pass @srsk directly. */
 		BUG_ON(ssk->af_ops->conn_build_synack(sk, &xdst->dst,
-			&srsk->req, rskb));
+						      &srsk->req, rskb));
 	}
 
 	/* Add control extensions */
@@ -1087,8 +1094,9 @@ static int serval_sal_send_synack(struct sock *sk,
 	 * and the destination the source address in @skb, which has a FlowID.
 	 */
 	push_xip_hdr_bsrc(rskb, xdst, ssk->xia_sk.xia_saddr.s_row,
-		XIDTYPE_FLOWID, srsk->flow_fxid.fx_xid, ssk->xia_sk.xia_snum,
-		dest, num_dest, dest_last_node);
+			  XIDTYPE_FLOWID, srsk->flow_fxid.fx_xid,
+			  ssk->xia_sk.xia_snum, dest, num_dest,
+			  dest_last_node);
 
 	return xip_local_out(rskb);
 }
@@ -1135,7 +1143,7 @@ void srsk_put(struct serval_request_sock *srsk)
 }
 
 static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *sal_ctx)
+			      const struct sal_context *sal_ctx)
 {
 	struct serval_request_sock *srsk;
 	static struct xia_row *src_sink;
@@ -1155,7 +1163,7 @@ static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 	/* Copy fields in request packet into request sock. */
 	src_sink = xip_src_sink(skb);
 	memcpy(&srsk->peer_srvcid, src_sink->s_xid.xid_id,
-		sizeof(srsk->peer_srvcid));
+	       sizeof(srsk->peer_srvcid));
 	memcpy(srsk->peer_nonce, sal_ctx->ctrl_ext->nonce, SAL_NONCE_SIZE);
 	srsk->rcv_seq = sal_ctx->verno;
 
@@ -1198,12 +1206,13 @@ drop:
 
 /* Find a request sock that has previously been created by a SYN. */
 static struct serval_request_sock *find_srsk_for_syn(struct serval_sock *ssk,
-	const u8 *peer_srvcid, const u8 *peer_nonce)
+						     const u8 *peer_srvcid,
+						     const u8 *peer_nonce)
 {
 	struct serval_request_sock *srsk;
 	list_for_each_entry(srsk, &ssk->syn_queue, lh) {
 		if (!memcmp(&srsk->peer_srvcid, peer_srvcid,
-				sizeof(srsk->peer_srvcid)) &&
+			    sizeof(srsk->peer_srvcid)) &&
 			/* Also compare nonce because ServiceID may open
 			 * multiple connections at once, or be replicated
 			 * in the network.
@@ -1218,7 +1227,7 @@ static struct serval_request_sock *find_srsk_for_syn(struct serval_sock *ssk,
  * the local FlowID.
  */
 static struct serval_request_sock *find_srsk_for_ack(struct serval_sock *ssk,
-	const u8 *local_flowid)
+						     const u8 *local_flowid)
 {
 	struct serval_request_sock *srsk;
 	list_for_each_entry(srsk, &ssk->syn_queue, lh) {
@@ -1229,7 +1238,9 @@ static struct serval_request_sock *find_srsk_for_ack(struct serval_sock *ssk,
 }
 
 static struct xip_dst *update_xdst(struct net *net, struct xia_row *addr,
-	int n, u8 *plast_node, xid_type_t new_sink_type, const u8 *new_sink_id)
+				   int n, u8 *plast_node,
+				   xid_type_t new_sink_type,
+				   const u8 *new_sink_id)
 {
 	struct xia_row *last_row;
 	struct xip_dst *xdst;
@@ -1271,7 +1282,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 		xiph->num_src < 1 ||
 		/* Bad nonce. */
 		memcmp(srsk->peer_nonce, ctx->ctrl_ext->nonce,
-			SAL_NONCE_SIZE) ||
+		       SAL_NONCE_SIZE) ||
 		/* Bad verno. */
 		(ctx->verno != srsk->rcv_seq + 1) ||
 		/* Bad ackno. */
@@ -1282,12 +1293,12 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	/* Obtain @xdst for source address of packet. */
 	num_dest = xiph->num_src;
 	copy_n_and_shade_xia_addr(&addr, &xiph->dst_addr[xiph->num_dst],
-		num_dest);
+				  num_dest);
 	net = sock_net(&ssk->xia_sk.sk);
 	dest = addr.s_row;
 	dest_last_node = XIA_ENTRY_NODE_INDEX;
 	xdst = xip_mark_addr_and_get_dst(net, dest, num_dest,
-		&dest_last_node, 0);
+					 &dest_last_node, 0);
 	if (IS_ERR(xdst))
 		return NULL; /* Packet @skb is not routable back. */
 
@@ -1303,7 +1314,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 
 	/* Transport protocol specific init. */
 	if (ssk->af_ops->conn_child_sock(&ssk->xia_sk.sk, skb, &srsk->req, nsk,
-		&xdst->dst) < 0) {
+					 &xdst->dst) < 0) {
 		/* Transport child sock init failed. */
 		goto nssk;
 	}
@@ -1313,7 +1324,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	 */
 	/* XXX Make the typecast unnecessary. */
 	xdst = update_xdst(net, dest, num_dest, &dest_last_node, XIDTYPE_SRVCID,
-		(u8 *)&srsk->peer_srvcid);
+			   (u8 *)&srsk->peer_srvcid);
 	if (!xdst)
 		goto nssk;
 	__set_peer_srvc(nssk, dest, num_dest, dest_last_node, xdst);
@@ -1321,7 +1332,7 @@ static struct serval_sock *serval_sal_request_sock_handle(
 	/* Emulate bind() on @nssk, but don't hash the ServiceID. */
 	BUG_ON(!xia_sk_bound(&ssk->xia_sk));
 	xia_set_src(&nssk->xia_sk, &ssk->xia_sk.xia_saddr,
-		ssk->xia_sk.xia_snum);
+		    ssk->xia_sk.xia_snum);
 	nssk->srvc_rtid = NULL;
 
 	/* Set up control fields. */
@@ -1362,8 +1373,9 @@ nssk:
  * when this packet was first received by the parent.
  */
 static int serval_sal_child_process(struct sock *parent,
-	struct serval_sock *child, struct sk_buff *skb,
-	const struct sal_context *ctx)
+				    struct serval_sock *child,
+				    struct sk_buff *skb,
+				    const struct sal_context *ctx)
 {
 	int state = child->xia_sk.sk.sk_state;
 	int rc;
@@ -1376,7 +1388,7 @@ static int serval_sal_child_process(struct sock *parent,
 	if (!sock_owned_by_user(&child->xia_sk.sk)) {
 		rc = serval_sal_state_process(&child->xia_sk.sk, skb, ctx);
 		if (rc == 0 && state == SAL_RESPOND &&
-			child->xia_sk.sk.sk_state != state) {
+		    child->xia_sk.sk.sk_state != state) {
 			/* Waking up parent (listening) sock. */
 			parent->sk_data_ready(parent);
 		}
@@ -1397,7 +1409,7 @@ static int serval_sal_child_process(struct sock *parent,
  * that arrives at the server coming from the cliente.
  */
 static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+			   const struct sal_context *ctx)
 {
 	const struct xia_row *dst_sink = xip_dst_sink(skb);
 	const struct xia_row *src_sink = xip_src_sink(skb);
@@ -1417,10 +1429,10 @@ static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
 
 	ssk = sk_ssk(sk);
 	if (!src_sink || src_sink->s_xid.xid_type != XIDTYPE_FLOWID ||
-		!ctx->ctrl_ext || ctx->flags & SVH_SYN ||
-		!(ctx->flags & SVH_ACK) ||
-		!(srsk = find_srsk_for_ack(ssk, dst_sink->s_xid.xid_id)) ||
-		!(nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx))) {
+	    !ctx->ctrl_ext || ctx->flags & SVH_SYN ||
+	    !(ctx->flags & SVH_ACK) ||
+	    !(srsk = find_srsk_for_ack(ssk, dst_sink->s_xid.xid_id)) ||
+	    !(nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx))) {
 		/* We don't send a reset packet here because we don't want to
 		 * help an adversary scanning for peding connections.
 		 */
@@ -1433,17 +1445,17 @@ static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
 }
 
 static int serval_sal_ack_process(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+				  const struct sal_context *ctx)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 
 	if (!(ctx->flags & SVH_ACK) ||
-		/* If the ack is older than previous acks, ignore it. */
-		before(ctx->ackno, ssk->snd_seq.una) ||
-		/* If the ack corresponds to something we haven't sent yet,
-		 * ignore it.
-		 */
-		after(ctx->ackno, ssk->snd_seq.nxt))
+	    /* If the ack is older than previous acks, ignore it. */
+	    before(ctx->ackno, ssk->snd_seq.una) ||
+	    /* If the ack corresponds to something we haven't sent yet,
+	     * ignore it.
+	     */
+	    after(ctx->ackno, ssk->snd_seq.nxt))
 		return -EINVAL;
 
 	serval_sal_clean_rtx_queue(sk, ctx->ackno, 0, NULL);
@@ -1563,7 +1575,7 @@ out:
 
 /* This function handles the case when we received an RSYN (without ACK). */
 static int serval_sal_rcv_rsyn(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+			       const struct sal_context *ctx)
 {
 	return -1;
 /* XXX Implement socket migration. */
@@ -1615,7 +1627,7 @@ static int serval_sal_rcv_rsyn(struct sock *sk, struct sk_buff *skb,
 }
 
 static int serval_sal_rcv_fin(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+			      const struct sal_context *ctx)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 
@@ -1686,7 +1698,8 @@ static int serval_sal_connected_state_process(struct sock *sk,
 }
 
 static int serval_sal_closewait_state_process(struct sock *sk,
-	struct sk_buff *skb, const struct sal_context *ctx)
+					      struct sk_buff *skb,
+					      const struct sal_context *ctx)
 {
 	if (ctx->flags & SVH_FIN)
 		serval_sal_send_ack(sk);
@@ -1701,22 +1714,23 @@ static int serval_sal_closewait_state_process(struct sock *sk,
 }
 
 static int serval_sal_listen_state_process(struct sock *sk,
-	struct sk_buff *skb, const struct sal_context *ctx)
+					   struct sk_buff *skb,
+					   const struct sal_context *ctx)
 {
 	const struct xia_row *src_sink = xip_src_sink(skb);
 	struct serval_request_sock *srsk;
 	int rc;
 
 	if (!src_sink || src_sink->s_xid.xid_type != XIDTYPE_SRVCID ||
-		!ctx->ctrl_ext || !(ctx->flags & SVH_SYN) ||
-		ctx->flags & SVH_ACK) {
+	    !ctx->ctrl_ext || !(ctx->flags & SVH_SYN) ||
+	    ctx->flags & SVH_ACK) {
 		serval_sal_send_reset(sk, skb, ctx);
 		rc = -EINVAL;
 		goto drop;
 	}
 
 	srsk = find_srsk_for_syn(sk_ssk(sk), src_sink->s_xid.xid_id,
-		ctx->ctrl_ext->nonce);
+				 ctx->ctrl_ext->nonce);
 	if (srsk) {
 		/* SYN already received, dropping @skb. */
 		serval_sal_send_synack(sk, srsk, skb, ctx);
@@ -1736,7 +1750,8 @@ drop:
  * The client will send an ACK packet to establish the connection.
  */
 static int serval_sal_request_state_process(struct sock *sk,
-	struct sk_buff *skb, const struct sal_context *ctx)
+					    struct sk_buff *skb,
+					    const struct sal_context *ctx)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 	struct xiphdr *xiph;
@@ -1744,8 +1759,8 @@ static int serval_sal_request_state_process(struct sock *sk,
 	int rc;
 
 	if (!has_valid_control_extension(sk, ctx) ||
-		!(ctx->flags & SVH_SYN) || !(ctx->flags & SVH_ACK) ||
-		serval_sal_ack_process(sk, skb, ctx)) {
+	    !(ctx->flags & SVH_SYN) || !(ctx->flags & SVH_ACK) ||
+	    serval_sal_ack_process(sk, skb, ctx)) {
 		/* Packet @skb is not a SYN-ACK response and/or
 		 * the ACK is invalid.
 		*/
@@ -1758,7 +1773,7 @@ static int serval_sal_request_state_process(struct sock *sk,
 	 */
 	xiph = xip_hdr(skb);
 	if (xia_set_dest(&ssk->xia_sk, &xiph->dst_addr[xiph->num_dst],
-		xiph->num_src)) {
+			 xiph->num_src)) {
 		rc = -EINVAL;
 		goto drop;
 	}
@@ -1817,7 +1832,8 @@ drop:
 }
 
 static int serval_sal_respond_state_process(struct sock *sk,
-	struct sk_buff *skb, const struct sal_context *ctx)
+					    struct sk_buff *skb,
+					    const struct sal_context *ctx)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 
@@ -1827,7 +1843,7 @@ static int serval_sal_respond_state_process(struct sock *sk,
 	/* Process ACK */
 	if (serval_sal_ack_process(sk, skb, ctx) == 0) {
 		if (ssk->af_ops->respond_state_process &&
-			ssk->af_ops->respond_state_process(sk, skb)) {
+		    ssk->af_ops->respond_state_process(sk, skb)) {
 			/* Transport drops ACK. */
 			return 0;
 		}
@@ -1898,7 +1914,7 @@ static int serval_sal_closing_state_process(struct sock *sk,
 	struct serval_sock *ssk = sk_ssk(sk);
 
 	if ((ctx->flags & SVH_ACK) &&
-		serval_sal_ack_process(sk, skb, ctx) == 0) {
+	    serval_sal_ack_process(sk, skb, ctx) == 0) {
 		/* ACK was valid */
 		serval_sal_timewait(sk, SAL_TIMEWAIT, SAL_TIMEWAIT_LEN);
 	}
@@ -1914,7 +1930,8 @@ static int serval_sal_closing_state_process(struct sock *sk,
 }
 
 static int serval_sal_lastack_state_process(struct sock *sk,
-	struct sk_buff *skb, const struct sal_context *ctx)
+					    struct sk_buff *skb,
+					    const struct sal_context *ctx)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 	int err = 0, ack_ok;
@@ -1941,7 +1958,7 @@ static int serval_sal_lastack_state_process(struct sock *sk,
 
 /* Receive for datagram sockets that are not connected. */
 static int serval_sal_init_state_process(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+					 const struct sal_context *ctx)
 {
 	struct xia_row *src_sink = xip_src_sink(skb);
 
@@ -1958,7 +1975,7 @@ static int serval_sal_init_state_process(struct sock *sk, struct sk_buff *skb,
 }
 
 int serval_sal_state_process(struct sock *sk, struct sk_buff *skb,
-	const struct sal_context *ctx)
+			     const struct sal_context *ctx)
 {
 	int err = 0;
 
@@ -2036,7 +2053,7 @@ drop:
 }
 
 static int linearize_and_parse_sal_header(struct sk_buff *skb,
-	struct sal_context *sal_ctx)
+					  struct sal_context *sal_ctx)
 {
 	struct sal_hdr *shdr;
 	int sal_length;
@@ -2080,7 +2097,7 @@ static int linearize_and_parse_sal_header(struct sk_buff *skb,
 
 static int __serval_sal_rcv(struct sk_buff *skb,
 	int (*do_rcv)(struct sock *sk, struct sk_buff *skb,
-		const struct sal_context *ctx))
+		      const struct sal_context *ctx))
 {
 	struct sal_context sal_ctx;
 	struct xip_dst *xdst;
@@ -2169,8 +2186,9 @@ void serval_sal_rexmit_timeout(unsigned long data)
 		ssk->retransmits++; /* Increase number of attempts. */
 
 		serval_sock_reset_xmit_timer(sk,
-			min(ssk->rto << ssk->backoff, SAL_RTO_MAX),
-			SAL_RTO_MAX);
+					     min(ssk->rto << ssk->backoff,
+						 SAL_RTO_MAX),
+					     SAL_RTO_MAX);
 	}
 	bh_unlock_sock(sk);
 	sock_put(sk);
@@ -2255,7 +2273,7 @@ static int serval_sal_do_xmit(struct sk_buff *skb)
 
 			if (dev) {
 				dev_get_ipv4_addr(dev,
-					&inet_sk(sk)->inet_saddr);
+						  &inet_sk(sk)->inet_saddr);
 				dev_put(dev);
 			}
 		}
@@ -2293,7 +2311,8 @@ int serval_sock_refresh_dest(struct sock *sk)
 	unmark_xia_rows(xia->xia_daddr.s_row, xia->xia_dnum);
 	xia->xia_dlast_node = XIA_ENTRY_NODE_INDEX;
 	xdst = xip_mark_addr_and_get_dst(sock_net(sk), xia->xia_daddr.s_row,
-		xia->xia_dnum, &xia->xia_dlast_node, 0);
+					 xia->xia_dnum, &xia->xia_dlast_node,
+					 0);
 	if (IS_ERR(xdst))
 		return -EHOSTUNREACH;	/* Cannot route it. */
 
@@ -2307,7 +2326,7 @@ static struct xip_dst *__ssk_peer_srvc_check(struct serval_sock *ssk)
 	struct xip_dst *xdst = ssk->peer_srvc_xdst;
 
 	if (xdst && xdst->dst.obsolete &&
-		!xdst->dst.ops->check(&xdst->dst, 0)) {
+	    !xdst->dst.ops->check(&xdst->dst, 0)) {
 		sk_tx_queue_clear(&ssk->xia_sk.sk);
 		ssk->peer_srvc_xdst = NULL;
 		xdst_put(xdst);
@@ -2330,8 +2349,9 @@ static int refresh_peer_srvc(struct serval_sock *ssk)
 	unmark_xia_rows(ssk->peer_srvc_addr.s_row, ssk->peer_srvc_num);
 	ssk->peer_srvc_last_node = XIA_ENTRY_NODE_INDEX;
 	xdst = xip_mark_addr_and_get_dst(sock_net(&ssk->xia_sk.sk),
-		ssk->peer_srvc_addr.s_row, ssk->peer_srvc_num,
-		&ssk->peer_srvc_last_node, 0);
+					 ssk->peer_srvc_addr.s_row,
+					 ssk->peer_srvc_num,
+					 &ssk->peer_srvc_last_node, 0);
 	if (IS_ERR(xdst))
 		return -EHOSTUNREACH;	/* Cannot route it. */
 
@@ -2446,7 +2466,7 @@ finish:
 
 	/* Add XIP header. */
 	push_xip_hdr_bsrc(skb, xdst, src, src_sink_type, src_sink_id, src_n,
-		dest, dest_n, dest_last_node);
+			  dest, dest_n, dest_last_node);
 
 	BUG_ON(xdst->input);
 	skb_dst_set(skb, &xdst->dst);
@@ -2454,7 +2474,7 @@ finish:
 }
 
 static int serval_sal_transmit_skb(struct sock *sk, struct sk_buff *skb,
-	int use_copy, gfp_t gfp_mask)
+				   int use_copy, gfp_t gfp_mask)
 {
 	int rc;
 

@@ -318,7 +318,7 @@ static void serval_tcp_set_skb_tso_segs(struct sock *sk, struct sk_buff *skb,
 					unsigned int mss_now)
 {
 	if (1 /* Disable GSO */ || skb->len <= mss_now ||
-		1 /* !sk_can_gso(sk) */ || skb->ip_summed == CHECKSUM_NONE) {
+	    1 /* !sk_can_gso(sk) */ || skb->ip_summed == CHECKSUM_NONE) {
 		/* Avoid the costly divide in the normal
 		 * non-TSO case.
 		 */
@@ -733,7 +733,7 @@ static void __pskb_trim_head(struct sk_buff *skb, int len)
 			if (eat) {
 				skb_shinfo(skb)->frags[k].page_offset += eat;
 				skb_frag_size_sub(&skb_shinfo(skb)->frags[k],
-					eat);
+						  eat);
 				eat = 0;
 			}
 			k++;
@@ -1627,8 +1627,8 @@ void serval_tcp_push_one(struct sock *sk, unsigned int mss_now)
 {
 	struct sk_buff *skb = serval_tcp_send_head(sk);
 	BUG_ON(!skb || skb->len < mss_now);
-	serval_tcp_write_xmit(sk, mss_now,
-		TCP_NAGLE_PUSH, 1, sk->sk_allocation);
+	serval_tcp_write_xmit(sk, mss_now, TCP_NAGLE_PUSH,
+			      1, sk->sk_allocation);
 }
 
 /* This function returns the amount that we can raise the
@@ -1954,7 +1954,8 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 }
 
 int serval_tcp_connection_build_synack(struct sock *sk, struct dst_entry *dst,
-	struct request_sock *req, struct sk_buff *skb)
+				       struct request_sock *req,
+				       struct sk_buff *skb)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	struct serval_tcp_request_sock *trsk = serval_tcp_rsk(req);
@@ -2408,8 +2409,9 @@ void serval_tcp_send_probe0(struct sock *sk)
 			tp->backoff++;
 		tp->probes_out++;
 		serval_tsk_reset_xmit_timer(sk, STSK_TIME_PROBE0,
-			min(tp->rto << tp->backoff, SERVAL_TCP_RTO_MAX),
-			SERVAL_TCP_RTO_MAX);
+					    min(tp->rto << tp->backoff,
+						SERVAL_TCP_RTO_MAX),
+					    SERVAL_TCP_RTO_MAX);
 	} else {
 		/* If packet was not sent due to local congestion,
 		 * do not backoff and do not remember icsk_probes_out.

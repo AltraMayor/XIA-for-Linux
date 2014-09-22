@@ -22,8 +22,8 @@ int flow_vxt __read_mostly = -1;
  */
 
 static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			   struct netlink_callback *cb)
 {
 	const struct serval_sock *ssk;
 	struct nlmsghdr *nlh;
@@ -37,7 +37,7 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	}
 
 	nlh = nlmsg_put(skb, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
-		RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
+			RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -58,7 +58,7 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	dst.xid_type = xtbl_ppalty(xtbl);
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
-		nla_put_u8(skb, RTA_PROTOINFO, ssk->xia_sk.sk.sk_state)))
+		     nla_put_u8(skb, RTA_PROTOINFO, ssk->xia_sk.sk.sk_state)))
 		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
@@ -98,8 +98,8 @@ static const xia_ppal_all_rt_eops_t srvc_all_rt_eops = {
  */
 
 static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			   struct netlink_callback *cb)
 {
 	const struct serval_sock *ssk;
 	struct nlmsghdr *nlh;
@@ -119,7 +119,7 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	}
 
 	nlh = nlmsg_put(skb, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
-		RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
+			RTM_NEWROUTE, sizeof(*rtm), NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -158,7 +158,7 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 				goto nla_put_failure;
 		}
 		if (unlikely(nla_put_u8(skb, RTA_PROTOINFO,
-			ssk->xia_sk.sk.sk_state)))
+					ssk->xia_sk.sk.sk_state)))
 			goto nla_put_failure;
 		break;
 	}
@@ -171,7 +171,7 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		memmove(src.xid_id, srsk->peer_srvcid.s_sid,
 			sizeof(src.xid_id));
 		if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src) ||
-			nla_put_u8(skb, RTA_PROTOINFO, SAL_RESPOND)))
+			     nla_put_u8(skb, RTA_PROTOINFO, SAL_RESPOND)))
 			goto nla_put_failure;
 		break;
 	}
@@ -276,11 +276,11 @@ static int __net_init serval_net_init(struct net *net)
 	}
 
 	rc = init_xid_table(&serval_ctx->srvc, net, &xia_main_lock_table,
-		srvc_all_rt_eops);
+			    srvc_all_rt_eops);
 	if (rc)
 		goto serval_ctx;
 	rc = init_xid_table(&serval_ctx->flow, net, &xia_main_lock_table,
-		flow_all_rt_eops);
+			    flow_all_rt_eops);
 	if (rc)
 		goto serval_ctx;
 
@@ -393,8 +393,8 @@ static int local_output_output(struct sock *sk, struct sk_buff *skb)
 }
 
 static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+			const u8 *xid, struct xia_xid *next_xid,
+			int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid *fxid;
@@ -451,8 +451,8 @@ static struct xip_route_proc srvc_rt_proc __read_mostly = {
 };
 
 static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+			const u8 *xid, struct xia_xid *next_xid,
+			int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid *fxid;
@@ -491,7 +491,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 				xdst->dst.output = local_output_output;
 			}
 			xdst_attach_to_anchor(xdst, anchor_index,
-				&rtid->anchor);
+					      &rtid->anchor);
 			break;
 		}
 
@@ -506,7 +506,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 				xdst->dst.output = local_output_output;
 			}
 			xdst_attach_to_anchor(xdst, anchor_index,
-				&srsk->flow_anchor);
+					      &srsk->flow_anchor);
 			break;
 		}
 
@@ -547,9 +547,9 @@ void serval_sock_init(struct serval_sock *ssk)
 	INIT_LIST_HEAD(&ssk->accept_queue);
 	INIT_LIST_HEAD(&ssk->syn_queue);
 	setup_timer(&ssk->retransmit_timer, serval_sal_rexmit_timeout,
-		(unsigned long)sk);
+		    (unsigned long)sk);
 	setup_timer(&ssk->tw_timer, serval_sal_timewait_timeout,
-		(unsigned long)sk);
+		    (unsigned long)sk);
 
 	serval_sal_init_ctrl_queue(sk);
 
@@ -694,21 +694,21 @@ static inline struct serval_rt_id *rtid_alloc(gfp_t flags)
 
 /* Don't call this function, use rtid_init() or __rtid_init() instead. */
 static inline void __rtid_init_common(struct serval_rt_id *rtid,
-	struct serval_sock *ssk)
+				      struct serval_sock *ssk)
 {
 	xdst_init_anchor(&rtid->anchor);
 	RCU_INIT_POINTER(rtid->ssk, ssk);
 }
 
 static void __rtid_init(struct serval_rt_id *rtid, struct serval_sock *ssk,
-	int table_id, int entry_type)
+			int table_id, int entry_type)
 {
 	__init_fxid(&rtid->fxid, table_id, entry_type);
 	__rtid_init_common(rtid, ssk);
 }
 
 static void rtid_init(struct serval_rt_id *rtid, struct serval_sock *ssk,
-	const u8 *xid, int table_id, int entry_type)
+		      const u8 *xid, int table_id, int entry_type)
 {
 	init_fxid(&rtid->fxid, xid, table_id, entry_type);
 	__rtid_init_common(rtid, ssk);
@@ -724,7 +724,7 @@ static inline void __rtid_free_common(struct serval_rt_id *rtid)
  * has been called on @rtid.
  */
 static void rtid_free_norcu(struct fib_xid_table *xtbl,
-	struct serval_rt_id *rtid)
+			    struct serval_rt_id *rtid)
 {
 	__rtid_free_common(rtid);
 	free_fxid_norcu(xtbl, &rtid->fxid);
@@ -791,10 +791,10 @@ dnf:
 }
 
 static void serval_sock_unhash_s_f(struct sock *sk,
-	int unhash_srvc, int unhash_flow);
+				   int unhash_srvc, int unhash_flow);
 
 static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
-	int addr_len, int flags)
+			  int addr_len, int flags)
 {
 	struct sock *sk = sock->sk;
 	struct serval_sock *ssk;
@@ -849,7 +849,7 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 		BUG_ON(ssk->flow_rtid);
 		serval_sock_set_state(sk, SAL_REQUEST);
 		xtbl = xip_find_my_ppal_ctx_vxt(sock_net(sk),
-			flow_vxt)->xpc_xtbl;
+						flow_vxt)->xpc_xtbl;
 		rc = fib_add_fxid(xtbl, &rtid->fxid);
 		if (rc) {
 			serval_sock_set_state(sk, SAL_CLOSED);
@@ -930,7 +930,7 @@ static int serval_wait_for_connect(struct sock *sk, long timeo)
 
 	for (;;) {
 		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
-			TASK_INTERRUPTIBLE);
+					  TASK_INTERRUPTIBLE);
 		release_sock(sk);
 
 		if (list_empty(&ssk->accept_queue))
@@ -960,7 +960,7 @@ static int serval_wait_for_connect(struct sock *sk, long timeo)
 
 /* Caller must have the lock of @parent. */
 static struct sock *serval_accept_dequeue(struct sock *parent,
-	struct socket *newsock)
+					  struct socket *newsock)
 {
 	struct serval_sock *pssk = sk_ssk(parent);
 	struct serval_request_sock *srsk;
@@ -1015,7 +1015,7 @@ out:
 }
 
 static unsigned int serval_poll(struct file *file, struct socket *sock,
-	poll_table *wait)
+				poll_table *wait)
 {
 	struct sock *sk = sock->sk;
 	unsigned int mask;
@@ -1088,7 +1088,7 @@ void serval_sock_get_flowid(u8 *flowid)
 }
 
 int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
-	struct serval_sock *new_ssk)
+				struct serval_sock *new_ssk)
 {
 	struct xip_deferred_negdep_flush *dnf;
 	struct serval_rt_id *rtid;
@@ -1107,7 +1107,7 @@ int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
 		return -ENOMEM;
 	}
 	rtid_init(rtid, new_ssk, cur_fxid->fx_xid,
-		XRTABLE_LOCAL_INDEX, SOCK_TYPE);
+		  XRTABLE_LOCAL_INDEX, SOCK_TYPE);
 
 	net = sock_net(&new_ssk->xia_sk.sk);
 	xtbl = xip_find_my_ppal_ctx_vxt(net, flow_vxt)->xpc_xtbl;
@@ -1141,7 +1141,7 @@ int __serval_sock_hash_flowid(struct net *net, struct fib_xid *fxid)
 }
 
 static void serval_sock_unhash_s_f(struct sock *sk,
-	int unhash_srvc, int unhash_flow)
+				   int unhash_srvc, int unhash_flow)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 	struct net *net = sock_net(sk);
@@ -1270,7 +1270,7 @@ static int serval_shutdown(struct socket *sock, int how)
 }
 
 static int serval_sendmsg(struct kiocb *iocb, struct socket *sock,
-	struct msghdr *msg, size_t size)
+			  struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
 
@@ -1282,14 +1282,16 @@ static int serval_sendmsg(struct kiocb *iocb, struct socket *sock,
 }
 
 extern unsigned int serval_tcp_poll(struct file *file, struct socket *sock,
-	poll_table *wait);
+				    poll_table *wait);
 
 #if defined(ENABLE_SPLICE)
 extern ssize_t serval_udp_splice_read(struct socket *sock, loff_t *ppos,
-	struct pipe_inode_info *pipe, size_t len, unsigned int flags);
+				      struct pipe_inode_info *pipe,
+				      size_t len, unsigned int flags);
 
 extern ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
-	struct pipe_inode_info *pipe, size_t len, unsigned int flags);
+				      struct pipe_inode_info *pipe,
+				      size_t len, unsigned int flags);
 #endif /* ENABLE_SPLICE */
 
 static const struct proto_ops serval_stream_ops = {

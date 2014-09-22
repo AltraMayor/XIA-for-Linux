@@ -55,7 +55,8 @@ static const char * const sock_sal_state_str[] = {
 static int serval_table_init(struct serval_table *table,
 	unsigned int (*hashfn)(struct serval_table *tbl, struct sock *sk),
 	struct serval_hslot *(*hashslot)(struct serval_table *tbl,
-		struct net *net, void *key, size_t keylen))
+					 struct net *net, void *key,
+					 size_t keylen))
 {
 	unsigned int i;
 

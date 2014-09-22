@@ -150,8 +150,8 @@ static inline void clear_cb_from(struct netlink_callback *cb, int from)
 }
 
 static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+				 struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+				 struct netlink_callback *cb)
 {
 	struct fib_xid_buckets *abranch;
 	long i, j = 0;
@@ -167,7 +167,7 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 		struct hlist_head *head = &abranch->buckets[i];
 		j = 0;
 		hlist_for_each_entry_rcu(fxid, head,
-			fx_branch_list[aindex]) {
+					 fx_branch_list[aindex]) {
 			if (j < first_j)
 				goto next;
 			rc = xtbl->all_eops[fxid->fx_table_id].dump_fxid(
@@ -210,7 +210,7 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 }
 
 static int xip_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			      struct netlink_callback *cb)
 {
 #define SIZE_OF_DEST	(sizeof(struct xia_xid[XIA_OUTDEGREE_MAX]))
 
@@ -221,7 +221,7 @@ static int xip_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
 	struct xip_dst_cachinfo ci;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -250,7 +250,7 @@ static int xip_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
 	ci.chosen_edge =xdst->chosen_edge;
 
 	if (unlikely(nla_put(skb, RTA_PROTOINFO,
-		sizeof(struct xip_dst_cachinfo), &ci)))
+			     sizeof(struct xip_dst_cachinfo), &ci)))
 		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);

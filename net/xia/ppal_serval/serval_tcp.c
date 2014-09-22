@@ -102,7 +102,8 @@ static inline __u32 serval_tcp_init_sequence(struct sk_buff *skb)
 }
 
 static void serval_tcp_openreq_init(struct serval_tcp_request_sock *trsk,
-	struct serval_tcp_options_received *rx_opt, struct sk_buff *skb)
+				    struct serval_tcp_options_received *rx_opt,
+				    struct sk_buff *skb)
 {
 	struct request_sock *req = &trsk->rsk.req;
 
@@ -121,7 +122,8 @@ static void serval_tcp_openreq_init(struct serval_tcp_request_sock *trsk,
 }
 
 static int serval_tcp_connection_request(struct sock *sk,
-	struct request_sock *req, struct sk_buff *skb)
+					 struct request_sock *req,
+					 struct sk_buff *skb)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	struct serval_tcp_request_sock *trsk = serval_tcp_rsk(req);
@@ -146,7 +148,8 @@ static int serval_tcp_connection_request(struct sock *sk,
 }
 
 static int serval_tcp_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
-	struct request_sock *rsk, struct sock *child, struct dst_entry *dst);
+				    struct request_sock *rsk,
+				    struct sock *child, struct dst_entry *dst);
 
 int serval_tcp_do_rcv(struct sock *sk, struct sk_buff *skb)
 {
@@ -396,7 +399,7 @@ static int serval_tcp_send_mss(struct sock *sk, int *size_goal, int flags)
 }
 
 static inline void serval_tcp_mark_push(struct serval_tcp_sock *tp,
-				 struct sk_buff *skb)
+					struct sk_buff *skb)
 {
 	TCP_SKB_CB(skb)->tcp_flags |= TCPH_PSH;
 	tp->pushed_seq = tp->write_seq;
@@ -503,7 +506,7 @@ static inline void serval_tcp_push(struct sock *sk, int flags, int mss_now,
 
 		if (!(flags & MSG_MORE) || forced_push(tp))
 			serval_tcp_mark_push(tp,
-				serval_tcp_write_queue_tail(sk));
+					     serval_tcp_write_queue_tail(sk));
 
 		serval_tcp_mark_urg(tp, flags);
 
@@ -528,8 +531,8 @@ static void serval_tcp_service_net_dma(struct sock *sk, bool wait)
 
 	do {
 		if (dma_async_is_tx_complete(tp->ucopy.dma_chan,
-					      last_issued, &done,
-					      &used) == DMA_SUCCESS) {
+					     last_issued, &done,
+					     &used) == DMA_SUCCESS) {
 			/* Safe to free early-copied skbs now */
 			__skb_queue_purge(&sk->sk_async_wait_queue);
 			break;
@@ -891,7 +894,7 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 #endif /* ENABLE_SPLICE */
 
 static int serval_tcp_sendmsg(struct kiocb *iocb, struct sock *sk,
-	struct msghdr *msg, size_t size)
+			      struct msghdr *msg, size_t size)
 {
 	struct iovec *iov;
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -1020,7 +1023,7 @@ new_segment:
 				}
 
 				copy = min_t(int, copy,
-					pfrag->size - pfrag->offset);
+					     pfrag->size - pfrag->offset);
 
 				if (!sk_wmem_schedule(sk, copy))
 					goto wait_for_memory;
@@ -1073,7 +1076,7 @@ wait_for_sndbuf:
 wait_for_memory:
 			if (copied)
 				serval_tcp_push(sk, flags & ~MSG_MORE, mss_now,
-					TCP_NAGLE_PUSH);
+						TCP_NAGLE_PUSH);
 
 			if ((err = sk_stream_wait_memory(sk, &timeo)) != 0)
 				goto do_error;
@@ -2248,7 +2251,9 @@ static struct serval_sock_af_ops serval_tcp_af_ops = {
 
 /* Adapted from tcp_minisocks.c. */
 static void serval_tcp_create_openreq_child(struct sock *sk,
-	struct request_sock *req, struct sock *newsk, struct sk_buff *skb)
+					    struct request_sock *req,
+					    struct sock *newsk,
+					    struct sk_buff *skb)
 {
 	struct serval_tcp_request_sock *treq = serval_tcp_rsk(req);
 	struct serval_sock *newssk = sk_ssk(newsk);
@@ -2364,7 +2369,8 @@ static void serval_tcp_create_openreq_child(struct sock *sk,
  * three-way handshake on the server side.
  */
 static int serval_tcp_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
-	struct request_sock *req, struct sock *newsk, struct dst_entry *dst)
+				    struct request_sock *req,
+				    struct sock *newsk, struct dst_entry *dst)
 {
 	struct serval_tcp_sock *newtp = serval_tcp_sk(newsk);
 
