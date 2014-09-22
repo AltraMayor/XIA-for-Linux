@@ -22,7 +22,7 @@ static inline struct xip_vxt_entry *writable_current_map(void)
 }
 
 static inline struct xip_vxt_entry *get_entry_locked(struct xip_vxt_entry *map,
-	xid_type_t ty)
+						     xid_type_t ty)
 {
 	BUILD_BUG_ON_NOT_POWER_OF_2(XIP_VXT_TABLE_SIZE);
 	BUILD_BUG_ON(XIP_VXT_TABLE_SIZE < XIP_MAX_XID_TYPES);

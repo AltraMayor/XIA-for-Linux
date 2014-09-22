@@ -30,7 +30,8 @@ static inline struct fib_xid_hid_local *fxid_lhid(struct fib_xid *fxid)
 }
 
 static int local_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
 {
 	struct fib_xid_hid_local *lhid;
 	int rc, added;
@@ -39,7 +40,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (!lhid)
 		return -ENOMEM;
 	init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id,
-		XRTABLE_LOCAL_INDEX, 0);
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lhid->xhl_anchor);
 
 	rc = fib_build_newroute(&lhid->xhl_common, xtbl, cfg, &added);
@@ -55,7 +56,8 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 }
 
 static int local_delroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
 {
 	int rc = fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
 	if (!rc) {
@@ -70,8 +72,8 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 }
 
 static int local_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			  struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			  struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -80,7 +82,7 @@ static int local_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xia_xid dst;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -123,7 +125,7 @@ static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
  */
 
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
+			 struct xia_fib_config *cfg)
 {
 	if (!cfg->xfc_odev)
 		return -EINVAL;
@@ -137,7 +139,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 }
 
 static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
+			 struct xia_fib_config *cfg)
 {
 	if (!cfg->xfc_odev)
 		return -EINVAL;
@@ -151,8 +153,8 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 }
 
 static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			 struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			 struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -164,7 +166,7 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct hrdw_addr *pos_ha;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -267,7 +269,7 @@ static int __net_init hid_net_init(struct net *net)
 	}
 
 	rc = init_xid_table(&hid_ctx->ctx, net, &xia_main_lock_table,
-		hid_all_rt_eops);
+			    hid_all_rt_eops);
 	if (rc)
 		goto hid_ctx;
 
@@ -329,7 +331,7 @@ static int main_input_input(struct sk_buff *skb)
 		 * shouldn't it report more?
 		 */
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("%s: hop limit reached\n"),
-			__func__);
+			       __func__);
 		goto drop;
 	}
 
@@ -403,7 +405,7 @@ static int main_input_output(struct sock *sk, struct sk_buff *skb)
 	 */
 	/* Fill the device header. */
 	rc = dev_hard_header(skb, skb->dev, ETH_P_XIP, ha->ha,
-		dev->dev_addr, skb->len);
+			     dev->dev_addr, skb->len);
 	if (rc < 0)
 		goto drop;
 
@@ -424,8 +426,8 @@ static int main_output_input(struct sk_buff *skb)
 #define main_output_output main_input_output
 
 static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+		       const u8 *xid, struct xia_xid *next_xid,
+		       int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid *fxid;
@@ -451,7 +453,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 		struct fib_xid_hid_main *mhid = fxid_mhid(fxid);
 		struct hrdw_addr *ha =
 			list_first_or_null_rcu(&mhid->xhm_haddrs,
-				struct hrdw_addr, ha_list);
+					       struct hrdw_addr, ha_list);
 
 		if (unlikely(!ha)) {
 			/* @ha may be NULL because we don't have a lock over

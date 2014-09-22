@@ -100,8 +100,8 @@ static const u8 uni_xid_prefix[] = {
 };
 
 static int uni4id_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+			  const u8 *xid, struct xia_xid *next_xid,
+			  int anchor_index, struct xip_dst *xdst)
 {
 	BUILD_BUG_ON(sizeof(uni_xid_prefix) != 16);
 	BUILD_BUG_ON(XIA_XID_MAX != 20);

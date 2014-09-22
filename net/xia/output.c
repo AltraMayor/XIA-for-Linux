@@ -41,7 +41,7 @@ struct sk_buff *xip_trim_packet_if_needed(struct sk_buff *skb, u32 mtu)
 EXPORT_SYMBOL_GPL(xip_trim_packet_if_needed);
 
 static inline void copy_xia_addr_to(const struct xia_row *addr, int n,
-	struct xia_row *to)
+				    struct xia_row *to)
 {
 	int len = sizeof(struct xia_row) * n;
 	BUG_ON(n < 0 || n > XIA_NODES_MAX);
@@ -86,8 +86,10 @@ static inline struct xia_row *__xip_fill_in_hdr(struct sk_buff *skb,
 }
 
 void xip_fill_in_hdr_bsrc(struct sk_buff *skb, struct xip_dst *xdst,
-	const struct xia_row *src, xid_type_t sink_type, const __u8 *sink_id,
-	int src_n, const struct xia_row *dest, int dest_n, int dest_last_node)
+			  const struct xia_row *src, xid_type_t sink_type,
+			  const __u8 *sink_id, int src_n,
+			  const struct xia_row *dest, int dest_n,
+			  int dest_last_node)
 {
 	struct xia_row *src_row = __xip_fill_in_hdr(skb, xdst, src_n,
 		dest, dest_n, dest_last_node);
@@ -101,8 +103,9 @@ void xip_fill_in_hdr_bsrc(struct sk_buff *skb, struct xip_dst *xdst,
 EXPORT_SYMBOL_GPL(xip_fill_in_hdr_bsrc);
 
 void xip_fill_in_hdr(struct sk_buff *skb, struct xip_dst *xdst,
-	const struct xia_row *src, int src_n,
-	const struct xia_row *dest, int dest_n, int dest_last_node)
+		     const struct xia_row *src, int src_n,
+		     const struct xia_row *dest, int dest_n,
+		     int dest_last_node)
 {
 	struct xia_row *src_row = __xip_fill_in_hdr(skb, xdst, src_n,
 		dest, dest_n, dest_last_node);
@@ -111,9 +114,8 @@ void xip_fill_in_hdr(struct sk_buff *skb, struct xip_dst *xdst,
 EXPORT_SYMBOL_GPL(xip_fill_in_hdr);
 
 static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
-	const struct xia_addr *src, int src_n,
-	const struct xia_addr *dest, int dest_n, u8 dest_last_node,
-	int transhdrlen, int noblock)
+	const struct xia_addr *src, int src_n, const struct xia_addr *dest,
+	int dest_n, u8 dest_last_node, int transhdrlen, int noblock)
 {
 	struct net_device *dev = xdst->dst.dev;
 	struct sk_buff *skb;
@@ -122,14 +124,14 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 
 	if (!dev) {
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIP %s: there is a bug somewhere, tried to send a datagram, but dst.dev is NULL\n"),
-			__func__);
+			       __func__);
 		return ERR_PTR(-ENODEV);
 	}
 
 	mtu = dst_mtu(&xdst->dst);
 	if (mtu < XIP_MIN_MTU) {
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIP %s: cannot send datagram out because mtu (= %u) of dev %s is less than minimum MTU (= %u)\n"),
-			__func__, mtu, dev->name, XIP_MIN_MTU);
+			       __func__, mtu, dev->name, XIP_MIN_MTU);
 		return ERR_PTR(-EMSGSIZE);
 	}
 
@@ -149,7 +151,7 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 	xh_len = xip_hdr_size(dest_n, src_n);
 	skb_put(skb, xh_len);
 	xip_fill_in_hdr(skb, xdst, src->s_row, src_n,
-		dest->s_row, dest_n, dest_last_node);
+			dest->s_row, dest_n, dest_last_node);
 
 	skb_set_transport_header(skb, xh_len);
 	skb_put(skb, transhdrlen);
@@ -165,7 +167,7 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 
 static int __xip_append_data(struct sk_buff *skb,
 	int getfrag(void *from, char *to, int offset,
-		int len, int odd, struct sk_buff *skb),
+		    int len, int odd, struct sk_buff *skb),
 	struct iovec *from, int length)
 {
 	int copy;
@@ -183,8 +185,8 @@ static int __xip_append_data(struct sk_buff *skb,
 }
 
 int xip_start_skb(struct sock *sk, struct xip_dst *xdst,
-	const struct xia_addr *dest, int dest_n, u8 dest_last_node,
-	int transhdrlen, unsigned int flags)
+		  const struct xia_addr *dest, int dest_n, u8 dest_last_node,
+		  int transhdrlen, unsigned int flags)
 {
 	struct xia_sock *xia = xia_sk(sk);
 	struct sk_buff *skb;
@@ -193,8 +195,8 @@ int xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 		return -ESNOTBOUND;
 
 	skb = __xip_start_skb(sk, xdst, &xia->xia_saddr, xia->xia_snum,
-		dest, dest_n, dest_last_node, transhdrlen,
-		(flags & MSG_DONTWAIT));
+			      dest, dest_n, dest_last_node, transhdrlen,
+			      (flags & MSG_DONTWAIT));
 	if (IS_ERR(skb))
 		return PTR_ERR(skb);
 
@@ -207,7 +209,7 @@ EXPORT_SYMBOL_GPL(xip_start_skb);
 
 int xip_append_data(struct sock *sk,
 	int getfrag(void *from, char *to, int offset,
-		int len, int odd, struct sk_buff *skb),
+		    int len, int odd, struct sk_buff *skb),
 	struct iovec *from, int length, unsigned int flags)
 {
 	struct sk_buff *skb;
@@ -242,7 +244,7 @@ EXPORT_SYMBOL_GPL(xip_finish_skb);
 struct sk_buff *xip_make_skb(struct sock *sk,
 	const struct xia_addr *dest, int dest_n, u8 dest_last_node,
 	int getfrag(void *from, char *to, int offset,
-		int len, int odd, struct sk_buff *skb),
+		    int len, int odd, struct sk_buff *skb),
 	struct iovec *from, int length, int transhdrlen, struct xip_dst *xdst,
 	unsigned int flags)
 {
@@ -258,8 +260,8 @@ struct sk_buff *xip_make_skb(struct sock *sk,
 		return ERR_PTR(-ESNOTBOUND);
 
 	skb = __xip_start_skb(sk, xdst, &xia->xia_saddr, xia->xia_snum,
-		dest, dest_n, dest_last_node, transhdrlen,
-		(flags & MSG_DONTWAIT));
+			      dest, dest_n, dest_last_node, transhdrlen,
+			      (flags & MSG_DONTWAIT));
 	if (IS_ERR(skb))
 		return skb;
 

@@ -66,7 +66,8 @@ static int serval_udp_build_syn(struct sock *sk, struct sk_buff *skb)
 }
 
 static int serval_udp_build_synack(struct sock *sk, struct dst_entry *dst,
-	struct request_sock *req, struct sk_buff *skb)
+				   struct request_sock *req,
+				   struct sk_buff *skb)
 {
 	return serval_udp_build_syn(sk, skb);
 }
@@ -139,7 +140,8 @@ static int serval_udp_disconnect(struct sock *sk, int flags)
 }
 
 static int serval_udp_connection_request(struct sock *sk,
-	struct request_sock *rsk, struct sk_buff *skb)
+					 struct request_sock *rsk,
+					 struct sk_buff *skb)
 {
 	return 0;
 }
@@ -250,7 +252,7 @@ static int serval_udp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	if (msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_xia *, addr, msg->msg_name);
 		rc = check_sockaddr_xia((struct sockaddr *)addr,
-			msg->msg_namelen);
+					msg->msg_namelen);
 		if (rc)
 			return rc;
 		rc = check_type_of_all_sinks(addr, XIDTYPE_SRVCID);
@@ -261,7 +263,7 @@ static int serval_udp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		dest_last_node = XIA_ENTRY_NODE_INDEX;
 
 		xdst = xip_mark_addr_and_get_dst(sock_net(sk), dest, dest_n,
-			&dest_last_node, 0);
+						 &dest_last_node, 0);
 		if (IS_ERR(xdst))
 			return PTR_ERR(xdst);
 	} else if (sk->sk_state != SAL_CONNECTED) {
@@ -278,7 +280,7 @@ static int serval_udp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	}
 
 	skb = sock_alloc_send_skb(sk, sk->sk_prot->max_header + len,
-		nonblock, &rc);
+				  nonblock, &rc);
 	if (!skb)
 		goto xdst;
 	skb_reserve(skb, sk->sk_prot->max_header);
@@ -463,7 +465,7 @@ static int serval_udp_splice_data_recv(read_descriptor_t *rd_desc,
  *	  (although both would be easy to implement).
  */
 static int serval_udp_read_sock(struct sock *sk, read_descriptor_t *desc,
-	sk_read_actor_t recv_actor)
+				sk_read_actor_t recv_actor)
 {
 	struct sk_buff *skb;
 	int retval = 0;
@@ -674,7 +676,7 @@ out_err:
 }
 
 static int serval_udp_sendpage(struct sock *sk, struct page *page, int offset,
-	size_t size, int flags)
+			       size_t size, int flags)
 {
 	ssize_t res;
 

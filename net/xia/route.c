@@ -63,7 +63,7 @@ static void xip_link_failure(struct sk_buff *skb)
 }
 
 static void xip_update_pmtu(struct dst_entry *dst, struct sock *sk,
-	struct sk_buff *skb, u32 mtu)
+			    struct sk_buff *skb, u32 mtu)
 {
 	if (mtu < dst_mtu(dst)) {
 		mtu = max_t(typeof(mtu), mtu, XIP_MIN_MTU);
@@ -72,7 +72,8 @@ static void xip_update_pmtu(struct dst_entry *dst, struct sock *sk,
 }
 
 static struct neighbour *xip_neigh_lookup(const struct dst_entry *dst,
-	struct sk_buff *skb, const void *daddr)
+					  struct sk_buff *skb,
+					  const void *daddr)
 {
 	return ERR_PTR(-EINVAL);
 }
@@ -123,7 +124,7 @@ static inline void update_edge_hash(u32 *pkey_hash, const struct xia_xid *xid)
 }
 
 static u32 hash_edges(const struct xia_row *addr, const struct xia_row *row,
-	int input)
+		      int input)
 {
 	int i;
 	u32 key_hash = start_edge_hash(input);
@@ -138,7 +139,7 @@ static u32 hash_edges(const struct xia_row *addr, const struct xia_row *row,
 }
 
 static void set_xdst_key(struct xip_dst *xdst, const struct xia_row *addr,
-	struct xia_row *row, int input, u32 key_hash)
+			 struct xia_row *row, int input, u32 key_hash)
 {
 	int i;
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
@@ -252,7 +253,7 @@ static inline struct dst_entry **dsthead(struct net *net, u32 key_hash)
 
 /* Return true if @xdst has the same key of (@addr, @row, @input). */
 static int xdst_matches_addr(struct xip_dst *xdst, const struct xia_row *addr,
-	const struct xia_row *row, int input)
+			     const struct xia_row *row, int input)
 {
 	int i;
 
@@ -276,7 +277,8 @@ static int xdst_matches_addr(struct xip_dst *xdst, const struct xia_row *addr,
 }
 
 static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash,
-	const struct xia_row *addr, const struct xia_row *row, int input)
+				     const struct xia_row *addr,
+				     const struct xia_row *row, int input)
 {
 	/* The trailing `h' stands for hash because it's pointing to
 	 * an entry in a bucket list.
@@ -287,7 +289,7 @@ static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash,
 		dsth = rcu_dereference(dsth->next)) {
 		struct xip_dst *xdsth = dst_xdst(dsth);
 		if (xdsth->key_hash == key_hash &&
-			xdst_matches_addr(xdsth, addr, row, input))
+		    xdst_matches_addr(xdsth, addr, row, input))
 			return xdsth;
 	}
 	return NULL;
@@ -312,7 +314,7 @@ static int xdst_matches_xdst(struct xip_dst *xdst1, struct xip_dst *xdst2)
 }
 
 static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
-	struct xip_dst *xdst)
+					struct xip_dst *xdst)
 {
 	struct dst_entry *dsth;
 	for (dsth = *phead; dsth; dsth = dsth->next) {
@@ -392,7 +394,7 @@ static void make_xdst_unreachable(struct net *net, struct xip_dst *xdst)
  *	See function xdst_free_anchor_f for more information.
  */
 static struct xip_dst *add_xdst_rcu(struct net *net,
-	struct xip_dst *xdst, s8 chosen_edge)
+				    struct xip_dst *xdst, s8 chosen_edge)
 {
 	struct dst_entry **phead = dsthead(net, xdst->key_hash);
 	struct xip_dst *prv_xdst;
@@ -493,7 +495,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 			if (unlikely(!p_chosen_dsth))
 				p_chosen_dsth = pdsth;
 			else if (time_after((*p_chosen_dsth)->lastuse,
-					(*pdsth)->lastuse) &&
+					    (*pdsth)->lastuse) &&
 				(*p_chosen_dsth)->__use > (*pdsth)->__use)
 				p_chosen_dsth =  pdsth;
 		}
@@ -535,7 +537,7 @@ static void unlock_anchor(struct xip_dst_anchor *anchor) __releases(anchor)
 }
 
 void xdst_attach_to_anchor(struct xip_dst *xdst, int index,
-	struct xip_dst_anchor *anchor)
+			   struct xip_dst_anchor *anchor)
 {
 	lock_anchor(anchor);
 	BUG_ON(cmpxchg(&xdst->anchors[index].anchor, NULL, anchor) != NULL);
@@ -642,7 +644,7 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 	lock_anchor(anchor);
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		hlist_for_each_entry_safe(xdst, n, &anchor->heads[i],
-			anchors[i].list_node) {
+					  anchors[i].list_node) {
 			int held;
 
 			if (!filter(xdst, i, arg))
@@ -659,7 +661,7 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 			if (held) {
 				/* We are responsable for freeing @xdst. */
 				hlist_add_head(&xdst->anchors[i].list_node,
-					&roots[i]);
+					       &roots[i]);
 			} else {
 				/* We don't have a refcount to @xdst, and
 				 * assumption 1 guarantees that somebody
@@ -675,7 +677,7 @@ static void xdst_free_anchor_f(struct xip_dst_anchor *anchor,
 	 */
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
 		hlist_for_each_entry_safe(xdst, n, &roots[i],
-			anchors[i].list_node) {
+					  anchors[i].list_node) {
 			hlist_del(&xdst->anchors[i].list_node);
 			xdst_rcu_free(xdst);
 		}
@@ -712,7 +714,7 @@ static int filter_from(struct xip_dst *xdst, int anchor_index, void *arg)
  *	IMPORTANT! Caller must RCU synch before calling this function.
  */
 static void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
-	const u8 *id)
+			      const u8 *id)
 {
 	struct filter_from_arg arg;
 	arg.type = type;
@@ -721,10 +723,10 @@ static void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
 }
 
 static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
-	const struct xia_xid *to);
+						 const struct xia_xid *to);
 
 void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
-	const u8 *from_xid, const struct xia_xid *to)
+			      const u8 *from_xid, const struct xia_xid *to)
 {
 	struct xip_dst_anchor *anchor;
 
@@ -734,7 +736,7 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	if (IS_ERR(anchor)) {
 		rcu_read_unlock();
 		LIMIT_NETDEBUG(KERN_ERR pr_fmt("%s: XIP could not invalidate DST entries because of error %li. Clearing XIP DST cache as a last resource...\n"),
-			__func__, PTR_ERR(anchor));
+			       __func__, PTR_ERR(anchor));
 		clear_xdst_table(net);
 		return;
 	}
@@ -790,8 +792,8 @@ struct xip_negdep_route_proc {
 };
 
 static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst);
+			  const u8 *xid, struct xia_xid *next_xid,
+			  int anchor_index, struct xip_dst *xdst);
 
 static struct xip_negdep_route_proc negdep_rproc = {
 	.rproc = {
@@ -802,8 +804,8 @@ static struct xip_negdep_route_proc negdep_rproc = {
 };
 
 static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+			  const u8 *xid, struct xia_xid *next_xid,
+			  int anchor_index, struct xip_dst *xdst)
 {
 	BUG_ON(rproc != &negdep_rproc.rproc);
 
@@ -838,7 +840,7 @@ static inline struct xip_route_proc *get_an_rproc_rcu(const xid_type_t ty)
 }
 
 static int deliver_rcu(struct net *net, const struct xia_xid *xid,
-	int anchor_index, struct xip_dst *xdst);
+		       int anchor_index, struct xip_dst *xdst);
 
 /* Find the anchor of @to.
  *
@@ -849,7 +851,7 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
  * to avoid releasing @anchor's host struct before returning it.
  */
 static struct xip_dst_anchor *find_anchor_of_rcu(struct net *net,
-	const struct xia_xid *to)
+						 const struct xia_xid *to)
 {
 	struct xip_dst *xdst;
 	struct xip_dst_anchor *anchor;
@@ -946,7 +948,7 @@ void xip_del_router(struct xip_route_proc *rproc)
 EXPORT_SYMBOL_GPL(xip_del_router);
 
 static int deliver_rcu(struct net *net, const struct xia_xid *xid,
-	int anchor_index, struct xip_dst *xdst)
+		       int anchor_index, struct xip_dst *xdst)
 {
 	const struct xia_xid *left_xid;
 	struct xia_xid tmp_xids[2], *right_xid;
@@ -965,7 +967,7 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
 		 * negative dependency.
 		 */
 		BUG_ON(!rproc || (rproc->xrp_ppal_type != ty &&
-			rproc->xrp_ppal_type != XIDTYPE_NAT));
+				  rproc->xrp_ppal_type != XIDTYPE_NAT));
 
 		/* Consult principal. */
 		rc = rproc->deliver(rproc, net, left_xid->xid_id,
@@ -981,11 +983,11 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
 			if (right_xid->xid_type == ty) {
 				char to[XIA_MAX_STRXID_SIZE];
 				BUG_ON(xia_xidtop(left_xid, from,
-					XIA_MAX_STRXID_SIZE) < 0);
+						  XIA_MAX_STRXID_SIZE) < 0);
 				BUG_ON(xia_xidtop(right_xid, to,
-					XIA_MAX_STRXID_SIZE) < 0);
+						  XIA_MAX_STRXID_SIZE) < 0);
 				pr_err("BUG: Principal %u is redirecting to itself, %s -> %s, ignoring this route\n",
-					__be32_to_cpu(ty), from, to);
+				       __be32_to_cpu(ty), from, to);
 				/* One cannot return XRP_ACT_NEXT_EDGE here
 				 * because there would be no dependency.
 				 */
@@ -1003,7 +1005,7 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
 	} while (done > 0);
 	BUG_ON(xia_xidtop(xid, from, XIA_MAX_STRXID_SIZE) < 0);
 	pr_err("BUG: Principal %u is looping too deep, this search started with %s, ignoring this route\n",
-		__be32_to_cpu(xid->xid_type), from);
+	       __be32_to_cpu(xid->xid_type), from);
 	/* One cannot return XRP_ACT_NEXT_EDGE here
 	 * because there would be no dependency.
 	 */
@@ -1015,7 +1017,7 @@ static inline int xip_dst_not_supported(char *direction, struct sk_buff *skb)
 {
 	if (net_ratelimit())
 		pr_warn("XIP: not supported address for principal on direction %s\n",
-		direction);
+			direction);
 	return dst_discard(skb);
 }
 
@@ -1059,7 +1061,7 @@ tail_call:
 	if (!xdst_hint) {
 		u32 visited = 0;
 		if (unlikely(xia_are_edges_valid(*plast_row, *plast_node,
-			num_dst, &visited))) {
+						 num_dst, &visited))) {
 			*pdrop = 1;
 			return NULL;
 		}
@@ -1070,7 +1072,7 @@ tail_call:
 		*pkey_hash = hash_edges(xids_addr, *plast_row, input);
 
 		xdst = find_xdst_rcu(net, *pkey_hash, xids_addr,
-			*plast_row, input);
+				     *plast_row, input);
 		if (!xdst)
 			/* The DST table doesn't know how to handle this row. */
 			return NULL;
@@ -1159,7 +1161,8 @@ static struct xip_dst *choose_an_edge(struct net *net,
 
 tail_call:
 	xdst = use_dst_table_rcu(xdst, &key_hash, &drop,
-		net, addr, xids_addr, num_dst, plast_node, &last_row, input);
+				 net, addr, xids_addr, num_dst,
+				 plast_node, &last_row, input);
 	if (drop) {
 		BUG_ON(xdst);
 		goto out;
@@ -1242,7 +1245,7 @@ static struct xip_dst *xip_mark_addr2_and_get_dst(struct net *net,
 
 	/* Inductive step. */
 	xdst = choose_an_edge(net, addr, xids_addr,
-		num_dst, plast_node, last_row, input);
+			      num_dst, plast_node, last_row, input);
 	if (unlikely(!xdst))
 		return ERR_PTR(-ENETUNREACH);
 
@@ -1250,7 +1253,8 @@ static struct xip_dst *xip_mark_addr2_and_get_dst(struct net *net,
 }
 
 struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
-	struct xia_row *addr, int num_dst, u8 *plast_node, int input)
+					  struct xia_row *addr, int num_dst,
+					  u8 *plast_node, int input)
 {
 	return xip_mark_addr2_and_get_dst(net, addr, addr,
 		num_dst, plast_node, input);
@@ -1258,7 +1262,8 @@ struct xip_dst *xip_mark_addr_and_get_dst(struct net *net,
 EXPORT_SYMBOL_GPL(xip_mark_addr_and_get_dst);
 
 int xip_route_with_a_redirect(struct net *net, struct sk_buff *skb,
-	const struct xia_xid *next_xid, int chosen_edge, int input)
+			      const struct xia_xid *next_xid, int chosen_edge,
+			      int input)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
 	struct xia_addr redirected_addr;
@@ -1272,11 +1277,11 @@ int xip_route_with_a_redirect(struct net *net, struct sk_buff *skb,
 	 * @xiph->dst_addr. Therefore, memcpy() is safe.
 	 */
 	memcpy(redirected_addr.s_row, xiph->dst_addr,
-		xiph->num_dst * sizeof(struct xia_row));
+	       xiph->num_dst * sizeof(struct xia_row));
 
 	/* Overwrite previous XID. */
  	ra_last_row = xip_last_row(redirected_addr.s_row,
-		xiph->num_dst, xiph->last_node);
+				   xiph->num_dst, xiph->last_node);
 	e = ra_last_row->s_edge.a[chosen_edge];
 	redirected_addr.s_row[e].s_xid = *next_xid;
 
@@ -1317,7 +1322,7 @@ EXPORT_SYMBOL_GPL(skb_pull_xiphdr);
 
 /* Main XIP receive routine. */
 static int xip_rcv(struct sk_buff *skb, struct net_device *dev,
-	struct packet_type *pt, struct net_device *orig_dev)
+		   struct packet_type *pt, struct net_device *orig_dev)
 {
 	struct xiphdr *xiph;
 	int hdr_len, tot_len;

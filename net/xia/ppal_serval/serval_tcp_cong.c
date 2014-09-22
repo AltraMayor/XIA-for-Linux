@@ -68,7 +68,7 @@ void serval_tcp_slow_start(struct serval_tcp_sock *tp)
 		return;
 
 	if (sysctl_serval_tcp_max_ssthresh > 0 &&
-		tp->snd_cwnd > sysctl_serval_tcp_max_ssthresh) {
+	    tp->snd_cwnd > sysctl_serval_tcp_max_ssthresh) {
 		/* Limited slow start. */
 		cnt = sysctl_serval_tcp_max_ssthresh >> 1;
 	} else {

@@ -44,7 +44,8 @@ static inline struct fib_xid_ad_local *fxid_lad(struct fib_xid *fxid)
 }
 
 static int local_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
 {
 	struct fib_xid_ad_local *new_lad;
 	int rc;
@@ -53,7 +54,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (!new_lad)
 		return -ENOMEM;
 	init_fxid(&new_lad->common, cfg->xfc_dst->xid_id,
-		XRTABLE_LOCAL_INDEX, 0);
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&new_lad->anchor);
 
 	rc = fib_build_newroute(&new_lad->common, xtbl, cfg, NULL);
@@ -66,8 +67,8 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
  * net/ipv4/fib_trie.c:fn_trie_dump_fa.
  */
 static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			 struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			 struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -76,7 +77,7 @@ static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xia_xid dst;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -157,7 +158,7 @@ static int __net_init ad_net_init(struct net *net)
 	}
 
 	rc = init_xid_table(&ad_ctx->ctx, net, &xia_main_lock_table,
-		ad_all_rt_eops);
+			    ad_all_rt_eops);
 	if (rc)
 		goto ad_ctx;
 
@@ -189,8 +190,8 @@ static struct pernet_operations ad_net_ops __read_mostly = {
  */
 
 static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+		      const u8 *xid, struct xia_xid *next_xid,
+		      int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid *fxid;

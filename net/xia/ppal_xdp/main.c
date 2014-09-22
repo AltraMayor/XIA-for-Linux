@@ -71,8 +71,8 @@ static inline struct fib_xid_xdp_local *sk_lxdp(struct sock *sk)
 }
 
 static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			  struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			  struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -82,7 +82,7 @@ static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	const struct xia_sock *xia;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -119,7 +119,7 @@ static int local_dump_xdp(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		 * xia->xia_daddr and xia->xia_dnum?
 		 */
 		copy_n_and_shade_xia_addr_from_addr(&src, &xia->xia_daddr,
-			xia->xia_dnum);
+						    xia->xia_dnum);
 		if (unlikely(nla_put(skb, RTA_SRC, sizeof(src), &src)))
 			goto nla_put_failure;
 	}
@@ -185,7 +185,7 @@ static int __net_init xdp_net_init(struct net *net)
 	}
 
 	rc = init_xid_table(&xdp_ctx->ctx, net, &xia_main_lock_table,
-		xdp_all_rt_eops);
+			    xdp_all_rt_eops);
 	if (rc)
 		goto xdp_ctx;
 
@@ -273,8 +273,8 @@ static int local_output_output(struct sock *sk, struct sk_buff *skb)
 }
 
 static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+		       const u8 *xid, struct xia_xid *next_xid,
+		       int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct fib_xid *fxid;
@@ -467,7 +467,7 @@ static int xdp_push_pending_frames(struct sock *sk)
 }
 
 static int xdp_setsockopt(struct sock *sk, int level, int optname,
-	char __user *optval, unsigned int optlen)
+			  char __user *optval, unsigned int optlen)
 {
 	struct fib_xid_xdp_local *lxdp;
 	int val, rc;
@@ -501,7 +501,7 @@ static int xdp_setsockopt(struct sock *sk, int level, int optname,
 }
 
 static int xdp_getsockopt(struct sock *sk, int level, int optname,
-	char __user *optval, int __user *optlen)
+			  char __user *optval, int __user *optlen)
 {
 	struct fib_xid_xdp_local *lxdp;
 	int val, len;
@@ -533,13 +533,13 @@ static int xdp_getsockopt(struct sock *sk, int level, int optname,
 }
 
 static int xdp_getfrag(void *from, char *to, int  offset, int len,
-	int odd, struct sk_buff *skb)
+		       int odd, struct sk_buff *skb)
 {
 	return memcpy_fromiovecend(to, (struct iovec *)from, offset, len);
 }
 
 static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
-	struct msghdr *msg, size_t len)
+		       struct msghdr *msg, size_t len)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct xia_sock *xia = &lxdp->xia_sk;
@@ -560,8 +560,9 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		lock_sock(sk);
 		if (likely(lxdp->pending)) {
 			rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len,
-				corkreq ? msg->msg_flags|MSG_MORE :
-					msg->msg_flags);
+					     corkreq ?
+					     msg->msg_flags|MSG_MORE :
+					     msg->msg_flags);
 			if (rc)
 				xdp_flush_pending_frames(sk);
 			else if (!corkreq)
@@ -582,7 +583,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	if (msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_xia *, addr, msg->msg_name);
 		rc = check_sockaddr_xia((struct sockaddr *)addr,
-			msg->msg_namelen);
+					msg->msg_namelen);
 		if (rc)
 			return rc;
 		rc = check_valid_nonempty_addr(addr);
@@ -617,7 +618,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 			dest_last_node = XIA_ENTRY_NODE_INDEX;
 		}
 		xdst = xip_mark_addr_and_get_dst(net, dest->s_row,
-			dest_n, &dest_last_node, 0);
+						 dest_n, &dest_last_node, 0);
 		if (IS_ERR(xdst))
 			return PTR_ERR(xdst);
 		if (connected) {
@@ -665,13 +666,13 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		 */
 		release_sock(sk);
 		LIMIT_NETDEBUG(KERN_DEBUG pr_fmt("XDP %s(): cork app bug\n"),
-			__func__);
+			       __func__);
 		rc = -EINVAL;
 		goto xdst;
 	}
 
 	rc = xip_start_skb(sk, xdst, dest, dest_n, dest_last_node, 0,
-		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
+			   corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
 	if (rc) {
 		release_sock(sk);
 		goto xdst;
@@ -681,7 +682,9 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	lxdp->pending = true;
 
 	rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len,
-		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
+			     corkreq ?
+			     msg->msg_flags|MSG_MORE :
+			     msg->msg_flags);
 	if (rc)
 		xdp_flush_pending_frames(sk);
 	release_sock(sk);
@@ -694,7 +697,7 @@ out:
 
 /* If there is a packet there, return it, otherwise block. */
 static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
-	size_t len, int noblock, int flags, int *addr_len)
+		       size_t len, int noblock, int flags, int *addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, sxia, msg->msg_name);
 	struct sk_buff *skb;
@@ -709,7 +712,7 @@ static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		return xip_recv_error(sk, msg, len);
 
 	skb = __skb_recv_datagram(sk, flags | (noblock ? MSG_DONTWAIT : 0),
-		&peeked, &offset, &rc);
+				  &peeked, &offset, &rc);
 	if (!skb)
 		return rc;
 
@@ -730,7 +733,8 @@ static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	if (sxia) {
 		const struct xiphdr *xiph = xip_hdr(skb);
 		copy_n_and_shade_sockaddr_xia(sxia,
-			&xiph->dst_addr[xiph->num_dst], xiph->num_src);
+					      &xiph->dst_addr[xiph->num_dst],
+					      xiph->num_src);
 	}
 
 	/* XXX Add support to control messages that return extra information

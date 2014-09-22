@@ -382,13 +382,14 @@ new_measure:
 }
 
 static inline void serval_tcp_rcv_rtt_measure_ts(struct sock *sk,
-	struct sk_buff *skb)
+						 struct sk_buff *skb)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	if (tp->rx_opt.rcv_tsecr && (TCP_SKB_CB(skb)->end_seq -
 		TCP_SKB_CB(skb)->seq >= tp->tp_ack.rcv_mss))
 		serval_tcp_rcv_rtt_update(tp,
-			tcp_time_stamp - tp->rx_opt.rcv_tsecr, 0);
+					  tcp_time_stamp - tp->rx_opt.rcv_tsecr,
+					  0);
 }
 
 /*
@@ -1013,7 +1014,8 @@ static int serval_tcp_try_undo_partial(struct sock *sk, int acked)
 			tp->retrans_stamp = 0;
 
 		serval_tcp_update_reordering(sk,
-			serval_tcp_fackets_out(tp) + acked, 1);
+					     serval_tcp_fackets_out(tp) + acked,
+					     1);
 
 		/* DBGUNDO(sk, "Hoe"); */
 		serval_tcp_undo_cwr(sk, 0);
@@ -1162,7 +1164,7 @@ static int serval_tcp_check_sack_reneging(struct sock *sk, int flag)
 
 /* This must be called before lost_out is incremented */
 static void serval_tcp_verify_retransmit_hint(struct serval_tcp_sock *tp,
-	struct sk_buff *skb)
+					      struct sk_buff *skb)
 {
 	if ((tp->retransmit_skb_hint == NULL) ||
 	    before(TCP_SKB_CB(skb)->seq,
@@ -1317,13 +1319,14 @@ static void serval_tcp_mark_head_lost(struct sock *sk,
 
 		if (cnt > packets) {
 			if ((serval_tcp_is_sack(tp) &&
-				!serval_tcp_is_fack(tp)) ||
-				(oldcnt >= packets))
+			     !serval_tcp_is_fack(tp)) ||
+			     (oldcnt >= packets))
 				break;
 
 			mss = skb_shinfo(skb)->gso_size;
 			err = serval_tcp_fragment(sk, skb,
-				(packets - oldcnt) * mss, mss);
+						  (packets - oldcnt) * mss,
+						  mss);
 			if (err < 0)
 				break;
 			cnt = packets;
@@ -1410,9 +1413,9 @@ static int serval_tcp_time_to_recover(struct sock *sk)
 	 * Use only if there are no unsent data.
 	 */
 	if ((tp->thin_dupack || sysctl_serval_tcp_thin_dupack) &&
-		serval_tcp_stream_is_thin(tp) &&
-		serval_tcp_dupack_heuristics(tp) > 1 &&
-		serval_tcp_is_sack(tp) && !serval_tcp_send_head(sk))
+	    serval_tcp_stream_is_thin(tp) &&
+	    serval_tcp_dupack_heuristics(tp) > 1 &&
+	    serval_tcp_is_sack(tp) && !serval_tcp_send_head(sk))
 		return 1;
 
 	return 0;
@@ -1518,7 +1521,7 @@ static void serval_tcp_fastretrans_alert(struct sock *sk,
 	    tp->ca_state != TCP_CA_Open &&
 	    tp->fackets_out > tp->reordering) {
 		serval_tcp_mark_head_lost(sk,
-			tp->fackets_out - tp->reordering, 0);
+					  tp->fackets_out - tp->reordering, 0);
 		/* NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPLOSS); */
 	}
 
@@ -1807,7 +1810,7 @@ static inline int serval_tcp_may_update_window(const struct serval_tcp_sock *tp,
  * and in FreeBSD. NetBSD's one is even worse.) is wrong.
  */
 static int serval_tcp_ack_update_window(struct sock *sk, struct sk_buff *skb,
-					 u32 ack, u32 ack_seq)
+					u32 ack, u32 ack_seq)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	int flag = 0;
@@ -1997,7 +2000,7 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 
 			/* Is the ACK triggering packet unambiguous? */
 			if (!(flag & FLAG_RETRANS_DATA_ACKED) &&
-				ca_seq_rtt > 0)
+			    ca_seq_rtt > 0)
 				rtt_us = jiffies_to_usecs(ca_seq_rtt);
 
 			ca_ops->pkts_acked(sk, pkts_acked, rtt_us);
@@ -2217,8 +2220,8 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 				break;
 			case TCPOPT_WINDOW:
 				if (opsize == TCPOLEN_WINDOW && th->syn &&
-					!estab &&
-					sysctl_serval_tcp_window_scaling) {
+				    !estab &&
+				    sysctl_serval_tcp_window_scaling) {
 					__u8 snd_wscale = *(__u8 *)ptr;
 					opt_rx->wscale_ok = 1;
 					if (snd_wscale > 14) {
@@ -2232,10 +2235,8 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 				break;
 			case TCPOPT_TIMESTAMP:
 				if ((opsize == TCPOLEN_TIMESTAMP) &&
-					((estab && opt_rx->tstamp_ok) ||
-						(!estab &&
-						sysctl_serval_tcp_timestamps))
-					) {
+				    ((estab && opt_rx->tstamp_ok) ||
+				    (!estab && sysctl_serval_tcp_timestamps))) {
 					opt_rx->saw_tstamp = 1;
 					opt_rx->rcv_tsval =
 						get_unaligned_be32(ptr);
@@ -2655,7 +2656,7 @@ static void serval_tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 
 			local_bh_enable();
 			if (!skb_copy_datagram_iovec(skb, 0, tp->ucopy.iov,
-				chunk)) {
+						     chunk)) {
 				tp->ucopy.len -= chunk;
 				tp->copied_seq += chunk;
 				eaten = (chunk == skb->len && !th->fin);
@@ -3008,7 +3009,7 @@ static void serval_tcp_collapse_ofo_queue(struct sock *sk)
 		    after(TCP_SKB_CB(skb)->seq, end) ||
 		    before(TCP_SKB_CB(skb)->end_seq, start)) {
 			serval_tcp_collapse(sk, &tp->out_of_order_queue,
-				     head, skb, start, end);
+					    head, skb, start, end);
 			head = skb;
 			if (!skb)
 				break;
@@ -3306,7 +3307,7 @@ static __sum16 __serval_tcp_checksum_complete_user(struct sock *sk,
 }
 
 static inline int serval_tcp_checksum_complete_user(struct sock *sk,
-					     struct sk_buff *skb)
+						    struct sk_buff *skb)
 {
 	return !skb_csum_unnecessary(skb) &&
 		__serval_tcp_checksum_complete_user(sk, skb);
@@ -3357,11 +3358,11 @@ int serval_tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 					int tmo;
 #if 0
 					if (tp->linger2 < 0 ||
-						(TCP_SKB_CB(skb)->end_seq !=
-							TCP_SKB_CB(skb)->seq &&
-						after(TCP_SKB_CB(skb)->end_seq
-							- th->fin,
-							tp->rcv_nxt))) {
+					    (TCP_SKB_CB(skb)->end_seq !=
+					    TCP_SKB_CB(skb)->seq &&
+					    after(TCP_SKB_CB(skb)->end_seq
+						  - th->fin,
+						  tp->rcv_nxt))) {
 						/* TCP Done! */
 						serval_sal_done(sk);
 
@@ -3424,8 +3425,8 @@ int serval_tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 		 */
 		if (sk->sk_shutdown & RCV_SHUTDOWN) {
 			if (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
-				after(TCP_SKB_CB(skb)->end_seq - th->fin,
-					tp->rcv_nxt)) {
+			    after(TCP_SKB_CB(skb)->end_seq - th->fin,
+				  tp->rcv_nxt)) {
 				/* Received seqno after rcv_nxt.
 				 * Handling as RESET.
 				 */
@@ -3911,7 +3912,8 @@ int serval_tcp_syn_sent_state_process(struct sock *sk, struct sk_buff *skb)
 			serval_tcp_incr_quickack(sk);
 			serval_tcp_enter_quickack_mode(sk);
 			serval_tsk_reset_xmit_timer(sk, STSK_TIME_DACK,
-				TCP_DELACK_MAX, SERVAL_TCP_RTO_MAX);
+						    TCP_DELACK_MAX,
+						    SERVAL_TCP_RTO_MAX);
 		}
 	} else {
 		/* No ACK in TCP message received in SYN-SENT state. */

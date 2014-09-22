@@ -110,7 +110,7 @@ static int u4id_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	skb_reset_network_header(skb);
 
 	if (dev_hard_header(skb, skb->dev, ETH_P_XIP, skb->dev->dev_addr,
-		skb->dev->dev_addr, skb->len) < 0) {
+			    skb->dev->dev_addr, skb->len) < 0) {
 		kfree_skb(skb);
 		goto pass_up;
 	}
@@ -123,7 +123,7 @@ pass_up:
 }
 
 static int create_lu4id_socket(struct fib_xid_u4id_local *lu4id,
-	struct net *net, __u8 *xid_p)
+			       struct net *net, __u8 *xid_p)
 {
 	struct udp_port_cfg udp_conf;
 	int rc;
@@ -173,7 +173,8 @@ static void u4id_local_del_work(struct work_struct *work)
  *       - changing the checksum status of a tunnel entry.
  */
 static int local_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
 {
 	struct fib_xid_u4id_local *lu4id;
 	struct xip_u4id_ctx *u4id_ctx;
@@ -181,7 +182,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	int rc;
 
 	if (!u4id_well_formed(cfg->xfc_dst->xid_id) || !cfg->xfc_protoinfo ||
-		cfg->xfc_protoinfo_len != sizeof(*lu4id_info))
+	    cfg->xfc_protoinfo_len != sizeof(*lu4id_info))
 		return -EINVAL;
 
 	lu4id_info = cfg->xfc_protoinfo;
@@ -193,7 +194,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (!lu4id)
 		return -ENOMEM;
 	init_fxid(&lu4id->common, cfg->xfc_dst->xid_id,
-		XRTABLE_LOCAL_INDEX, 0);
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lu4id->anchor);
 	lu4id->sock = NULL;
 	INIT_WORK(&lu4id->del_work, u4id_local_del_work);
@@ -236,7 +237,8 @@ out:
 }
 
 static int local_delroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
 {
 	struct fib_xid *fxid;
 	struct fib_xid_u4id_local *lu4id;
@@ -286,8 +288,8 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 }
 
 static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			   struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -297,7 +299,7 @@ static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct local_u4id_info lu4id_info;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -323,7 +325,7 @@ static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	lu4id_info.tunnel = fxid_lu4id(fxid)->tunnel;
 	lu4id_info.no_check = fxid_lu4id(fxid)->no_check;
 	if (unlikely(nla_put(skb, RTA_PROTOINFO, sizeof(lu4id_info),
-		&lu4id_info)))
+			     &lu4id_info)))
 		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
@@ -404,7 +406,7 @@ static int __net_init u4id_net_init(struct net *net)
 	}
 
 	rc = init_xid_table(&u4id_ctx->ctx, net, &xia_main_lock_table,
-		u4id_all_rt_eops);
+			    u4id_all_rt_eops);
 	if (rc)
 		goto u4id_ctx;
 
@@ -464,7 +466,7 @@ static struct sock *get_tunnel_sock_rcu(struct net *net)
 }
 
 static void push_udp_header(struct sock *tunnel_sk, struct sk_buff *skb,
-	__be32 dest_ip_addr, __be16 dest_port)
+			    __be32 dest_ip_addr, __be16 dest_port)
 {
 	struct inet_sock *inet = inet_sk(tunnel_sk);
 
@@ -481,11 +483,11 @@ static void push_udp_header(struct sock *tunnel_sk, struct sk_buff *skb,
 	uh->len = htons(uhlen + udp_payload_len);
 
 	udp_set_csum(tunnel_sk->sk_no_check_tx, skb, inet->inet_saddr,
-		dest_ip_addr, uhlen + udp_payload_len);
+		     dest_ip_addr, uhlen + udp_payload_len);
 }
 
 static int handle_skb_to_ipv4(struct sock *tunnel_sk, struct sk_buff *skb,
-	__be32 dest_ip_addr, __be16 dest_port)
+			      __be32 dest_ip_addr, __be16 dest_port)
 {
 	struct inet_sock *inet = inet_sk(tunnel_sk);
 	struct net *net = sock_net(tunnel_sk);
@@ -505,9 +507,10 @@ static int handle_skb_to_ipv4(struct sock *tunnel_sk, struct sk_buff *skb,
 	/* Set up IP DST. */
 	skb_dst_drop(skb);
 	flowi4_init_output(&fl4, tunnel_sk->sk_bound_dev_if, tunnel_sk->sk_mark,
-		RT_TOS(inet->tos), RT_SCOPE_UNIVERSE, tunnel_sk->sk_protocol,
-		inet_sk_flowi_flags(tunnel_sk), dest_ip_addr, inet->inet_saddr,
-		dest_port, inet->inet_sport);
+			   RT_TOS(inet->tos), RT_SCOPE_UNIVERSE,
+			   tunnel_sk->sk_protocol,
+			   inet_sk_flowi_flags(tunnel_sk), dest_ip_addr,
+			   inet->inet_saddr, dest_port, inet->inet_sport);
 	security_sk_classify_flow(tunnel_sk, flowi4_to_flowi(&fl4));
 	rt = ip_route_output_flow(net, &fl4, tunnel_sk);
 	if (IS_ERR(rt)) {
@@ -569,8 +572,8 @@ static int u4id_output(struct sock *sk, struct sk_buff *skb)
 }
 
 static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+			const u8 *xid, struct xia_xid *next_xid,
+			int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct xip_u4id_ctx *u4id_ctx;
@@ -586,7 +589,7 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 		xdst->passthrough_action = XDA_ERROR;
 		xdst->sink_action = XDA_ERROR;
 		xdst_attach_to_anchor(xdst, anchor_index,
-			&u4id_ctx->ill_anchor);
+				      &u4id_ctx->ill_anchor);
 		rcu_read_unlock();
 		return XRP_ACT_FORWARD;
 	}
@@ -606,7 +609,7 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	/* Assume an unknown, well-formed U4ID is a tunnel destination. */
 	if (!rcu_dereference(u4id_ctx->tunnel_sock)) {
 		xdst_attach_to_anchor(xdst, anchor_index,
-			&u4id_ctx->forward_anchor);
+				      &u4id_ctx->forward_anchor);
 		rcu_read_unlock();
 		return XRP_ACT_NEXT_EDGE;
 	}

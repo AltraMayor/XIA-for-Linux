@@ -209,7 +209,7 @@ EXPORT_SYMBOL(ppal_del_map);
  */
 
 int xia_are_edges_valid(const struct xia_row *row,
-	__u8 node, __u8 num_node, __u32 *pvisited)
+			__u8 node, __u8 num_node, __u32 *pvisited)
 {
 	const __u8 *edge;
 	__u32 all_edges, bits;
@@ -445,7 +445,7 @@ int xia_xidtop(const struct xia_xid *src, char *dst, size_t dstlen)
 EXPORT_SYMBOL(xia_xidtop);
 
 int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
-	int include_nl)
+	     int include_nl)
 {
 	int tot = 0;
 	char *node_sep = include_nl ? ":\n" : ":";
@@ -618,7 +618,7 @@ static int read_xid(const char **pp, size_t *pleft, __u8 *xid)
 }
 
 static int read_edges(const char **pp, size_t *pleft, __u8 *edges,
-	int ignore_ce)
+		      int ignore_ce)
 {
 	int i;
 
@@ -656,7 +656,7 @@ static int read_edges(const char **pp, size_t *pleft, __u8 *edges,
 }
 
 static int read_row(const char **pp, size_t *pleft, struct xia_row *row,
-	int ignore_ce)
+		    int ignore_ce)
 {
 	if (read_type(pp, pleft, &row->s_xid.xid_type))
 		return -1;
@@ -678,7 +678,7 @@ static int read_node_sep(const char **pp, size_t *pleft)
 }
 
 int xia_pton(const char *src, size_t srclen, struct xia_addr *dst,
-	int ignore_ce, int *invalid_flag)
+	     int ignore_ce, int *invalid_flag)
 {
 	const char *p = src;
 	size_t left = srclen;

@@ -46,13 +46,13 @@ static u32 tcp_metric_get_jiffies(struct tcp_metrics_block *tm,
 }
 
 static void tcp_metric_set(struct tcp_metrics_block *tm,
-	enum tcp_metric_index idx, u32 val)
+			   enum tcp_metric_index idx, u32 val)
 {
 	tm->tcpm_vals[idx] = val;
 }
 
 static void tcp_metric_set_msecs(struct tcp_metrics_block *tm,
-	enum tcp_metric_index idx, u32 val)
+				 enum tcp_metric_index idx, u32 val)
 {
 	tm->tcpm_vals[idx] = jiffies_to_msecs(val);
 }
@@ -93,7 +93,8 @@ static void tcpm_suck_dst(struct tcp_metrics_block *tm, struct dst_entry *dst)
 }
 
 static struct tcp_metrics_block *tcpm_new(struct xip_serval_ctx *serval_ctx,
-	struct dst_entry *dst, const __u8 *id, unsigned int hash, bool reclaim)
+					  struct dst_entry *dst, const __u8 *id,
+					  unsigned int hash, bool reclaim)
 {
 	struct tcp_metrics_block *tm;
 
@@ -129,7 +130,7 @@ static struct tcp_metrics_block *tcpm_new(struct xip_serval_ctx *serval_ctx,
 	if (likely(!reclaim)) {
 		tm->tcpm_next = serval_ctx->tcp_metrics_hash[hash].chain;
 		rcu_assign_pointer(serval_ctx->tcp_metrics_hash[hash].chain,
-			tm);
+				   tm);
 	}
 
 out_unlock:
@@ -140,10 +141,10 @@ out_unlock:
 #define TCP_METRICS_TIMEOUT		(60 * 60 * HZ)
 
 static void tcpm_check_stamp(struct tcp_metrics_block *tm,
-	struct dst_entry *dst)
+			     struct dst_entry *dst)
 {
 	if (tm && unlikely(time_after(jiffies,
-		tm->tcpm_stamp + TCP_METRICS_TIMEOUT)))
+				      tm->tcpm_stamp + TCP_METRICS_TIMEOUT)))
 		tcpm_suck_dst(tm, dst);
 }
 
@@ -151,7 +152,7 @@ static void tcpm_check_stamp(struct tcp_metrics_block *tm,
 #define TCP_METRICS_RECLAIM_PTR		((struct tcp_metrics_block *)0x1UL)
 
 static struct tcp_metrics_block *tcp_get_encode(struct tcp_metrics_block *tm,
-	int depth)
+						int depth)
 {
 	if (tm)
 		return tm;
@@ -176,7 +177,8 @@ static struct tcp_metrics_block *__tcp_get_metrics(const __u8 *id,
 }
 
 static struct tcp_metrics_block *tcp_get_metrics(struct sock *sk,
-	struct dst_entry *dst, bool create)
+						 struct dst_entry *dst,
+						 bool create)
 {
 	struct serval_sock *ssk = sk_ssk(sk);
 	const u8 *id;
@@ -299,11 +301,12 @@ void serval_tcp_update_metrics(struct sock *sk)
 		/* Cong. avoidance phase, cwnd is reliable. */
 		if (!tcp_metric_locked(tm, TCP_METRIC_SSTHRESH))
 			tcp_metric_set(tm, TCP_METRIC_SSTHRESH,
-				max(tp->snd_cwnd >> 1, tp->snd_ssthresh));
+				       max(tp->snd_cwnd >> 1,
+					   tp->snd_ssthresh));
 		if (!tcp_metric_locked(tm, TCP_METRIC_CWND)) {
 			val = tcp_metric_get(tm, TCP_METRIC_CWND);
 			tcp_metric_set(tm, TCP_METRIC_CWND,
-				(val + tp->snd_cwnd) >> 1);
+				       (val + tp->snd_cwnd) >> 1);
 		}
 	} else {
 		/* Else slow start did not finish, cwnd is non-sense,

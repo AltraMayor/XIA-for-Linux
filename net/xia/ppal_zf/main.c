@@ -45,7 +45,8 @@ static inline struct fib_xid_zf_local *fxid_lzf(struct fib_xid *fxid)
 }
 
 static int local_newroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
 {
 	struct fib_xid_zf_local *new_lzf;
 	int rc;
@@ -54,7 +55,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (!new_lzf)
 		return -ENOMEM;
 	init_fxid(&new_lzf->common, cfg->xfc_dst->xid_id,
-		XRTABLE_LOCAL_INDEX, 0);
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&new_lzf->anchor);
 
 	rc = fib_build_newroute(&new_lzf->common, xtbl, cfg, NULL);
@@ -64,8 +65,8 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 }
 
 static int local_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			 struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			 struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -74,7 +75,7 @@ static int local_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xia_xid dst;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -129,7 +130,7 @@ static inline struct fib_xid_zf_main *fxid_mzf(struct fib_xid *fxid)
 }
 
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg)
+			 struct xia_fib_config *cfg)
 {
 	struct fib_xid_zf_main *new_mzf;
 	int rc;
@@ -141,7 +142,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	if (!new_mzf)
 		return -ENOMEM;
 	init_fxid(&new_mzf->common, cfg->xfc_dst->xid_id,
-		XRTABLE_MAIN_INDEX, 0);
+		  XRTABLE_MAIN_INDEX, 0);
 	new_mzf->gw = *cfg->xfc_gw;
 
 	rc = fib_build_newroute(&new_mzf->common, xtbl, cfg, NULL);
@@ -151,8 +152,8 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 }
 
 static int main_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
-	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-	struct netlink_callback *cb)
+			struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			struct netlink_callback *cb)
 {
 	struct nlmsghdr *nlh;
 	u32 portid = NETLINK_CB(cb->skb).portid;
@@ -162,7 +163,7 @@ static int main_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xia_xid dst;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
-		NLM_F_MULTI);
+			NLM_F_MULTI);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
@@ -184,8 +185,7 @@ static int main_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst) ||
-			nla_put(skb, RTA_GATEWAY, sizeof(mzf->gw), &mzf->gw)
-		))
+		     nla_put(skb, RTA_GATEWAY, sizeof(mzf->gw), &mzf->gw)))
 		goto nla_put_failure;
 
 	return nlmsg_end(skb, nlh);
@@ -200,7 +200,8 @@ static void main_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_zf_main *mzf = fxid_mzf(fxid);
 	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_ZF,
-		mzf->common.fx_xid, &mzf->gw);
+				 mzf->common.fx_xid, &mzf->gw);
+
 	kfree(mzf);
 }
 
@@ -254,7 +255,7 @@ static int __net_init zf_net_init(struct net *net)
 	}
 
 	rc = init_xid_table(&zf_ctx->ctx, net, &xia_main_lock_table,
-		zf_all_rt_eops);
+			    zf_all_rt_eops);
 	if (rc)
 		goto zf_ctx;
 
@@ -351,7 +352,7 @@ static int dig_last_node(struct sk_buff *skb)
 }
 
 static int forward_local(struct iterate_arg *iarg,
-	struct fib_xid_zf_local *lzf)
+			 struct fib_xid_zf_local *lzf)
 {
 	struct sk_buff *cpy_skb;
 	int rc;
@@ -382,7 +383,7 @@ static int forward_local(struct iterate_arg *iarg,
 	rc = xip_route(iarg->net, cpy_skb, 0);
 	if (rc) {
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after digging the local ZF edge: %i\n"),
-			rc);
+			       rc);
 		/* If one cannot forward this packet once,
 		 * one cannot forward it for all local entries.
 		 * Thus, we mark the packet as forwarded.
@@ -392,7 +393,7 @@ static int forward_local(struct iterate_arg *iarg,
 	rc = dst_output(cpy_skb);
 	if (rc)
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward a packet after digging the local ZF edge: %i\n"),
-			rc);
+			       rc);
 	goto forwarded;
 
 failed_to_forward:
@@ -403,8 +404,7 @@ out:
 	return 0;
 }
 
-static int forward_main(struct iterate_arg *iarg,
-	struct fib_xid_zf_main *mzf)
+static int forward_main(struct iterate_arg *iarg, struct fib_xid_zf_main *mzf)
 {
 	struct sk_buff *cpy_skb;
 	int rc;
@@ -421,22 +421,22 @@ static int forward_main(struct iterate_arg *iarg,
 	 * gracefully handled.
 	 */
 	rc = xip_route_with_a_redirect(iarg->net, cpy_skb, &mzf->gw,
-		iarg->xdst->chosen_edge, 0);
+				       iarg->xdst->chosen_edge, 0);
 	if (rc) {
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after redirecting the main ZF edge: %i\n"),
-			rc);
+			       rc);
 		kfree_skb(cpy_skb);
 		return 0;
 	}
 	rc = dst_output(cpy_skb);
 	if (rc)
 		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward a packet after routing the main ZF edge: %i\n"),
-			rc);
+			       rc);
 	return 0;
 }
 
-static int match_xids_rcu(struct fib_xid_table *xtbl,
-	struct fib_xid *fxid, const void *arg)
+static int match_xids_rcu(struct fib_xid_table *xtbl, struct fib_xid *fxid,
+			  const void *arg)
 {
 	struct iterate_arg *iarg = (struct iterate_arg *)arg;
 
@@ -479,15 +479,15 @@ static int zf_output(struct sock *sk, struct sk_buff *skb)
 	return NET_RX_SUCCESS;
 }
 
-static int match_any_xid_rcu(struct fib_xid_table *xtbl,
-	struct fib_xid *fxid, const void *arg)
+static int match_any_xid_rcu(struct fib_xid_table *xtbl, struct fib_xid *fxid,
+			     const void *arg)
 {
 	return zf_match(arg, fxid->fx_xid);
 }
 
 static int zf_deliver(struct xip_route_proc *rproc, struct net *net,
-	const u8 *xid, struct xia_xid *next_xid, int anchor_index,
-	struct xip_dst *xdst)
+		      const u8 *xid, struct xia_xid *next_xid,
+		      int anchor_index, struct xip_dst *xdst)
 {
 	struct xip_ppal_ctx *ctx;
 	struct xip_zf_ctx *zf_ctx;
