@@ -14,8 +14,7 @@
  * the work.
  */
 
-/*
- * The peer socket should always be NULL (or else). When we call this
+/* The peer socket should always be NULL (or else). When we call this
  * function we are destroying the object and from then on nobody
  * should refer to it.
  */

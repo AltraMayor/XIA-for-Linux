@@ -222,7 +222,8 @@ int serval_tcp_rcv_checks(struct sock *sk, struct sk_buff *skb, int is_syn)
 
 	/* An explanation is required here, I think. Packet length and
 	 * doff are validated by header prediction, provided case of
-	 * th->doff==0 is eliminated.  So, we defer the checks. */
+	 * th->doff==0 is eliminated. So, we defer the checks.
+	 */
 	if (!skb_csum_unnecessary(skb) &&
 	    serval_tcp_v4_checksum_init(skb)) {
 		/* Checksum error! */
@@ -283,8 +284,7 @@ static int serval_tcp_rcv(struct sock *sk, struct sk_buff *skb)
 					err = serval_tcp_do_rcv(sk, skb);
 			}
 	} else {
-		/* We are processing the backlog in user/process
-		   context */
+		/* We are processing the backlog in user/process context. */
 		if (sk_add_backlog(sk, skb,
 				   sk->sk_rcvbuf + sk->sk_sndbuf))
 			goto discard_it;
@@ -313,8 +313,9 @@ void serval_tcp_init(void)
 	sysctl_serval_tcp_mem[1] = limit;
 	sysctl_serval_tcp_mem[2] = sysctl_serval_tcp_mem[0] * 2;
 
-	/* Set per-socket limits to no more than 1/128 the pressure
-	   threshold */
+	/* Set per-socket limits to no more than
+	 * 1/128 the pressure threshold.
+	 */
 	limit = ((unsigned long)sysctl_serval_tcp_mem[1]) << (PAGE_SHIFT - 7);
 	max_wshare = min(4UL*1024*1024, limit);
 	max_rshare = min(6UL*1024*1024, limit);
@@ -437,8 +438,7 @@ struct sk_buff *serval_sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp)
 
 	if (skb) {
 		if (sk_wmem_schedule(sk, skb->truesize)) {
-			/*
-			 * Make sure that we have exactly size bytes
+			/* Make sure that we have exactly size bytes
 			 * available to the caller, no more, no less.
 			 */
 			skb_reserve(skb, skb_tailroom(skb) - size);
@@ -549,12 +549,11 @@ static void serval_tcp_service_net_dma(struct sock *sk, bool wait)
 }
 #endif
 
-/*
- *	Wait for a TCP event.
+/* Wait for a TCP event.
  *
- *	Note that we don't need to lock the socket, as the upper poll layers
- *	take care of normal races (between the test and the event) and we don't
- *	go look at any of the socket buffers directly.
+ * Note that we don't need to lock the socket, as the upper poll layers
+ * take care of normal races (between the test and the event) and we don't
+ * go look at any of the socket buffers directly.
  */
 unsigned int serval_tcp_poll(struct file *file,
 			     struct socket *sock,
@@ -579,8 +578,7 @@ unsigned int serval_tcp_poll(struct file *file,
 
 	mask = 0;
 
-	/*
-	 * POLLHUP is certainly not done right. But poll() doesn't
+	/* POLLHUP is certainly not done right. But poll() doesn't
 	 * have a notion of HUP in just one direction, and for a
 	 * socket the read side is more interesting.
 	 *
@@ -622,7 +620,8 @@ unsigned int serval_tcp_poll(struct file *file,
 
 		/* Potential race condition. If read of tp below will
 		 * escape above sk->sk_state, we can be illegally awaken
-		 * in SYN_* states. */
+		 * in SYN_* states.
+		 */
 		if (tp->rcv_nxt - tp->copied_seq >= target)
 			mask |= POLLIN | POLLRDNORM;
 
@@ -659,8 +658,9 @@ unsigned int serval_tcp_poll(struct file *file,
 
 #if defined(ENABLE_SPLICE)
 /*
- * TCP splice context
+ *	TCP splice context
  */
+
 struct tcp_splice_state {
 	struct pipe_inode_info *pipe;
 	size_t len;
@@ -685,8 +685,7 @@ static inline struct sk_buff *serval_tcp_recv_skb(struct sock *sk,
 	return NULL;
 }
 
-/*
- * This routine provides an alternative to tcp_recvmsg() for routines
+/* This routine provides an alternative to tcp_recvmsg() for routines
  * that would like to handle copying from skbuffs directly in 'sendfile'
  * fashion.
  * Note:
@@ -734,8 +733,7 @@ int serval_tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 				copied += used;
 				offset += used;
 			}
-			/*
-			 * If recv_actor drops the lock (e.g. TCP splice
+			/* If recv_actor drops the lock (e.g. TCP splice
 			 * receive) the skb pointer might be invalid when
 			 * getting here: tcp_collapse might have deleted it
 			 * while aggregating skbs from the socket queue.
@@ -821,9 +819,7 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 	int ret;
 
 	sock_rps_record_flow(sk);
-	/*
-	 * We can't seek on a socket input
-	 */
+	/* We can't seek on a socket input. */
 	if (unlikely(*ppos))
 		return -ESPIPE;
 
@@ -850,8 +846,7 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 			if (sk->sk_shutdown & RCV_SHUTDOWN)
 				break;
 			if (sk->sk_state == TCP_CLOSE) {
-				/*
-				 * This occurs when user tries to read
+				/* This occurs when user tries to read
 				 * from never connected socket.
 				 */
 				if (!sock_flag(sk, SOCK_DONE))
@@ -1110,11 +1105,9 @@ out_err:
 	return err;
 }
 
-/*
- *	Handle reading urgent data. BSD has very simple semantics for
- *	this, no blocking and very strange errors 8)
+/* Handle reading urgent data. BSD has very simple semantics for
+ * this, no blocking and very strange errors 8)
  */
-
 static int serval_tcp_recv_urg(struct sock *sk, struct msghdr *msg,
 			       int len, int flags)
 {
@@ -1186,8 +1179,7 @@ void serval_tcp_cleanup_rbuf(struct sock *sk, int copied)
 		if (tp->tp_ack.blocked ||
 		    /* Once-per-two-segments ACK was not sent by tcp_input.c */
 		    tp->rcv_nxt - tp->rcv_wup > tp->tp_ack.rcv_mss ||
-		    /*
-		     * If this read emptied read buffer, we send ACK, if
+		    /* If this read emptied read buffer, we send ACK, if
 		     * connection is not bidirectional, user drained
 		     * receive buffer and there was a small segment
 		     * in queue.
@@ -1233,8 +1225,9 @@ static void serval_tcp_prequeue_process(struct sock *sk)
 
 	/* NET_INC_STATS_USER(sock_net(sk), LINUX_MIB_TCPPREQUEUED); */
 
-	/* RX process wants to run with disabled BHs, though it is not
-	 * necessary */
+	/* RX process wants to run with disabled BHs,
+	 * though it is not necessary.
+	 */
 	local_bh_disable();
 	while ((skb = __skb_dequeue(&tp->ucopy.prequeue)) != NULL)
 		sk_backlog_rcv(sk, skb);
@@ -1309,7 +1302,8 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 		u32 offset;
 
 		/* Are we at urgent data? Stop if we have read
-		 * anything or have SIGURG pending. */
+		 * anything or have SIGURG pending.
+		 */
 		if (tp->urg_data && tp->urg_seq == *seq) {
 			if (copied)
 				break;
@@ -1343,12 +1337,12 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 			if (tcp_hdr(skb)->fin)
 				goto found_fin_ok;
 
-				 /*
+			/*
 			WARN(!(flags & MSG_PEEK), KERN_INFO "recvmsg bug 2: "
 					"copied %X seq %X rcvnxt %X fl %X\n",
 					*seq, TCP_SKB_CB(skb)->seq,
 					tp->rcv_nxt, flags);
-				 */
+			*/
 		}
 wait_for_event:
 		/* Well, if we have backlog, try to process it now yet. */
@@ -1497,7 +1491,7 @@ do_prequeue:
 		    (peek_seq - copied - urg_hole != tp->copied_seq)) {
 			if (net_ratelimit())
 				/*
-				   printk(KERN_DEBUG "TCP(%s:%d): Application bug, race in MSG_PEEK.\n",
+				printk(KERN_DEBUG "TCP(%s:%d): Application bug, race in MSG_PEEK.\n",
 				       current->comm, task_pid_nr(current));
 				*/
 			peek_seq = tp->copied_seq;
@@ -1682,8 +1676,9 @@ static void serval_tcp_v4_send_check(struct sock *sk, struct sk_buff *skb)
 }
 
 /*
- *	Socket option code for TCP.
+ *	Socket option code for TCP
  */
+
 static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 				    int optname, char __user *optval,
 				    unsigned int optlen)
@@ -1695,7 +1690,7 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 
 	/* These are data/string values, all the others are ints */
 	switch (optname) {
-		/*
+	/*
 	case TCP_CONGESTION: {
 		char name[TCP_CA_NAME_MAX];
 
@@ -1713,7 +1708,7 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 		release_sock(sk);
 		return err;
 	}
-		*/
+	*/
 #if 0
 	case TCP_COOKIE_TRANSACTIONS: {
 		struct tcp_cookie_transactions ctd;
@@ -1819,7 +1814,8 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 	case TCP_MAXSEG:
 		/* Values greater than interface MTU won't take effect. However
 		 * at the point when this call is done we typically don't yet
-		 * know which interface is going to be used */
+		 * know which interface is going to be used.
+		 */
 		if (val < SERVAL_TCP_MIN_MSS || val > MAX_TCP_WINDOW) {
 			err = -EINVAL;
 			break;
@@ -2044,7 +2040,7 @@ static int serval_do_tcp_getsockopt(struct sock *sk, int level,
 	case TCP_QUICKACK:
 		val = !tp->tp_ack.pingpong;
 		break;
-		/*
+	/*
 	case TCP_CONGESTION:
 		if (get_user(len, optlen))
 			return -EFAULT;
@@ -2054,8 +2050,8 @@ static int serval_do_tcp_getsockopt(struct sock *sk, int level,
 		if (copy_to_user(optval, icsk->icsk_ca_ops->name, len))
 			return -EFAULT;
 		return 0;
-		*/
-		/*
+	*/
+	/*
 	case TCP_COOKIE_TRANSACTIONS: {
 		struct tcp_cookie_transactions ctd;
 		struct tcp_cookie_values *cvp = tp->cookie_values;
@@ -2091,8 +2087,8 @@ static int serval_do_tcp_getsockopt(struct sock *sk, int level,
 			return -EFAULT;
 		return 0;
 	}
-		*/
-		/*
+	*/
+	/*
 	case TCP_THIN_LINEAR_TIMEOUTS:
 		val = tp->thin_lto;
 		break;
@@ -2103,7 +2099,7 @@ static int serval_do_tcp_getsockopt(struct sock *sk, int level,
 	case TCP_USER_TIMEOUT:
 		val = jiffies_to_msecs(icsk->icsk_user_timeout);
 		break;
-		*/
+	*/
 	default:
 		return -ENOPROTOOPT;
 	}
@@ -2180,7 +2176,7 @@ int serval_tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 		else
 			answ = tp->write_seq - tp->snd_una;
 		break;
-/*
+	/*
 	case SIOCOUTQNSD:
 		if (sk->sk_state == TCP_LISTEN)
 			return -EINVAL;
@@ -2190,7 +2186,7 @@ int serval_tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 		else
 			answ = tp->write_seq - tp->snd_nxt;
 		break;
-*/
+	*/
 	default:
 		return -ENOIOCTLCMD;
 	}

@@ -60,7 +60,8 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 			printk(KERN_INFO "Out of socket memory\n");
 		*/
 		/* Catch exceptional cases, when connection requires reset.
-		 *      1. Last segment was sent recently. */
+		 *      1. Last segment was sent recently.
+		 */
 		if ((s32)(tcp_time_stamp - tp->lsndtime) <= TCP_TIMEWAIT_LEN ||
 		    /*  2. Window is closed. */
 		    (!tp->snd_wnd && !tp->packets_out))
@@ -70,8 +71,7 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 
 		/* Too many orphans, TCP done! */
 		serval_sal_done(sk);
-		/* NET_INC_STATS_BH(sock_net(sk),
-			LINUX_MIB_TCPABORTONMEMORY); */
+		/* NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPABORTONMEMORY);*/
 		return 1;
 	}
 	return 0;
@@ -88,7 +88,8 @@ static int serval_tcp_orphan_retries(struct sock *sk, int alive)
 
 	/* However, if socket sent something recently, select some safe
 	 * number of retries. 8 corresponds to >100 seconds with minimal
-	 * RTO of 200msec. */
+	 * RTO of 200msec.
+	 */
 	if (retries == 0 && alive)
 		retries = 8;
 	return retries;
@@ -203,8 +204,7 @@ static void serval_tcp_delack_timer(unsigned long data)
 	if (sock_owned_by_user(sk)) {
 		/* Try again later. */
 		tp->tp_ack.blocked = 1;
-		/* NET_INC_STATS_BH(sock_net(sk),
-			LINUX_MIB_DELAYEDACKLOCKED); */
+		/* NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);*/
 		sk_reset_timer(sk, &tp->delack_timer, jiffies + TCP_DELACK_MIN);
 		goto out_unlock;
 	}
@@ -223,8 +223,9 @@ static void serval_tcp_delack_timer(unsigned long data)
 	if (!skb_queue_empty(&tp->ucopy.prequeue)) {
 		struct sk_buff *skb;
 
-		/* NET_INC_STATS_BH(sock_net(sk),
-			LINUX_MIB_TCPSCHEDULERFAILED); */
+		/*
+		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPSCHEDULERFAILED);
+		*/
 
 		while ((skb = __skb_dequeue(&tp->ucopy.prequeue)) != NULL)
 			sk_backlog_rcv(sk, skb);
@@ -299,9 +300,7 @@ static void serval_tcp_probe_timer(struct sock *sk)
 	}
 }
 
-/*
- *	The TCP retransmit timer.
- */
+/* The TCP retransmit timer. */
 
 void serval_tcp_retransmit_timer(struct sock *sk)
 {

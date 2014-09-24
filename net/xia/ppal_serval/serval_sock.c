@@ -4,8 +4,7 @@ IMPLEMETING SOCKET MIGRATION.
 
 
 
-/*
- * Serval socket implementation. Contains all the Serval-specific state.
+/* Serval socket implementation. Contains all the Serval-specific state.
  *
  * Authors: Erik Nordström <enordstr@cs.princeton.edu>
  *
@@ -127,29 +126,32 @@ void serval_sock_migrate_iface(int old_dev, int new_dev)
 					/* We were told which
 					 * interface to migrate, but
 					 * we need to check that this
-					 * sock matches. */
+					 * sock matches.
+					 */
 					should_migrate = sk->sk_bound_dev_if
 						== old_dev;
 				}
 			} else if (old_dev <= 0) {
 				/* A new interface came up, migrate all flows
 				 * with a DOWN interface to this new
-				 * interface. */
+				 * interface.
+				 */
 				struct net_device *i = dev_get_by_index(
 					sock_net(sk), sk->sk_bound_dev_if);
 
 				if (i) {
 					/* If this interface is down, then
-					 * migrate its flows. */
+					 * migrate its flows.
+					 */
 					if (!(i->flags & IFF_UP))
 						should_migrate = 1;
 					dev_put(i);
 				}
 			} else if (new_dev <= 0 &&
 				old_dev == sk->sk_bound_dev_if) {
-				/* An interface went down, and we
-				 * need to figure out a new target
-				 * dev. */
+				/* An interface went down, and we need
+				 * to figure out a new target dev.
+				 */
 				struct rtable *rt;
 
 				rt = serval_ip_route_output(sock_net(sk),

@@ -11,8 +11,7 @@
 #include <linux/module.h>
 #include <net/xia_dag.h>
 
-/*
- * Initialization functions
+/* Initialization functions
  *
  * These functions are defined in other files, but they are only used here.
  */
@@ -30,11 +29,10 @@ int xia_socket_init(void);
 void xia_socket_exit(void);
 
 /*
- * Main
+ *	Main
  */
 
-/*
- * xia_init - this function is called when the module is loaded.
+/* xia_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
 static int __init xia_init(void)
@@ -83,9 +81,7 @@ out:
 	return rc;
 }
 
-/*
- * xia_exit - this function is called when the modlule is removed.
- */
+/* xia_exit - this function is called when the modlule is removed. */
 static void __exit xia_exit(void)
 {
 	xia_socket_exit();

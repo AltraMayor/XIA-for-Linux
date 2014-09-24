@@ -149,8 +149,7 @@ static struct xip_route_proc uni4id_rt_proc __read_mostly = {
 	.deliver = uni4id_deliver,
 };
 
-/*
- * xia_uni4id_init - this function is called when the module is loaded.
+/* xia_uni4id_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
 static int __init xia_uni4id_init(void)
@@ -189,8 +188,7 @@ out:
 	return rc;
 }
 
-/*
- * xia_uni4id_exit - this function is called when the modlule is removed.
+/* xia_uni4id_exit - this function is called when the modlule is removed.
  */
 static void __exit xia_uni4id_exit(void)
 {
