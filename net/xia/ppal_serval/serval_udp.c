@@ -94,23 +94,22 @@ static int serval_udp_transmit_skb(struct sock *sk, struct sk_buff *skb)
 {
 	struct udphdr *uh;
 
-	/* Push back to make space for transport header */
+	/* Push back to make space for transport header. */
 	uh = (struct udphdr *)skb_push(skb, sizeof(struct udphdr));
 	skb_reset_transport_header(skb);
 
-	/* Build UDP header */
+	/* Build UDP header. */
 	uh->source = 0;
 	uh->dest = 0;
 	uh->len = htons(skb->len);
 	uh->check = 0;
 	skb->ip_summed = CHECKSUM_NONE;
 	skb->protocol = IPPROTO_UDP;
-	/*
-	  Note, for packets resolved through the service table, this
-	  checksum calculated here will be recalculated once the
-	  resolution is performed and the src/dst IP addresses are
-	  known. This could be inefficient, since we are calculating
-	  the checksum twice for such packets.
+	/* Note, for packets resolved through the service table, this
+	 * checksum calculated here will be recalculated once the
+	 * resolution is performed and the src/dst IP addresses are
+	 * known. This could be inefficient, since we are calculating
+	 * the checksum twice for such packets.
 	 */
 	serval_udp_v4_send_check(sk, skb);
 
@@ -164,15 +163,14 @@ static int serval_udp_do_rcv(struct sock *sk, struct sk_buff *skb)
 		return 0;
 	}
 
-	/* Strip UDP header before queueing */
+	/* Strip UDP header before queueing. */
 	skb_dst_drop(skb);
 	__skb_pull(skb, sizeof(struct udphdr));
 
-	/*
-	   sock_queue_rcv_skb() will increase readable memory (i.e.,
-	   decrease free receive buffer memory), do socket filtering
-	   and wake user process.
-	*/
+	/* sock_queue_rcv_skb() will increase readable memory (i.e.,
+	 * decrease free receive buffer memory), do socket filtering
+	 * and wake user process.
+	 */
 	err = sock_queue_rcv_skb(sk, skb);
 
 	if (err < 0) {
@@ -187,17 +185,13 @@ static int serval_udp_do_rcv(struct sock *sk, struct sk_buff *skb)
 	return err;
 }
 
-/*
-   Receive from network.
-*/
+/* Receive from network. */
 static int serval_udp_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	struct udphdr *uh = udp_hdr(skb);
 	int ret = 0;
 
-	/*
-	 *  Validate the packet.
-	 */
+	/* Validate the packet. */
 
 	if (!(SAL_SKB_CB(skb)->flags & SVH_FIN)) {
 		unsigned short datalen = ntohs(uh->len) - sizeof(*uh);
@@ -206,7 +200,8 @@ static int serval_udp_rcv(struct sock *sk, struct sk_buff *skb)
 			goto drop;
 
 		/* Only ignore this message in case it has zero length and is
-		      * not a FIN */
+		 * not a FIN.
+		 */
 		if (datalen == 0)
 			goto drop;
 	}
@@ -413,8 +408,8 @@ found_ok_skb:
 found_fin_ok:
 		if (!(flags & MSG_PEEK)) {
 			sk_eat_skb(sk, skb, 0);
+			/* Only for stream-based memory accounting? */
 			/*
-			  Only for stream-based memory accounting?
 			sk_mem_reclaim_partial(sk);
 			*/
 		}
@@ -428,8 +423,9 @@ out:
 
 #if defined(ENABLE_SPLICE)
 /*
- * UDP splice context
+ *	UDP splice context
  */
+
 struct udp_splice_state {
 	struct pipe_inode_info *pipe;
 	size_t len;
@@ -453,8 +449,7 @@ static int serval_udp_splice_data_recv(read_descriptor_t *rd_desc,
 	return ret;
 }
 
-/*
- * This routine provides an alternative to serval_udp_recvmsg() for
+/* This routine provides an alternative to serval_udp_recvmsg() for
  * routines that would like to handle copying from skbuffs directly in
  * 'sendfile' fashion.
  * Note:
@@ -484,8 +479,7 @@ static int serval_udp_read_sock(struct sock *sk, read_descriptor_t *desc,
 		retval = recv_actor(desc, skb, 0, skb->len);
 
 		/* skb = skb_peek(&sk->sk_receive_queue); */
-		/*
-		 * If recv_actor drops the lock (e.g. TCP splice
+		/* If recv_actor drops the lock (e.g. TCP splice
 		 * receive) the skb pointer might be invalid when
 		 * getting here: tcp_collapse might have deleted it
 		 * while aggregating skbs from the socket queue.
@@ -536,9 +530,7 @@ ssize_t serval_udp_splice_read(struct socket *sock, loff_t *ppos,
 
 	sock_rps_record_flow(sk);
 
-	/*
-	 * We can't seek on a socket input
-	 */
+	/* We can't seek on a socket input. */
 	if (unlikely(*ppos))
 		return -ESPIPE;
 
@@ -564,8 +556,7 @@ ssize_t serval_udp_splice_read(struct socket *sock, loff_t *ppos,
 			if (sk->sk_shutdown & RCV_SHUTDOWN)
 				break;
 			if (sk->sk_state == SAL_CLOSED) {
-				/*
-				 * This occurs when user tries to read
+				/* This occurs when user tries to read
 				 * from never connected socket.
 				 */
 				if (!sock_flag(sk, SOCK_DONE))

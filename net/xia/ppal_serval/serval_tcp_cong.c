@@ -46,8 +46,7 @@ int serval_tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
 	return left <= serval_tcp_max_burst(tp);
 }
 
-/*
- * Slow start is used when congestion window is less than slow start
+/* Slow start is used when congestion window is less than slow start
  * threshold. This version implements the basic RFC2581 version
  * and optionally supports:
  *	RFC3742 Limited Slow Start	  - growth limited to max_ssthresh
@@ -104,10 +103,10 @@ void serval_tcp_cong_avoid_ai(struct serval_tcp_sock *tp, u32 w)
 }
 
 /*
- * TCP Reno congestion control
+ *	TCP Reno congestion control
+ *
  * This is special case used for fallback as well.
- */
-/* This is Jacobson's slow start and congestion avoidance.
+ * This is Jacobson's slow start and congestion avoidance.
  * SIGCOMM '88, p. 328.
  */
 void serval_tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
@@ -136,7 +135,7 @@ void serval_tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 	}
 }
 
-/* Slow start threshold is half the congestion window (min 2) */
+/* Slow start threshold is half the congestion window (min 2). */
 u32 serval_tcp_reno_ssthresh(struct sock *sk)
 {
 	const struct serval_tcp_sock *tp = serval_tcp_sk(sk);

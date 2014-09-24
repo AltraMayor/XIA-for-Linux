@@ -495,8 +495,7 @@ static struct xip_route_proc hid_rt_proc __read_mostly = {
 	.deliver = hid_deliver,
 };
 
-/*
- * xia_hid_init - this function is called when the module is loaded.
+/* xia_hid_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
 static int __init xia_hid_init(void)
@@ -541,9 +540,7 @@ out:
 	return rc;
 }
 
-/*
- * xia_hid_exit - this function is called when the modlule is removed.
- */
+/* xia_hid_exit - this function is called when the modlule is removed. */
 static void __exit xia_hid_exit(void)
 {
 	ppal_del_map(XIDTYPE_HID);

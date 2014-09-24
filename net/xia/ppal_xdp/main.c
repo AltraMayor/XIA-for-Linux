@@ -968,9 +968,7 @@ out:
 	return rc;
 }
 
-/*
- * xia_ad_exit - this function is called when the modlule is removed.
- */
+/* xia_xdp_exit - this function is called when the modlule is removed. */
 static void __exit xia_xdp_exit(void)
 {
 	xia_del_socket_begin(&xdp_sock_proc);

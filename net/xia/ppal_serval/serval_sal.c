@@ -17,8 +17,7 @@
 
 int sysctl_sal_fin_timeout __read_mostly = SAL_FIN_TIMEOUT;
 
-/*
- * The next routines deal with comparing 32 bit unsigned ints
+/* The next routines deal with comparing 32 bit unsigned ints
  * and worry about wraparound (automatic with unsigned arithmetic).
  * Taken from linux/net/tcp.h.
  */
@@ -203,8 +202,8 @@ static inline u32 serval_sal_rto_min(struct sock *sk)
 }
 
 /* The RTO estimation for the SAL is taken directly from the Linux
-   kernel TCP code. */
-/* Called to compute a smoothed rtt estimate. The data fed to this
+ * kernel TCP code.
+ * Called to compute a smoothed rtt estimate. The data fed to this
  * routine either comes from timestamps, or from segments that were
  * known _not_ to have been retransmitted [see Karn/Partridge
  * Proceedings SIGCOMM 87]. The algorithm is from the SIGCOMM 88
@@ -655,7 +654,8 @@ static int serval_sal_send_rsyn(struct sock *sk, u32 verno)
 	case SAL_RSYN_SENT:
 	case SAL_RSYN_SENT_RECV:
 		/* Here we just move to the same state again, so
-		   nothing to do. */
+		 * nothing to do.
+		 */
 		break;
 	}
 
@@ -1677,13 +1677,15 @@ static int serval_sal_connected_state_process(struct sock *sk,
 	}
 
 	/* Should pass FINs to transport and ultimately the user, as
-	 * it needs to pick it off its receive queue to notice EOF. */
+	 * it needs to pick it off its receive queue to notice EOF.
+	 */
 	if (packet_has_transport_hdr(skb, ctx->hdr) || (ctx->flags & SVH_FIN)) {
 		ssk->last_rcv_tstamp = sal_time_stamp;
 		err = ssk->af_ops->receive(sk, skb);
 	} else {
 		/* No transport header, so we just drop the packet
-		 * since there is nothing more to do with it. */
+		 * since there is nothing more to do with it.
+		 */
 		err = 0;
 		should_drop = 1;
 	}
@@ -2246,22 +2248,21 @@ static int serval_sal_do_xmit(struct sk_buff *skb)
 		sk_dst_reset(sk);
 	}
 
-	/*
-	  XXX we kind of hard code the outgoing device here based
-	  on what has been bound to the socket in the connection
-	  setup phase. Instead, the device should be resolved based
-	  on, e.g., dst IP (if it exists at this point).
-
-	  However, we currently do not implement an IP routing table
-	  for userlevel, which would otherwise be used for this
-	  resolution. Kernel space should work, because it routes
-	  packet according to the kernel's routing table, thus
-	  figuring out the device along the way.
-
-	  Packets that are sent using an advisory IP may fail in
-	  queue_xmit for userlevel unless the socket has had its
-	  interface set by a previous send event.
-	*/
+	/* XXX we kind of hard code the outgoing device here based
+	 * on what has been bound to the socket in the connection
+	 * setup phase. Instead, the device should be resolved based
+	 * on, e.g., dst IP (if it exists at this point).
+	 *
+	 * However, we currently do not implement an IP routing table
+	 * for userlevel, which would otherwise be used for this
+	 * resolution. Kernel space should work, because it routes
+	 * packet according to the kernel's routing table, thus
+	 * figuring out the device along the way.
+	 *
+	 * Packets that are sent using an advisory IP may fail in
+	 * queue_xmit for userlevel unless the socket has had its
+	 * interface set by a previous send event.
+	 */
 	rc = xip_local_out(skb);
 
 	if (skb_flags & SVH_RSYN) {

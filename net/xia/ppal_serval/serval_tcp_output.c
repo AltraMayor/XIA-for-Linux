@@ -170,7 +170,8 @@ static unsigned serval_tcp_syn_options(struct sock *sk, struct sk_buff *skb,
 	 * receiver we won't recognize data packets as being full sized when we
 	 * should, and thus we won't abide by the delayed ACK rules correctly.
 	 * SACKs don't matter, we never delay an ACK when we have any of those
-	 * going out.  */
+	 * going out.
+	 */
 	opts->mss = serval_tcp_advertise_mss(sk);
 	remaining -= TCPOLEN_MSS_ALIGNED;
 
@@ -209,14 +210,14 @@ static unsigned serval_tcp_synack_options(struct sock *sk,
 		opts->options |= OPTION_WSCALE;
 		remaining -= TCPOLEN_WSCALE_ALIGNED;
 	}
-/*
+	/*
 	if (likely(trsk->tstamp_ok)) {
 		opts->options |= OPTION_TS;
 		opts->tsval = TCP_SKB_CB(skb)->when;
 		opts->tsecr = trsk->rsk.req.ts_recent;
 		remaining -= TCPOLEN_TSTAMP_ALIGNED;
 	}
-*/
+	*/
 	return MAX_SERVAL_TCP_OPTION_SPACE - remaining;
 }
 
@@ -229,8 +230,10 @@ static unsigned serval_tcp_established_options(struct sock *sk,
 					       struct tcp_out_options *opts,
 					       struct tcp_md5sig_key **md5)
 {
-	/* struct tcp_skb_cb *tcb = skb ? TCP_SKB_CB(skb) : NULL;
-	   struct serval_tcp_sock *tp = serval_tcp_sk(sk); */
+	/*
+	struct tcp_skb_cb *tcb = skb ? TCP_SKB_CB(skb) : NULL;
+	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+	*/
 	unsigned size = 0;
 
 	*md5 = NULL;
@@ -266,8 +269,9 @@ static void serval_tcp_event_new_data_sent(struct sock *sk, struct sk_buff *skb)
 					    SERVAL_TCP_RTO_MAX);
 }
 
-/* RFC2861. Reset CWND after idle period longer RTO to "restart window".
- * This is the first part of cwnd validation mechanism. */
+/* RFC2861. Reset CWND after idle period longer RTO to "restart window."
+ * This is the first part of cwnd validation mechanism.
+ */
 static void serval_tcp_cwnd_restart(struct sock *sk, struct dst_entry *dst)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -614,7 +618,7 @@ static inline int serval_tcp_snd_wnd_test(struct serval_tcp_sock *tp,
 }
 
 /* This checks if the data bearing packet SKB (usually tcp_send_head(sk))
- * should be put on the wire right now.  If so, it returns the number of
+ * should be put on the wire right now. If so, it returns the number of
  * packets allowed by the congestion window.
  */
 static unsigned int serval_tcp_snd_test(struct sock *sk, struct sk_buff *skb,
@@ -881,7 +885,7 @@ int serval_tcp_trim_head(struct sock *sk, struct sk_buff *skb, u32 len)
 	return 0;
 }
 
-/* Calculate MSS. Not accounting for SACKs here.  */
+/* Calculate MSS. Not accounting for SACKs here. */
 int serval_tcp_mtu_to_mss(struct sock *sk, int pmtu)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -889,25 +893,25 @@ int serval_tcp_mtu_to_mss(struct sock *sk, int pmtu)
 	int mss_now;
 
 	/* Calculate base mss without TCP options:
-	   It is MMS_S - sizeof(tcphdr) of rfc1122
+	 * It is MMS_S - sizeof(tcphdr) of rfc1122.
 	 */
 	mss_now = pmtu - ssk->af_ops->net_header_len - sizeof(struct tcphdr);
 
-	/* Clamp it (mss_clamp does not include tcp options) */
+	/* Clamp it (mss_clamp does not include tcp options). */
 	if (mss_now > tp->rx_opt.mss_clamp)
 		mss_now = tp->rx_opt.mss_clamp;
 
-	/* Then reserve room for full set of TCP options and 8 bytes of data */
+	/* Then reserve room for full set of TCP options and 8 bytes of data. */
 	if (mss_now < 48)
 		mss_now = 48;
 
-	/* Now subtract TCP options size, not including SACKs */
+	/* Now subtract TCP options size, not including SACKs. */
 	mss_now -= tp->tcp_header_len - sizeof(struct tcphdr);
 
 	return mss_now;
 }
 
-/* Inverse of above */
+/* Inverse of above. */
 int serval_tcp_mss_to_mtu(struct sock *sk, int mss)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -988,7 +992,7 @@ static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	th->check		= 0;
 	th->urg_ptr		= 0;
 
-	/* The urg_mode check is necessary during a below snd_una win probe */
+	/* The urg_mode check is necessary during a below snd_una win probe. */
 	if (unlikely(serval_tcp_urg_mode(tp) && before(tcb->seq, tp->snd_up))) {
 		if (before(tp->snd_up, tcb->seq + 0x10000)) {
 			th->urg_ptr = htons(tp->snd_up - tcb->seq);
@@ -1006,7 +1010,7 @@ static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 		TCP_ECN_send(sk, skb, tcp_header_size);
 	*/
 #ifdef CONFIG_TCP_MD5SIG_DISABLED
-	/* Calculate the MD5 hash, as we have all we need now */
+	/* Calculate the MD5 hash, as we have all we need now. */
 	if (md5) {
 		sk_nocaps_add(sk, NETIF_F_GSO_MASK);
 		tp->af_specific->calc_md5_hash(opts.hash_location,
@@ -1211,7 +1215,7 @@ int serval_tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
 	serval_tcp_retrans_try_collapse(sk, skb, cur_mss);
 
 	/* Some Solaris stacks overoptimize and ignore the FIN on a
-	 * retransmit when old data is attached.  So strip it off
+	 * retransmit when old data is attached. So strip it off
 	 * since it is cheap to do so and saves bytes on the network.
 	 */
 	if (skb->len > 0 &&
@@ -1259,7 +1263,7 @@ int serval_tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
 }
 
 /* Try to defer sending, if possible, in order to minimize the amount
- * of TSO splitting we do.  View it as a kind of TSO Nagle test.
+ * of TSO splitting we do. View it as a kind of TSO Nagle test.
  *
  * This algorithm is from John Heffner.
  */
@@ -1312,7 +1316,7 @@ static int serval_tcp_tso_should_defer(struct sock *sk, struct sk_buff *skb)
 			goto send_now;
 	} else {
 		/* Different approach, try not to defer past a single
-		 * ACK.  Receiver should ACK every other full sized
+		 * ACK. Receiver should ACK every other full sized
 		 * frame, so if we have space for more than 3 frames
 		 * then send now.
 		 */
@@ -1320,7 +1324,7 @@ static int serval_tcp_tso_should_defer(struct sock *sk, struct sk_buff *skb)
 			goto send_now;
 	}
 
-	/* Ok, it looks like it is advisable to defer.  */
+	/* Ok, it looks like it is advisable to defer. */
 	tp->tso_deferred = 1 | (jiffies << 1);
 
 	return 1;
@@ -1336,8 +1340,8 @@ send_now:
  * changes resulting in larger path MTUs.
  *
  * Returns 0 if we should wait to probe (no cwnd available),
- *	 1 if a probe was sent,
- *	 -1 otherwise
+ *	   1 if a probe was sent,
+ *	  -1 otherwise
  */
 static int serval_tcp_mtu_probe(struct sock *sk)
 {
@@ -1352,7 +1356,8 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 	/* Not currently probing/verifying,
 	 * not in recovery,
 	 * have enough cwnd, and
-	 * not SACKing (the variable headers throw things off) */
+	 * not SACKing (the variable headers throw things off).
+	 */
 	if (!tp->tp_mtup.enabled ||
 	    tp->tp_mtup.probe_size ||
 	    tp->ca_state != TCP_CA_Open ||
@@ -1379,7 +1384,8 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 		return 0;
 
 	/* Do we need to wait to drain cwnd? With none in flight,
-	   don't stall */
+	 * don't stall.
+	 */
 	if (serval_tcp_packets_in_flight(tp) + 2 > tp->snd_cwnd) {
 		if (!serval_tcp_packets_in_flight(tp))
 			return -1;
@@ -1387,7 +1393,7 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 			return 0;
 	}
 
-	/* We're allowed to probe.  Build it now. */
+	/* We're allowed to probe. Build it now. */
 	if ((nskb = serval_sk_stream_alloc_skb(sk, probe_size, GFP_ATOMIC)) ==
 		NULL)
 		return -1;
@@ -1417,7 +1423,8 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 
 		if (skb->len <= copy) {
 			/* We've eaten all the data from this skb.
-			 * Throw it away. */
+			 * Throw it away.
+			 */
 			TCP_SKB_CB(nskb)->tcp_flags |=
 				TCP_SKB_CB(skb)->tcp_flags;
 			serval_tcp_unlink_write_queue(skb, sk);
@@ -1445,12 +1452,14 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 	}
 	serval_tcp_init_tso_segs(sk, nskb, nskb->len);
 
-	/* We're ready to send.  If this fails, the probe will
-	 * be resegmented into mss-sized pieces by tcp_write_xmit(). */
+	/* We're ready to send. If this fails, the probe will
+	 * be resegmented into mss-sized pieces by tcp_write_xmit().
+	 */
 	TCP_SKB_CB(nskb)->when = tcp_time_stamp;
 	if (!serval_tcp_transmit_skb(sk, nskb, 1, GFP_ATOMIC)) {
 		/* Decrement cwnd here because we are sending
-		 * effectively two packets. */
+		 * effectively two packets.
+		 */
 		tp->snd_cwnd--;
 		serval_tcp_event_new_data_sent(sk, nskb);
 
@@ -1831,7 +1840,8 @@ unsigned int serval_tcp_current_mss(struct sock *sk)
 	/* The mss_cache is sized based on tp->tcp_header_len, which assumes
 	 * some common options. If this is an odd packet (because we have SACK
 	 * blocks etc) then our calculated header_len will be different, and
-	 * we have to adjust mss_now correspondingly */
+	 * we have to adjust mss_now correspondingly.
+	 */
 	if (header_len != tp->tcp_header_len) {
 		int delta = (int) header_len - tp->tcp_header_len;
 		mss_now -= delta;
@@ -1967,14 +1977,15 @@ int serval_tcp_connection_build_synack(struct sock *sk, struct dst_entry *dst,
 
 	mss = dst_metric_advmss(dst);
 
-	if (req->rcv_wnd == 0) { /* ignored for retransmitted syns */
+	if (req->rcv_wnd == 0) { /* Ignored for retransmitted syns. */
 		__u8 rcv_wscale;
-		/* Set this up on the first call only */
+		/* Set this up on the first call only. */
 
 		req->window_clamp = tp->window_clamp ? :
 			dst_metric(dst, RTAX_WINDOW);
 		/* tcp_full_space because it is guaranteed to be the
-		 * first packet */
+		 * first packet.
+		 */
 		serval_tcp_select_initial_window(serval_tcp_full_space(sk),
 			mss - (trsk->tstamp_ok ? TCPOLEN_TSTAMP_ALIGNED : 0),
 			&req->rcv_wnd, &req->window_clamp, trsk->wscale_ok,
@@ -2077,7 +2088,7 @@ void serval_tcp_send_delayed_ack(struct sock *sk)
 		    (tp->tp_ack.pending & STSK_ACK_PUSHED))
 			max_ato = TCP_DELACK_MAX;
 
-		/* Slow path, intersegment interval is "high". */
+		/* Slow path, intersegment interval is "high." */
 
 		/* If some rtt estimate is known, use it to bound delayed ack.*/
 		if (tp->srtt) {
@@ -2090,7 +2101,7 @@ void serval_tcp_send_delayed_ack(struct sock *sk)
 		ato = min(ato, max_ato);
 	}
 
-	/* Stay within the limit we were given */
+	/* Stay within the limit we were given. */
 	timeout = jiffies + ato;
 
 	/* Use new timeout only if there wasn't a older one earlier. */
@@ -2178,7 +2189,7 @@ void serval_tcp_xmit_retransmit_queue(struct sock *sk)
 
 		if (skb == serval_tcp_send_head(sk))
 			break;
-		/* we could do better than to assign each time */
+		/* We could do better than to assign each time. */
 		if (hole == NULL)
 			tp->retransmit_skb_hint = skb;
 
@@ -2203,7 +2214,7 @@ begin_fwd:
 			tp->retransmit_high = last_lost;
 			if (!serval_tcp_can_forward_retransmit(sk))
 				break;
-			/* Backtrack if necessary to non-L'ed skb */
+			/* Backtrack if necessary to non-L'ed skb. */
 			if (hole != NULL) {
 				skb = hole;
 				hole = NULL;
@@ -2234,7 +2245,7 @@ begin_fwd:
 	}
 }
 
-/* Send a fin.  The caller locks the socket for us.  This cannot be
+/* Send a fin. The caller locks the socket for us. This cannot be
  * allowed to fail queueing a FIN frame under any circumstances.
  */
 void serval_tcp_send_fin(struct sock *sk)
@@ -2244,7 +2255,7 @@ void serval_tcp_send_fin(struct sock *sk)
 	int mss_now;
 
 	/* Optimization, tack on the FIN if we have a queue of
-	 * unsent frames.  But be careful about outgoing SACKS
+	 * unsent frames. But be careful about outgoing SACKS
 	 * and IP options.
 	 */
 	mss_now = serval_tcp_current_mss(sk);

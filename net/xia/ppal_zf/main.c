@@ -531,8 +531,7 @@ static struct xip_route_proc zf_rt_proc __read_mostly = {
 	.deliver = zf_deliver,
 };
 
-/*
- * xia_zf_init - this function is called when the module is loaded.
+/* xia_zf_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
 static int __init xia_zf_init(void)
@@ -571,9 +570,7 @@ out:
 	return rc;
 }
 
-/*
- * xia_zf_exit - this function is called when the modlule is removed.
- */
+/* xia_zf_exit - this function is called when the modlule is removed. */
 static void __exit xia_zf_exit(void)
 {
 	ppal_del_map(XIDTYPE_ZF);
