@@ -18,7 +18,7 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	if (!ha)
 		return NULL;
 	INIT_LIST_HEAD(&ha->ha_list);
-	INIT_LIST_HEAD(&ha->hdev_list);	
+	INIT_LIST_HEAD(&ha->hdev_list);
 	ha->dev = dev;
 	dev_hold(dev);
 	xdst_init_anchor(&ha->anchor);
@@ -902,7 +902,7 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 	    ghdr->haddr_len != dev->addr_len		||
 	    dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
 	    skb->pkt_type == PACKET_OTHERHOST		||
-            skb->pkt_type == PACKET_LOOPBACK)
+	    skb->pkt_type == PACKET_LOOPBACK)
 		goto freeskb;
 
 	skb = skb_share_check(skb, GFP_ATOMIC);

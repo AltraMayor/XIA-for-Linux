@@ -44,7 +44,7 @@ struct xip_hid_ctx {
 	/* Simplify scanning network devices. */
 	struct net		*net;
 
- 	/* NWP's state per struct net. */
+	/* NWP's state per struct net. */
 	atomic_t	to_announce;
 	atomic_t	announced;
 	atomic_t	me; /* Number of local HIDs in ctx.xpc_xtbl. */

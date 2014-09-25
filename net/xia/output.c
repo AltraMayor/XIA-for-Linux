@@ -162,7 +162,7 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 	skb_put(skb, transhdrlen);
 
 	/* XXX Does we need to set skb_shinfo(skb)->tx_flags? */
-	
+
 	skb->priority = sk->sk_priority;
 	skb->mark = sk->sk_mark;
 	xdst_hold(xdst);

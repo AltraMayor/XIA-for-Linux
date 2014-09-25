@@ -1303,7 +1303,7 @@ int xip_route_with_a_redirect(struct net *net, struct sk_buff *skb,
 	       xiph->num_dst * sizeof(struct xia_row));
 
 	/* Overwrite previous XID. */
- 	ra_last_row = xip_last_row(redirected_addr.s_row,
+	ra_last_row = xip_last_row(redirected_addr.s_row,
 				   xiph->num_dst, xiph->last_node);
 	e = ra_last_row->s_edge.a[chosen_edge];
 	redirected_addr.s_row[e].s_xid = *next_xid;

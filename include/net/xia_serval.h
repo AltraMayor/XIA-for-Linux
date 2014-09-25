@@ -74,7 +74,7 @@ enum {
 
 struct serval_rt_id {
 	struct fib_xid			fxid;
-	struct xip_dst_anchor   	anchor;
+	struct xip_dst_anchor		anchor;
 	struct serval_sock __rcu	*ssk;
 };
 

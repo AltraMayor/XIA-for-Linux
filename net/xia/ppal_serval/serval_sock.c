@@ -1,9 +1,6 @@
 THIS FILE AND ITS HEADER FILES ARE ONLY KEPT HERE TO HELP
 IMPLEMETING SOCKET MIGRATION.
 
-
-
-
 /* Serval socket implementation. Contains all the Serval-specific state.
  *
  * Authors: Erik Nordström <enordstr@cs.princeton.edu>

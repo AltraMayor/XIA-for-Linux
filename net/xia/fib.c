@@ -87,7 +87,7 @@ int xip_add_ppal_ctx(struct net *net, struct xip_ppal_ctx *ctx)
 		return -EEXIST;
 	}
 	rcu_assign_pointer(net->xia.fib_ctx[vxt], ctx);
-		
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(xip_add_ppal_ctx);
