@@ -210,7 +210,7 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		/* No attributes. */
 
 		/* length of rtnetlink header + attributes */
-		rtha->hha_len = nlmsg_get_pos(skb) - (void *) rtha;
+		rtha->hha_len = nlmsg_get_pos(skb) - (void *)rtha;
 	}
 	nla_nest_end(skb, ha_attr);
 

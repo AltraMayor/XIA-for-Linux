@@ -1833,7 +1833,7 @@ unsigned int serval_tcp_current_mss(struct sock *sk)
 	 * we have to adjust mss_now correspondingly.
 	 */
 	if (header_len != tp->tcp_header_len) {
-		int delta = (int) header_len - tp->tcp_header_len;
+		int delta = (int)header_len - tp->tcp_header_len;
 
 		mss_now -= delta;
 	}

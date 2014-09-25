@@ -286,7 +286,7 @@ struct flow_info *serval_sock_stats_flow(struct flow_id *flow)
 
 		if (sk->sk_protocol == IPPROTO_TCP) {
 			struct serval_tcp_sock *tsk =
-				(struct serval_tcp_sock *) sk;
+				(struct serval_tcp_sock *)sk;
 			struct stats_proto_tcp *st = NULL;
 
 			info_size += sizeof(struct stats_proto_tcp);
