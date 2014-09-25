@@ -48,6 +48,7 @@ static unsigned int xip_mtu(const struct dst_entry *dst)
 static void xip_dst_destroy(struct dst_entry *dst)
 {
 	struct xip_dst *xdst = dst_xdst(dst);
+
 	if (xdst->ppal_destroy)
 		xdst->ppal_destroy(xdst);
 	dst_destroy_metrics_generic(dst);
@@ -119,6 +120,7 @@ static inline u32 start_edge_hash(int input)
 static inline void update_edge_hash(u32 *pkey_hash, const struct xia_xid *xid)
 {
 	const u32 n = sizeof(*xid) / sizeof(u32);
+
 	BUILD_BUG_ON(sizeof(*xid) % sizeof(u32));
 	*pkey_hash = jhash2((const u32 *)xid, n, *pkey_hash);
 }
@@ -128,8 +130,10 @@ static u32 hash_edges(const struct xia_row *addr, const struct xia_row *row,
 {
 	int i;
 	u32 key_hash = start_edge_hash(input);
+
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		u8 e = row->s_edge.a[i];
+
 		if (!is_empty_edge(e))
 			update_edge_hash(&key_hash, &addr[e].s_xid);
 		else
@@ -142,9 +146,11 @@ static void set_xdst_key(struct xip_dst *xdst, const struct xia_row *addr,
 			 struct xia_row *row, int input, u32 key_hash)
 {
 	int i;
+
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		struct xia_xid *xid = &xdst->xids[i];
 		u8 e = row->s_edge.a[i];
+
 		if (!is_empty_edge(e)) {
 			memmove(xid, &addr[e].s_xid, sizeof(*xid));
 		} else {
@@ -266,6 +272,7 @@ static int xdst_matches_addr(struct xip_dst *xdst, const struct xia_row *addr,
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		struct xia_xid *xid = &xdst->xids[i];
 		u8 e = row->s_edge.a[i];
+
 		if (!is_empty_edge(e)) {
 			if (!are_sxids_equal(xid, &addr[e].s_xid))
 				return 0;
@@ -288,6 +295,7 @@ static struct xip_dst *find_xdst_rcu(struct net *net, u32 key_hash,
 	for (dsth = rcu_dereference(*dsthead(net, key_hash)); dsth;
 		dsth = rcu_dereference(dsth->next)) {
 		struct xip_dst *xdsth = dst_xdst(dsth);
+
 		if (xdsth->key_hash == key_hash &&
 		    xdst_matches_addr(xdsth, addr, row, input))
 			return xdsth;
@@ -305,6 +313,7 @@ static int xdst_matches_xdst(struct xip_dst *xdst1, struct xip_dst *xdst2)
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		struct xia_xid *xid1 = &xdst1->xids[i];
 		struct xia_xid *xid2 = &xdst2->xids[i];
+
 		if (xia_is_nat(xid1->xid_type))
 			return xia_is_nat(xid2->xid_type);
 		if (!are_sxids_equal(xid1, xid2))
@@ -317,8 +326,10 @@ static struct xip_dst *find_xdst_locked(struct dst_entry **phead,
 					struct xip_dst *xdst)
 {
 	struct dst_entry *dsth;
+
 	for (dsth = *phead; dsth; dsth = dsth->next) {
 		struct xip_dst *xdsth = dst_xdst(dsth);
+
 		if (xdst_matches_xdst(xdsth, xdst))
 			return xdsth;
 	}
@@ -337,6 +348,7 @@ static inline int xip_dst_unreachable(char *direction, struct sk_buff *skb)
 		const struct xiphdr *xiph = xip_hdr(skb);
 		struct xia_addr addr;
 		char str_addr[XIA_MAX_STRADDR_SIZE];
+
 		copy_n_and_shade_xia_addr(&addr, xiph->dst_addr, xiph->num_dst);
 		BUG_ON(xia_ntop(&addr, str_addr, XIA_MAX_STRADDR_SIZE, 0) < 0);
 		pr_warn("XIP: unreachable destination on direction %s, last_node=%i, destination_address=`%s'\n",
@@ -459,6 +471,7 @@ void clear_xdst_table(struct net *net)
 
 		while (dsth) {
 			struct dst_entry *next = dsth->next;
+
 			RCU_INIT_POINTER(dsth->next, NULL);
 			xdst_rcu_free(dst_xdst(dsth));
 			dsth = next;
@@ -503,6 +516,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 	}
 	if (p_chosen_dsth) {
 		struct dst_entry *freeable_dst = *p_chosen_dsth;
+
 		rcu_assign_pointer(*p_chosen_dsth, (*p_chosen_dsth)->next);
 		xdst_unlock_bucket(net, bucket);
 		xdst_rcu_free(dst_xdst(freeable_dst));
@@ -559,8 +573,10 @@ EXPORT_SYMBOL_GPL(xdst_attach_to_anchor);
 static void detach_anchors(struct xip_dst *xdst)
 {
 	int i;
+
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++) {
 		struct xip_dst_anchor *anchor, *reread;
+
 		anchor = xdst->anchors[i].anchor;
 		if (!anchor)
 			continue;
@@ -608,6 +624,7 @@ EXPORT_SYMBOL_GPL(del_xdst_and_hold);
 static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
 {
 	struct xip_dst *xdst = dst_xdst(dst);
+
 	if (del_xdst_and_hold(xdst))
 		xdst_rcu_free(xdst);
 	xdst_put(xdst);
@@ -617,6 +634,7 @@ static struct dst_entry *xip_negative_advice(struct dst_entry *dst)
 void xdst_init_anchor(struct xip_dst_anchor *anchor)
 {
 	int i;
+
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++)
 		INIT_HLIST_HEAD(&anchor->heads[i]);
 }
@@ -717,6 +735,7 @@ static void xdst_clean_anchor(struct xip_dst_anchor *anchor, xid_type_t type,
 			      const u8 *id)
 {
 	struct filter_from_arg arg;
+
 	arg.type = type;
 	arg.id = id;
 	xdst_free_anchor_f(anchor, filter_from, &arg);
@@ -758,6 +777,7 @@ int xdst_def_hop_limit_input_method(struct sk_buff *skb)
 
 	if (skb_xdst(skb)->input) {
 		struct xiphdr *xiph = xip_hdr(skb);
+
 		if (!xiph->hop_limit) {
 			/* XXX Is this warning necessary? If so,
 			 * shouldn't it report more?
@@ -827,6 +847,7 @@ static int negdep_deliver(struct xip_route_proc *rproc, struct net *net,
 static inline struct xip_route_proc *get_an_rproc_rcu(const xid_type_t ty)
 {
 	int vxt = xt_to_vxt_rcu(ty);
+
 	if (likely(vxt >= 0)) {
 		struct xip_route_proc *rproc = rcu_dereference(principals[vxt]);
 		/* We do not assume that @rproc must be available even
@@ -982,6 +1003,7 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
 		case XRP_ACT_REDIRECT:
 			if (right_xid->xid_type == ty) {
 				char to[XIA_MAX_STRXID_SIZE];
+
 				BUG_ON(xia_xidtop(left_xid, from,
 						  XIA_MAX_STRXID_SIZE) < 0);
 				BUG_ON(xia_xidtop(right_xid, to,
@@ -1060,6 +1082,7 @@ static inline struct xip_dst *use_dst_table_rcu(
 tail_call:
 	if (!xdst_hint) {
 		u32 visited = 0;
+
 		if (unlikely(xia_are_edges_valid(*plast_row, *plast_node,
 						 num_dst, &visited))) {
 			*pdrop = 1;
@@ -1300,6 +1323,7 @@ int xip_route(struct net *net, struct sk_buff *skb, int input)
 	struct xiphdr *xiph = xip_hdr(skb);
 	struct xip_dst *xdst = xip_mark_addr_and_get_dst(net,
 		xiph->dst_addr, xiph->num_dst, &xiph->last_node, input);
+
 	if (IS_ERR(xdst))
 		return PTR_ERR(xdst);
 	skb_dst_set(skb, &xdst->dst);

@@ -69,6 +69,7 @@ int check_type_of_all_sinks(struct sockaddr_xia *addr, xid_type_t ty)
 	/* Verify the type of all sinks. */
 	for (i = 0; i < n; i++) {
 		struct xia_row *row = &addr->sxia_addr.s_row[i];
+
 		if (is_it_a_sink(row, i, n) && row->s_xid.xid_type != ty)
 			return -EINVAL;
 	}
@@ -91,6 +92,7 @@ static int check_valid_single_sink(struct sockaddr_xia *addr)
 	i = n - 2;
 	while (i >= 0) {
 		__be32 all_edges = addr->sxia_addr.s_row[i].s_edge.i;
+
 		if (__be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -EINVAL; /* There's more than a sink. */
 		i--;
@@ -393,6 +395,7 @@ static void unregister_protos(struct xia_socket_proc *sproc, int last_proc)
 		const struct xia_socket_type_proc *stproc =
 			sproc->procs[last_proc];
 		struct proto *prot;
+
 		last_proc--;
 		if (!stproc)
 			continue;

@@ -95,7 +95,6 @@ static int serval_tcp_orphan_retries(struct sock *sk, int alive)
 	return retries;
 }
 
-
 static void serval_tcp_mtu_probing(struct serval_tcp_sock *tp,
 				   struct sock *sk)
 {

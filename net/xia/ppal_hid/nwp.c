@@ -14,6 +14,7 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 				gfp_t flags)
 {
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
+
 	if (!ha)
 		return NULL;
 	INIT_LIST_HEAD(&ha->ha_list);
@@ -59,6 +60,7 @@ static int ha_exists(struct fib_xid_hid_main *mhid, struct net_device *dev,
 		     const u8 *lladdr)
 {
 	struct hrdw_addr *pos_ha;
+
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		if (unlikely(pos_ha->dev == dev &&
 			     !memcmp(pos_ha->ha, lladdr, dev->addr_len)))
@@ -78,6 +80,7 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;
+
 		if (unlikely(!c1 && c2))
 			return -EEXIST;	/* It's a duplicate. */
 
@@ -130,6 +133,7 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 static void del_ha(struct hrdw_addr *ha)
 {
 	struct hid_dev *hdev;
+
 	list_del_rcu(&ha->ha_list);
 
 	hdev = hid_dev_get(ha->dev);
@@ -154,6 +158,7 @@ static int del_ha_from_mhid(struct fib_xid_hid_main *mhid, const u8 *str_ha,
 	list_for_each_entry_safe(pos_ha, nxt, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, str_ha, dev->addr_len);
 		int c2 = pos_ha->dev == dev;
+
 		if (unlikely(!c1 && c2)) {
 			del_ha(pos_ha);
 			free_ha(pos_ha);
@@ -171,6 +176,7 @@ static int del_ha_from_mhid(struct fib_xid_hid_main *mhid, const u8 *str_ha,
 static void del_has_by_dev(struct list_head *head, struct net_device *dev)
 {
 	struct hrdw_addr *pos_ha, *nxt;
+
 	list_for_each_entry_safe(pos_ha, nxt, head, ha_list)
 		if (pos_ha->dev == dev) {
 			del_ha(pos_ha);
@@ -670,6 +676,7 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 static void str_of_xid(char *dest_str, u8 *id)
 {
 	struct xia_xid xid;
+
 	xid.xid_type = XIDTYPE_HID;
 	memcpy(xid.xid_id, id, XIA_XID_MAX);
 	xia_xidtop(&xid, dest_str, XIA_MAX_STRXID_SIZE);
@@ -704,6 +711,7 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
 		int is_new_hid, need_new_skb;
 		struct fib_xid_hid_main *mhid = ha->mhid;
+
 		BUG_ON(ha->dev != dev);
 
 		is_new_hid = prv_mhid != mhid;
@@ -726,6 +734,7 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 		if (is_new_hid || need_new_skb) {
 			/* Add new HID and counter. */
 			u8 *buf = skb_put(skb, XIA_XID_MAX + 1);
+
 			memcpy(buf, mhid->xhm_common.fx_xid, XIA_XID_MAX);
 			/* Update counters. */
 			(*phid_counter)++;
@@ -765,6 +774,7 @@ static void read_announcement(struct sk_buff *skb)
 	xid = skb->data;
 	while (count > 0) {
 		u8 *next_xid = skb_pull(skb, XIA_XID_MAX);
+
 		if (!next_xid) {
 			if (net_ratelimit())
 				pr_warn("XIA HID NWP: An announcement was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
@@ -836,6 +846,7 @@ static int process_neigh_list(struct sk_buff *skb)
 	while (hid_count > 0) {
 		u8 *haddr_or_xid = skb_pull(skb, XIA_XID_MAX + 1);
 		int original_ha_count, ha_count;
+
 		if (!haddr_or_xid) {
 			if (net_ratelimit())
 				pr_warn("XIA HID NWP: A neighbor list was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
@@ -846,9 +857,11 @@ static int process_neigh_list(struct sk_buff *skb)
 		ha_count = original_ha_count;
 		while (ha_count > 0) {
 			u8 *next_haddr_or_xid = skb_pull(skb, dev->addr_len);
+
 			if (!next_haddr_or_xid) {
 				if (net_ratelimit()) {
 					char str[XIA_MAX_STRXID_SIZE];
+
 					str_of_xid(str, xid);
 					pr_warn("XIA HID NWP: A neighbor list was received truncated. It should contain %i link layer addresses for %s, but %i are missing\n",
 						original_ha_count, str,

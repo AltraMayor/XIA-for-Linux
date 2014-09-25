@@ -50,12 +50,14 @@ struct hlist_node {
 static inline void hlist_add_head(struct hlist_node *n, struct hlist_head *h)
 {
 	struct hlist_node *first = h->first;
+
 	n->next = first;
 	if (first)
 		first->pprev = &n->next;
 	h->first = n;
 	n->pprev = &h->first;
 }
+
 #define hlist_add_head_rcu	hlist_add_head
 
 static inline void __hlist_del(struct hlist_node *n)
@@ -75,6 +77,7 @@ static inline void hlist_del(struct hlist_node *n)
 	n->next = LIST_POISON1;
 	n->pprev = LIST_POISON2;
 }
+
 #define hlist_del_rcu		hlist_del
 
 #define mymalloc(n)	malloc(n)

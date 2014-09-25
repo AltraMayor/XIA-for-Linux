@@ -246,6 +246,7 @@ static int serval_udp_sendmsg(struct kiocb *iocb, struct sock *sk,
 
 	if (msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_xia *, addr, msg->msg_name);
+
 		rc = check_sockaddr_xia((struct sockaddr *)addr,
 					msg->msg_namelen);
 		if (rc)

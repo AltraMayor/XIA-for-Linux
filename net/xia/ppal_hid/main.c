@@ -46,6 +46,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	rc = fib_build_newroute(&lhid->xhl_common, xtbl, cfg, &added);
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
+
 		if (added)
 			atomic_inc(&hid_ctx->me);
 		atomic_inc(&hid_ctx->to_announce);
@@ -60,8 +61,10 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 			  struct xia_fib_config *cfg)
 {
 	int rc = fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
+
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
+
 		atomic_dec(&hid_ctx->me);
 		/* XXX NWP should support negative announcements to speed up
 		 * detection of leaving HIDs.
@@ -116,6 +119,7 @@ nla_put_failure:
 static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_hid_local *lhid = fxid_lhid(fxid);
+
 	xdst_free_anchor(&lhid->xhl_anchor);
 	kfree(lhid);
 }
@@ -240,6 +244,7 @@ static const xia_ppal_all_rt_eops_t hid_all_rt_eops = {
 static struct xip_hid_ctx *create_hid_ctx(struct net *net)
 {
 	struct xip_hid_ctx *hid_ctx = kmalloc(sizeof(*hid_ctx), GFP_KERNEL);
+
 	if (!hid_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&hid_ctx->ctx, XIDTYPE_HID);
@@ -442,6 +447,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	switch (fxid->fx_table_id) {
 	case XRTABLE_LOCAL_INDEX: {
 		struct fib_xid_hid_local *lhid = fxid_lhid(fxid);
+
 		xdst->passthrough_action = XDA_DIG;
 		xdst->sink_action = XDA_ERROR; /* An HID cannot be a sink. */
 		xdst_attach_to_anchor(xdst, anchor_index, &lhid->xhl_anchor);

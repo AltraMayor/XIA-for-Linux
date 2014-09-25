@@ -109,6 +109,7 @@ nla_put_failure:
 static void local_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_zf_local *lzf = fxid_lzf(fxid);
+
 	xdst_free_anchor(&lzf->anchor);
 	kfree(lzf);
 }
@@ -199,9 +200,9 @@ nla_put_failure:
 static void main_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_zf_main *mzf = fxid_mzf(fxid);
+
 	xdst_invalidate_redirect(xtbl_net(xtbl), XIDTYPE_ZF,
 				 mzf->common.fx_xid, &mzf->gw);
-
 	kfree(mzf);
 }
 
@@ -228,6 +229,7 @@ static const xia_ppal_all_rt_eops_t zf_all_rt_eops = {
 static struct xip_zf_ctx *create_zf_ctx(void)
 {
 	struct xip_zf_ctx *zf_ctx = kmalloc(sizeof(*zf_ctx), GFP_KERNEL);
+
 	if (!zf_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&zf_ctx->ctx, XIDTYPE_ZF);
@@ -312,6 +314,7 @@ struct zf_dst_info {
 static struct zf_dst_info *create_zf_dst_info(const u8 *xid)
 {
 	struct zf_dst_info *info = kmalloc(sizeof(*info), GFP_ATOMIC);
+
 	if (!info)
 		return NULL;
 	memmove(info->xid, xid, XIA_XID_MAX);

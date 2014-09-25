@@ -135,6 +135,7 @@ nla_put_failure:
 static void local_free_xdp(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_xdp_local *lxdp = fxid_lxdp(fxid);
+
 	xdst_free_anchor(&lxdp->anchor);
 	/* We do not sock_put(&lxdp->xia_sk.sk) because @fxid is released
 	 * before @lxdp, and we do not deallocate memory here because @fxid is
@@ -160,6 +161,7 @@ static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
 static struct xip_xdp_ctx *create_xdp_ctx(void)
 {
 	struct xip_xdp_ctx *xdp_ctx = kmalloc(sizeof(*xdp_ctx), GFP_KERNEL);
+
 	if (!xdp_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&xdp_ctx->ctx, XIDTYPE_XDP);
@@ -428,6 +430,7 @@ static int xdp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 static int xdp_init(struct sock *sk)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
+
 	xdst_init_anchor(&lxdp->anchor);
 	return 0;
 }
@@ -435,6 +438,7 @@ static int xdp_init(struct sock *sk)
 static void xdp_flush_pending_frames(struct sock *sk)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
+
 	if (!lxdp->pending)
 		return;
 	lxdp->pending = false;
@@ -444,6 +448,7 @@ static void xdp_flush_pending_frames(struct sock *sk)
 static void xdp_destroy_sock(struct sock *sk)
 {
 	bool slow = lock_sock_fast(sk);
+
 	xdp_flush_pending_frames(sk);
 	unlock_sock_fast(sk, slow);
 }
@@ -462,6 +467,7 @@ static int xdp_push_pending_frames(struct sock *sk)
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct sk_buff *skb = xip_finish_skb(sk);
 	int rc = !IS_ERR_OR_NULL(skb) ? xdp_send_skb(skb) : PTR_ERR(skb);
+
 	lxdp->pending = false;
 	return rc;
 }
@@ -582,6 +588,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	/* Obtain destination address. */
 	if (msg->msg_name) {
 		DECLARE_SOCKADDR(struct sockaddr_xia *, addr, msg->msg_name);
+
 		rc = check_sockaddr_xia((struct sockaddr *)addr,
 					msg->msg_namelen);
 		if (rc)
@@ -611,6 +618,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	xdst = connected ? dst_xdst(sk_dst_check(sk, 0)) : NULL;
 	if (!xdst) {
 		struct net *net = sock_net(sk);
+
 		memmove(&dest_stack, dest, sizeof(dest_stack));
 		dest = &dest_stack;
 		if (connected) {

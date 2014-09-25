@@ -44,7 +44,6 @@ int sysctl_serval_tcp_max_orphans __read_mostly = 1;
 #define TCP_REMNANT (TCP_FLAG_FIN|TCP_FLAG_URG|TCP_FLAG_SYN|TCP_FLAG_PSH)
 #define TCP_HP_BITS (~(TCP_RESERVED_BITS|TCP_FLAG_PSH))
 
-
 /* Adapt the MSS value used to make delayed ack decision to the
  * real world.
  */
@@ -94,7 +93,6 @@ static void serval_tcp_measure_rcv_mss(struct sock *sk,
 		tp->tp_ack.pending |= STSK_ACK_PUSHED;
 	}
 }
-
 
 /* Buffer size and advertised window tuning.
  *
@@ -180,10 +178,7 @@ static void serval_tcp_grow_window(struct sock *sk, struct sk_buff *skb)
 	}
 }
 
-
-
 /* 3. Tuning rcvbuf, when connection enters established state. */
-
 static void serval_tcp_fixup_rcvbuf(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
@@ -236,7 +231,6 @@ static void serval_tcp_init_buffer_space(struct sock *sk)
 	tp->snd_cwnd_stamp = tcp_time_stamp;
 }
 
-
 /* 5. Recalculate window clamp after socket hit its memory bounds. */
 static void serval_tcp_clamp_window(struct sock *sk)
 {
@@ -267,10 +261,10 @@ static void serval_tcp_incr_quickack(struct sock *sk)
 		tp->tp_ack.quick = min(quickacks, TCP_MAX_QUICKACKS);
 }
 
-
 void serval_tcp_enter_quickack_mode(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	serval_tcp_incr_quickack(sk);
 	tp->tp_ack.pingpong = 0;
 	tp->tp_ack.ato = TCP_ATO_MIN;
@@ -285,7 +279,6 @@ static inline int serval_tcp_in_quickack_mode(const struct sock *sk)
 	const struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	return tp->tp_ack.quick && !tp->tp_ack.pingpong;
 }
-
 
 static void serval_tcp_clear_retrans_partial(struct serval_tcp_sock *tp)
 {
@@ -385,6 +378,7 @@ static inline void serval_tcp_rcv_rtt_measure_ts(struct sock *sk,
 						 struct sk_buff *skb)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	if (tp->rx_opt.rcv_tsecr && (TCP_SKB_CB(skb)->end_seq -
 		TCP_SKB_CB(skb)->seq >= tp->tp_ack.rcv_mss))
 		serval_tcp_rcv_rtt_update(tp,
@@ -447,7 +441,6 @@ new_measure:
 	tp->rcvq_space.seq = tp->copied_seq;
 	tp->rcvq_space.time = tcp_time_stamp;
 }
-
 
 /* There is something which you must keep in mind when you analyze the
  * behavior of the tp->ato delayed ack timeout interval.  When a
@@ -527,7 +520,6 @@ __u32 serval_tcp_init_cwnd(struct serval_tcp_sock *tp, struct dst_entry *dst)
 	return min_t(__u32, cwnd, tp->snd_cwnd_clamp);
 }
 
-
 /* Set slow start threshold and cwnd not falling to slow start */
 void serval_tcp_enter_cwr(struct sock *sk, const int set_ssthresh)
 {
@@ -563,6 +555,7 @@ void serval_tcp_cwnd_application_limited(struct sock *sk)
 		/* Limited by application or receiver window. */
 		u32 init_win = serval_tcp_init_cwnd(tp, __sk_dst_get(sk));
 		u32 win_used = max(tp->snd_cwnd_used, init_win);
+
 		if (win_used < tp->snd_cwnd) {
 			tp->snd_ssthresh = serval_tcp_current_ssthresh(sk);
 			tp->snd_cwnd = (tp->snd_cwnd + win_used) >> 1;
@@ -644,12 +637,14 @@ static void serval_tcp_rtt_estimator(struct sock *sk, const __u32 mrtt)
 		tp->rtt_seq = tp->snd_nxt;
 	}
 }
+
 /* Calculate rto without backoff.  This is the second half of Van Jacobson's
  * routine referred to above.
  */
 void serval_tcp_set_rto(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	/* Old crap is replaced with new one. 8)
 	 *
 	 * More seriously:
@@ -741,7 +736,6 @@ static void serval_tcp_cwnd_down(struct sock *sk, int flag)
 	}
 }
 
-
 /* Packet counting of FACK is based on in-order assumptions, therefore
  * TCP disables it when reordering is detected.
  */
@@ -776,6 +770,7 @@ static void serval_tcp_update_reordering(struct sock *sk,
 					 const int ts)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	if (metric > tp->reordering) {
 		/* int mib_idx; */
 
@@ -799,7 +794,6 @@ static void serval_tcp_update_reordering(struct sock *sk,
 	}
 }
 
-
 /* If we receive more dupacks than we expected counting segments
  * in assumption of absent reordering, interpret this as reordering.
  * The only another reason could be bug in receiver TCP.
@@ -808,20 +802,20 @@ static void serval_tcp_check_reno_reordering(struct sock *sk,
 					     const int addend)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	if (serval_tcp_limit_reno_sacked(tp))
 		serval_tcp_update_reordering(sk, tp->packets_out + addend, 0);
 }
 
 /* Emulate SACKs for SACKless connection: account for a new dupack. */
-
 static void serval_tcp_add_reno_sack(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	tp->sacked_out++;
 	serval_tcp_check_reno_reordering(sk, 0);
 	serval_tcp_verify_left_out(tp);
 }
-
 
 /* Account for ACK, ACKing some data in Reno Recovery phase. */
 static void serval_tcp_remove_reno_sacks(struct sock *sk, int acked)
@@ -843,8 +837,6 @@ static inline void serval_tcp_reset_reno_sack(struct serval_tcp_sock *tp)
 {
 	tp->sacked_out = 0;
 }
-
-
 
 /* Enter Loss state. If "how" is not zero, forget all SACK information
  * and reset tags completely, otherwise preserve SACKs. If receiver
@@ -1033,6 +1025,7 @@ static int serval_tcp_try_undo_loss(struct sock *sk)
 
 	if (serval_tcp_may_undo(tp)) {
 		struct sk_buff *skb;
+
 		serval_tcp_for_write_queue(skb, sk) {
 			if (skb == serval_tcp_send_head(sk))
 				break;
@@ -1057,11 +1050,11 @@ static int serval_tcp_try_undo_loss(struct sock *sk)
 static inline void serval_tcp_complete_cwr(struct sock *sk)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_ssthresh);
 	tp->snd_cwnd_stamp = tcp_time_stamp;
 	serval_tcp_ca_event(sk, CA_EVENT_COMPLETE_CWR);
 }
-
 
 /* Try to undo cwnd reduction, because D-SACKs acked all retransmitted data. */
 static void serval_tcp_try_undo_dsack(struct sock *sk)
@@ -1231,7 +1224,6 @@ static inline int serval_tcp_head_timedout(struct sock *sk)
 		serval_tcp_skb_timedout(sk, serval_tcp_write_queue_head(sk));
 }
 
-
 /* New heuristics: it is possible only after we switched to restart
  * timer each time when something is ACKed. Hence, we can detect timed
  * out packets during fast retransmit without falling to slow start.
@@ -1269,7 +1261,6 @@ static void serval_tcp_timeout_skbs(struct sock *sk)
 
 	serval_tcp_verify_left_out(tp);
 }
-
 
 /* Mark head of queue up as lost. With RFC3517 SACK, the packets is
  * is against sacked "cnt", otherwise it's against facked "cnt"
@@ -1346,11 +1337,13 @@ static void serval_tcp_update_scoreboard(struct sock *sk,
 		serval_tcp_mark_head_lost(sk, 1, 1);
 	} else if (serval_tcp_is_fack(tp)) {
 		int lost = tp->fackets_out - tp->reordering;
+
 		if (lost <= 0)
 			lost = 1;
 		serval_tcp_mark_head_lost(sk, lost, 0);
 	} else {
 		int sacked_upto = tp->sacked_out - tp->reordering;
+
 		if (sacked_upto >= 0)
 			serval_tcp_mark_head_lost(sk, sacked_upto, 0);
 		else if (fast_rexmit)
@@ -1416,7 +1409,6 @@ static int serval_tcp_time_to_recover(struct sock *sk)
 
 	return 0;
 }
-
 
 /* I wish gso_size would have a bit more sane initialization than
  * something-or-zero which complicates things
@@ -1700,7 +1692,6 @@ static u32 serval_tcp_tso_acked(struct sock *sk, struct sk_buff *skb)
 	return packets_acked;
 }
 
-
 /* Read draft-ietf-tcplw-high-performance before mucking
  * with this code. (Supersedes RFC1323)
  */
@@ -1755,7 +1746,6 @@ static inline void serval_tcp_ack_update_rtt(struct sock *sk, const int flag,
 	else if (seq_rtt >= 0)
 		serval_tcp_ack_no_tstamp(sk, seq_rtt, flag);
 }
-
 
 static void serval_tcp_ack_probe(struct sock *sk)
 {
@@ -2019,6 +2009,7 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 static void serval_tcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	tp->ca_ops->cong_avoid(sk, ack, in_flight);
 	tp->snd_cwnd_stamp = tcp_time_stamp;
 }
@@ -2130,6 +2121,7 @@ static int serval_tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 
 	if ((flag & FLAG_FORWARD_PROGRESS) || !(flag & FLAG_NOT_DUP)) {
 		struct dst_entry *dst = __sk_dst_get(sk);
+
 		if (dst)
 			dst_confirm(dst);
 	}
@@ -2175,7 +2167,6 @@ static int serval_tcp_parse_aligned_timestamp(struct serval_tcp_sock *tp,
 	return 0;
 }
 
-
 /* Look for tcp options. Normally only called on SYN and SYNACK packets.
  * But, this can also be called on packets in the established flow when
  * the fast version below fails.
@@ -2212,6 +2203,7 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 				if (opsize == TCPOLEN_MSS &&
 				    th->syn && !estab) {
 					u16 in_mss = get_unaligned_be16(ptr);
+
 					if (in_mss) {
 						if (opt_rx->user_mss &&
 						    opt_rx->user_mss < in_mss)
@@ -2225,6 +2217,7 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 				    !estab &&
 				    sysctl_serval_tcp_window_scaling) {
 					__u8 snd_wscale = *(__u8 *)ptr;
+
 					opt_rx->wscale_ok = 1;
 					if (snd_wscale > 14) {
 						/* Received illegal window
@@ -2309,7 +2302,6 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 		}
 	}
 }
-
 
 static int serval_tcp_should_expand_sndbuf(struct sock *sk)
 {
@@ -2437,7 +2429,6 @@ static int serval_tcp_fast_parse_options(struct sk_buff *skb,
 	return 1;
 }
 
-
 static inline void serval_tcp_store_ts_recent(struct serval_tcp_sock *tp)
 {
 	tp->rx_opt.ts_recent = tp->rx_opt.rcv_tsval;
@@ -2473,11 +2464,11 @@ static inline int serval_tcp_paws_discard(const struct sock *sk,
 
 #endif /* ENABLE_TCP_PAWS */
 
-
 static void serval_tcp_dsack_set(struct sock *sk, u32 seq, u32 end_seq)
 {
 #if defined(ENABLE_TCP_SACK)
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 	if (serval_tcp_is_sack(tp) && sysctl_tcp_dsack) {
 		/*
 		int mib_idx;
@@ -2697,7 +2688,6 @@ queue_and_out:
 		if (eaten > 0) {
 			__kfree_skb(skb);
 		} else if (!sock_flag(sk, SOCK_DEAD)) {
-
 			sk->sk_data_ready(sk);
 		}
 		return;
@@ -2913,6 +2903,7 @@ restart:
 
 		if (!skb_queue_is_last(list, skb)) {
 			struct sk_buff *next = skb_queue_next(list, skb);
+
 			if (next != tail &&
 			    TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(next)->seq) {
 				end_of_skbs = 0;
@@ -3124,7 +3115,6 @@ static void serval_tcp_send_dupack(struct sock *sk, struct sk_buff *skb)
 	serval_tcp_send_ack(sk);
 }
 
-
 /* Check segment sequence number for validity.
  *
  * Segment controls are considered valid, if the segment
@@ -3137,7 +3127,6 @@ static void serval_tcp_send_dupack(struct sock *sk, struct sk_buff *skb)
  * delayed ACK, so that hisSND.UNA<=ourRCV.WUP.
  * (borrowed from freebsd)
  */
-
 static inline int serval_tcp_sequence(struct serval_tcp_sock *tp,
 				      u32 seq, u32 end_seq)
 {
@@ -3348,6 +3337,7 @@ int serval_tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 		case TCP_FIN_WAIT1:
 			if (tp->snd_una == tp->write_seq) {
 				struct dst_entry *dst;
+
 				dst = __sk_dst_get(sk);
 				if (dst)
 					dst_confirm(dst);
