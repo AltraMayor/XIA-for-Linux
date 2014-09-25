@@ -5,7 +5,7 @@
 #include <net/xia_fib.h>
 #include <net/xia_route.h>
 
-#define FIELD_TYPE(t,f)		typeof(((struct t *)0)->f)
+#define FIELD_TYPE(t, f)	typeof(((struct t *)0)->f)
 
 #define XID_NLATTR		{ .len = sizeof(struct xia_xid) }
 #define PROTOINFO_NLATTR	{					\
@@ -250,7 +250,7 @@ static int xip_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
 	ci.input = xdst->input;
 	ci.passthrough_action = xdst->passthrough_action;
 	ci.sink_action = xdst->sink_action;
-	ci.chosen_edge =xdst->chosen_edge;
+	ci.chosen_edge = xdst->chosen_edge;
 
 	if (unlikely(nla_put(skb, RTA_PROTOINFO,
 			     sizeof(struct xip_dst_cachinfo), &ci)))
