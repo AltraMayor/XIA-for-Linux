@@ -927,7 +927,6 @@ static void serval_tcp_undo_cwr(struct sock *sk, const int undo)
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 
 	if (tp->prior_ssthresh) {
-
 		if (tp->ca_ops->undo_cwnd)
 			tp->snd_cwnd = tp->ca_ops->undo_cwnd(sk);
 		else
@@ -1947,7 +1946,6 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 			tp->retransmit_skb_hint = NULL;
 		if (skb == tp->lost_skb_hint)
 			tp->lost_skb_hint = NULL;
-
 	}
 
 	if (likely(between(tp->snd_up, prior_snd_una, tp->snd_una)))
@@ -2595,15 +2593,12 @@ static inline int serval_tcp_try_rmem_schedule(struct sock *sk,
 {
 	if (atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf ||
 	    !sk_rmem_schedule(sk, skb, size)) {
-
 		if (serval_tcp_prune_queue(sk) < 0)
 			return -1;
 
 		if (!sk_rmem_schedule(sk, skb, size)) {
-
 			if (!serval_tcp_prune_ofo_queue(sk))
 				return -1;
-
 			if (!sk_rmem_schedule(sk, skb, size))
 				return -1;
 		}
@@ -2700,7 +2695,6 @@ queue_and_out:
 		 */
 
 		/* NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOST); */
-
 		serval_tcp_dsack_set(sk, TCP_SKB_CB(skb)->seq,
 				     TCP_SKB_CB(skb)->end_seq);
 out_of_window:
@@ -2817,7 +2811,6 @@ drop:
 			if (!after(end_seq, TCP_SKB_CB(skb1)->seq))
 				break;
 			if (before(end_seq, TCP_SKB_CB(skb1)->end_seq)) {
-
 #if defined(ENABLE_TCP_SACK)
 				serval_tcp_dsack_extend(sk,
 							TCP_SKB_CB(skb1)->seq,
@@ -3151,7 +3144,6 @@ static int serval_tcp_dma_try_early_copy(struct sock *sk, struct sk_buff *skb,
 		tp->ucopy.dma_chan = dma_find_channel(DMA_MEMCPY);
 
 	if (tp->ucopy.dma_chan && skb_csum_unnecessary(skb)) {
-
 		dma_cookie = dma_skb_copy_datagram_iovec(tp->ucopy.dma_chan,
 							 skb, hlen,
 							 tp->ucopy.iov, chunk,

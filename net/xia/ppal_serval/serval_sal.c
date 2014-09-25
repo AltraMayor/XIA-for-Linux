@@ -426,7 +426,6 @@ static int serval_sal_write_xmit(struct sock *sk, unsigned int limit, gfp_t gfp)
 
 	while ((skb = serval_sal_send_head(sk)) &&
 	       (ssk->snd_seq.nxt - ssk->snd_seq.una) <= ssk->snd_seq.wnd) {
-
 		if (limit && num == limit)
 			break;
 
