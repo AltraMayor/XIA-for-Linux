@@ -402,8 +402,9 @@ int xia_tytop(xid_type_t ty, char *dst, size_t dstlen)
 		if (su_ge(rc, dstlen))
 			return -ENOSPC;
 		return rc;
-	} else
+	} else {
 		return strlen(dst);
+	}
 }
 EXPORT_SYMBOL(xia_tytop);
 

@@ -543,9 +543,9 @@ ssize_t serval_udp_splice_read(struct socket *sock, loff_t *ppos,
 
 	while (tss.len) {
 		ret = __serval_udp_splice_read(sk, &tss);
-		if (ret < 0)
+		if (ret < 0) {
 			break;
-		else if (!ret) {
+		} else if (!ret) {
 			if (spliced)
 				break;
 			if (sock_flag(sk, SOCK_DONE))

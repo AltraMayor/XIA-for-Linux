@@ -480,9 +480,9 @@ static inline int select_size(struct sock *sk, int sg)
 	int tmp = tp->mss_cache;
 
 	if (sg) {
-		if (0 /* sk_can_gso(sk) */)
+		if (0 /* sk_can_gso(sk) */) {
 			tmp = 0;
-		else {
+		} else {
 			int pgbreak = SKB_MAX_HEAD(MAX_SERVAL_TCP_HEADER);
 
 			if (tmp >= pgbreak &&
@@ -644,9 +644,9 @@ unsigned int serval_tcp_poll(struct file *file,
 					sk_stream_min_wspace(sk))
 					mask |= POLLOUT | POLLWRNORM;
 			}
-		} else
+		} else {
 			mask |= POLLOUT | POLLWRNORM;
-
+		}
 		if (tp->urg_data & TCP_URG_VALID)
 			mask |= POLLPRI;
 	}
@@ -836,9 +836,9 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 	while (tss.len) {
 		if (!serval_tcp_sk(sk)->fin_found)
 			ret = __serval_tcp_splice_read(sk, &tss);
-		if (ret < 0)
+		if (ret < 0) {
 			break;
-		else if (!ret) {
+		} else if (!ret) {
 			if (spliced)
 				break;
 			if (sock_flag(sk, SOCK_DONE))
@@ -1066,8 +1066,9 @@ new_segment:
 				serval_tcp_mark_push(tp, skb);
 				__serval_tcp_push_pending_frames(sk, mss_now,
 					TCP_NAGLE_PUSH);
-			} else if (skb == tcp_send_head(sk))
+			} else if (skb == tcp_send_head(sk)) {
 				serval_tcp_push_one(sk, mss_now);
+			}
 			continue;
 
 wait_for_sndbuf:
@@ -1139,9 +1140,9 @@ static int serval_tcp_recv_urg(struct sock *sk, struct msghdr *msg,
 			if (!(flags & MSG_TRUNC))
 				err = memcpy_toiovec(msg->msg_iov, &c, 1);
 			len = 1;
-		} else
+		} else {
 			msg->msg_flags |= MSG_TRUNC;
-
+		}
 		return err ? -EFAULT : len;
 	}
 
@@ -1522,8 +1523,9 @@ found_ok_skb:
 						if (!used)
 							goto skip_copy;
 					}
-				} else
+				} else {
 					used = urg_offset;
+				}
 			}
 		}
 
@@ -1883,9 +1885,9 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 		break;
 
 	case TCP_KEEPIDLE:
-		if (val < 1 || val > MAX_TCP_KEEPIDLE)
+		if (val < 1 || val > MAX_TCP_KEEPIDLE) {
 			err = -EINVAL;
-		else {
+		} else {
 			tp->keepalive_time = val * HZ;
 			if (sock_flag(sk, SOCK_KEEPOPEN) &&
 			    !((1 << sk->sk_state) &
@@ -2154,12 +2156,12 @@ int serval_tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 			return -EINVAL;
 
 		lock_sock(sk);
-		if ((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV))
+		if ((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV)) {
 			answ = 0;
-		else if (sock_flag(sk, SOCK_URGINLINE) ||
-			 !tp->urg_data ||
-			 before(tp->urg_seq, tp->copied_seq) ||
-			 !before(tp->urg_seq, tp->rcv_nxt)) {
+		} else if (sock_flag(sk, SOCK_URGINLINE) ||
+			   !tp->urg_data ||
+			   before(tp->urg_seq, tp->copied_seq) ||
+			   !before(tp->urg_seq, tp->rcv_nxt)) {
 			struct sk_buff *skb;
 
 			answ = tp->rcv_nxt - tp->copied_seq;
@@ -2168,8 +2170,9 @@ int serval_tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 			skb = skb_peek_tail(&sk->sk_receive_queue);
 			if (answ && skb)
 				answ -= tcp_hdr(skb)->fin;
-		} else
+		} else {
 			answ = tp->urg_seq - tp->copied_seq;
+		}
 		release_sock(sk);
 		break;
 	case SIOCATMARK:
