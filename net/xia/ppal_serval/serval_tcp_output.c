@@ -1534,11 +1534,10 @@ static int serval_tcp_write_xmit(struct sock *sk, unsigned int mss_now,
 
 		result = serval_tcp_mtu_probe(sk);
 
-		if (!result) {
+		if (!result)
 			return 0;
-		} else if (result > 0) {
+		else if (result > 0)
 			sent_pkts = 1;
-		}
 	}
 
 	while ((skb = serval_tcp_send_head(sk))) {
@@ -2375,9 +2374,9 @@ int serval_tcp_write_wakeup(struct sock *sk)
 			TCP_SKB_CB(skb)->tcp_flags |= TCPH_PSH;
 			if (serval_tcp_fragment(sk, skb, seg_size, mss))
 				return -1;
-		} else if (!serval_tcp_skb_pcount(skb))
+		} else if (!serval_tcp_skb_pcount(skb)) {
 			serval_tcp_set_skb_tso_segs(sk, skb, mss);
-
+		}
 		TCP_SKB_CB(skb)->tcp_flags |= TCPH_PSH;
 		TCP_SKB_CB(skb)->when = tcp_time_stamp;
 		err = serval_tcp_transmit_skb(sk, skb, 1, GFP_ATOMIC);

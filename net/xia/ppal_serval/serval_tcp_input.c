@@ -350,8 +350,9 @@ static void serval_tcp_rcv_rtt_update(struct serval_tcp_sock *tp,
 		if (!win_dep) {
 			m -= (new_sample >> 3);
 			new_sample += m;
-		} else if (m < new_sample)
+		} else if (m < new_sample) {
 			new_sample = m << 3;
+		}
 	} else {
 		/* No previous measure. */
 		new_sample = m << 3;
@@ -1570,8 +1571,9 @@ static void serval_tcp_fastretrans_alert(struct sock *sk,
 		if (!(flag & FLAG_SND_UNA_ADVANCED)) {
 			if (serval_tcp_is_reno(tp) && is_dupack)
 				serval_tcp_add_reno_sack(sk);
-		} else
+		} else {
 			do_lost = serval_tcp_try_undo_partial(sk, pkts_acked);
+		}
 		break;
 	case TCP_CA_Loss:
 		if (flag & FLAG_DATA_ACKED)
@@ -2685,11 +2687,10 @@ queue_and_out:
 #endif
 		serval_tcp_fast_path_check(sk);
 
-		if (eaten > 0) {
+		if (eaten > 0)
 			__kfree_skb(skb);
-		} else if (!sock_flag(sk, SOCK_DEAD)) {
+		else if (!sock_flag(sk, SOCK_DEAD))
 			sk->sk_data_ready(sk);
-		}
 		return;
 	}
 

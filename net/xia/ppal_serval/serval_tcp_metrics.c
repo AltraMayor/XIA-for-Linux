@@ -241,9 +241,9 @@ void serval_tcp_update_metrics(struct sock *sk)
 		if (tm && !tcp_metric_locked(tm, TCP_METRIC_RTT))
 			tcp_metric_set(tm, TCP_METRIC_RTT, 0);
 		goto out_unlock;
-	} else
+	} else {
 		tm = tcp_get_metrics(sk, dst, true);
-
+	}
 	if (!tm)
 		goto out_unlock;
 
