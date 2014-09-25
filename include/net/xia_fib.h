@@ -60,7 +60,7 @@ struct fib_xid {
 
 	/* Type of this entry.
 	 * This type field is meant to help principals to have different
-	 * kinds of entries in a same XID tabel. 
+	 * kinds of entries in a same XID tabel.
 	 */
 	u8			fx_entry_type;
 
@@ -177,7 +177,7 @@ typedef struct xia_ppal_rt_eops xia_ppal_all_rt_eops_t[XRTABLE_MAX_INDEX];
 
 /* This function is meant to help writing functions for field newroute of
  * struct xia_ppal_rt_eops. It deals with NLM_F_* flags and flushes negative
- * anchors when a new entry is added. 
+ * anchors when a new entry is added.
  *
  * IMPORTANT
  *	This function may sleep.

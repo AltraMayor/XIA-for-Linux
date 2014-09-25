@@ -523,7 +523,7 @@ static int xdp_getsockopt(struct sock *sk, int level, int optname,
 		return -EFAULT;
 
 	lxdp = sk_lxdp(sk);
-	
+
 	switch (optname) {
 	case XDP_CORK:
 		val = lxdp->corkflag;
@@ -608,7 +608,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		/* Open fast path for connected socket. */
 		connected = true;
 	}
-	
+
 	/* XXX Shouldn't one support sock_tx_timestamp and something similar
 	 * to IP's control messages (see ip_cmsg_send())?
 	 * See net/ipv4/udp.c:udp_sendmsg for an example.
