@@ -258,6 +258,7 @@ static unsigned long get_socket_inode(struct socket *socket)
 	if (socket) {
 		struct address_space *faddr;
 		struct inode *inode;
+
 		if (!socket->file)
 			goto out;
 
@@ -282,10 +283,12 @@ struct flow_info *serval_sock_stats_flow(struct flow_id *flow)
 		int info_size = sizeof(struct flow_id) + sizeof(uint8_t)
 				sizeof(unsigned long) + sizeof(uint16_t);
 		struct socket *socket = sk->sk_socket;
+
 		if (sk->sk_protocol == IPPROTO_TCP) {
 			struct serval_tcp_sock *tsk =
 				(struct serval_tcp_sock *) sk;
 			struct stats_proto_tcp *st = NULL;
+
 			info_size += sizeof(struct stats_proto_tcp);
 			ret = kmalloc(info_size, GFP_KERNEL);
 			memset(ret, 0, info_size);
@@ -341,6 +344,7 @@ static struct sock *serval_sock_lookup(struct serval_table *table,
 
 	hlist_for_each_entry(sk, &slot->head, sk_node) {
 		struct serval_sock *ssk = sk_ssk(sk);
+
 		if (memcmp(key, ssk->hash_key, keylen) == 0) {
 			sock_hold(sk);
 			goto out;

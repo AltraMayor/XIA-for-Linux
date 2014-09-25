@@ -7,6 +7,7 @@ int __xip_local_out(struct sk_buff *skb)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
 	int len = skb->len - xip_hdr_len(xiph);
+
 	BUG_ON(len < 0);
 	BUG_ON(len > XIP_MAXPLEN);
 	xiph->payload_len = cpu_to_be16(len);
@@ -44,6 +45,7 @@ static inline void copy_xia_addr_to(const struct xia_row *addr, int n,
 				    struct xia_row *to)
 {
 	int len = sizeof(struct xia_row) * n;
+
 	BUG_ON(n < 0 || n > XIA_NODES_MAX);
 	memmove(to, addr, len);
 }
@@ -52,6 +54,7 @@ void xip_flush_pending_frames(struct sock *sk)
 {
 	struct sk_buff_head *queue = &sk->sk_write_queue;
 	struct sk_buff *skb;
+
 	while ((skb = __skb_dequeue_tail(queue)) != NULL)
 		kfree_skb(skb);
 }
@@ -74,6 +77,7 @@ static inline struct xia_row *__xip_fill_in_hdr(struct sk_buff *skb,
 	int dest_n, int dest_last_node)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
+
 	BUG_ON(dest_n < 1);
 	xiph->version = 1;
 	xiph->next_hdr = 0;
@@ -94,6 +98,7 @@ void xip_fill_in_hdr_bsrc(struct sk_buff *skb, struct xip_dst *xdst,
 	struct xia_row *src_row = __xip_fill_in_hdr(skb, xdst, src_n,
 		dest, dest_n, dest_last_node);
 	int last = src_n - 1;
+
 	BUG_ON(src_n < 1);
 	copy_xia_addr_to(src,  last,  src_row);
 	src_row[last].s_xid.xid_type = sink_type;

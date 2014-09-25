@@ -44,7 +44,6 @@ struct tcp_out_options {
 	__u8 *hash_location;	/* temporary pointer, overloaded */
 };
 
-
 /* SND.NXT, if window was not shrunk.
  * If window has been shrunk, what should we make? It is not clear at all.
  * Using SND.UNA we will fail to open window, SND.NXT is out of window. :-(
@@ -61,12 +60,10 @@ static inline __u32 serval_tcp_acceptable_seq(struct sock *sk)
 		return serval_tcp_wnd_end(tp);
 }
 
-
 static inline int serval_tcp_urg_mode(const struct serval_tcp_sock *tp)
 {
 	return tp->snd_una != tp->snd_up;
 }
-
 
 /* Calculate mss to advertise in SYN segment.
  * RFC1122, RFC1063, draft-ietf-tcpimpl-pmtud-01 state that:
@@ -221,7 +218,6 @@ static unsigned serval_tcp_synack_options(struct sock *sk,
 	return MAX_SERVAL_TCP_OPTION_SPACE - remaining;
 }
 
-
 /* Compute TCP options for ESTABLISHED sockets. This is not the
  * final wire format yet.
  */
@@ -352,7 +348,6 @@ static int serval_tcp_init_tso_segs(struct sock *sk, struct sk_buff *skb,
 	return tso_segs;
 }
 
-
 /* Determine a window scaling and initial window to offer.
  * Based on the assumption that the given amount of space
  * will be offered. Store the results in the tp structure.
@@ -410,6 +405,7 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 	 */
 	if (mss > (1 << *rcv_wscale)) {
 		int init_cwnd = 4;
+
 		if (mss > 1460 * 3)
 			init_cwnd = 2;
 		else if (mss > 1460)
@@ -427,7 +423,6 @@ void serval_tcp_select_initial_window(int __space, __u32 mss,
 	/* Set the clamp no higher than max representable value */
 	(*window_clamp) = min(65535U << (*rcv_wscale), *window_clamp);
 }
-
 
 /* Chose a new window to advertise, update state in tcp_sock for the
  * socket, and return result with RFC1323 scaling applied.  The return
@@ -473,7 +468,6 @@ static u16 serval_tcp_select_window(struct sock *sk)
 	return new_win;
 }
 
-
 /* Congestion window validation. (RFC2861) */
 static void serval_tcp_cwnd_validate(struct sock *sk)
 {
@@ -493,7 +487,6 @@ static void serval_tcp_cwnd_validate(struct sock *sk)
 			serval_tcp_cwnd_application_limited(sk);
 	}
 }
-
 
 /* Returns the portion of skb which can be sent right away without
  * introducing MSS oddities to segment boundaries. In rare cases where
@@ -529,7 +522,6 @@ static unsigned int serval_tcp_mss_split_point(struct sock *sk,
 
 	return needed - needed % mss_now;
 }
-
 
 /* Can at least one segment of SKB be sent right now, according to the
  * congestion window rules?  If so, return how many segments are allowed.
@@ -612,6 +604,7 @@ static inline int serval_tcp_snd_wnd_test(struct serval_tcp_sock *tp,
 					  unsigned int cur_mss)
 {
 	u32 end_seq = TCP_SKB_CB(skb)->end_seq;
+
 	if (skb->len > cur_mss)
 		end_seq = TCP_SKB_CB(skb)->seq + cur_mss;
 	return !after(end_seq, serval_tcp_wnd_end(tp));
@@ -854,7 +847,6 @@ int serval_tcp_may_send_now(struct sock *sk)
 				     tp->nonagle : TCP_NAGLE_PUSH));
 }
 
-
 /* Remove acked data from a packet in the transmit queue. */
 int serval_tcp_trim_head(struct sock *sk, struct sk_buff *skb, u32 len)
 {
@@ -1044,7 +1036,6 @@ static int serval_tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	return net_xmit_eval(err);
 }
 
-
 /* Collapses two adjacent SKB's during retransmission. */
 static void serval_tcp_collapse_retrans(struct sock *sk, struct sk_buff *skb)
 {
@@ -1111,7 +1102,6 @@ static int serval_tcp_can_collapse(struct sock *sk, struct sk_buff *skb)
 
 	return 1;
 }
-
 
 /* Collapse packets in the retransmit queue to make to create
  * less packets on the wire. This is only done on retransmission.
@@ -1581,7 +1571,6 @@ static int serval_tcp_write_xmit(struct sock *sk, unsigned int mss_now,
 			limit = serval_tcp_mss_split_point(sk, skb, mss_now,
 							   cwnd_quota);
 
-
 		if (skb->len > limit &&
 		    unlikely(serval_tso_fragment(sk, skb, limit, mss_now, gfp)))
 			break;
@@ -1635,6 +1624,7 @@ void __serval_tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 void serval_tcp_push_one(struct sock *sk, unsigned int mss_now)
 {
 	struct sk_buff *skb = serval_tcp_send_head(sk);
+
 	BUG_ON(!skb || skb->len < mss_now);
 	serval_tcp_write_xmit(sk, mss_now, TCP_NAGLE_PUSH,
 			      1, sk->sk_allocation);
@@ -1831,6 +1821,7 @@ unsigned int serval_tcp_current_mss(struct sock *sk)
 
 	if (dst) {
 		u32 mtu = dst_mtu(dst);
+
 		if (mtu != tp->pmtu_cookie)
 			mss_now = serval_tcp_sync_mss(sk, mtu);
 	}
@@ -1844,6 +1835,7 @@ unsigned int serval_tcp_current_mss(struct sock *sk)
 	 */
 	if (header_len != tp->tcp_header_len) {
 		int delta = (int) header_len - tp->tcp_header_len;
+
 		mss_now -= delta;
 	}
 
@@ -1866,6 +1858,7 @@ static void serval_tcp_connect_init(struct sock *sk)
 	__u8 rcv_wscale;
 	struct dst_entry *dst = __sk_dst_get(sk);
 	unsigned int initrwnd = dst ? dst_metric(dst, RTAX_WINDOW) : 65535;
+
 	tp->tcp_header_len = sizeof(struct tcphdr);
 
 	if (tp->rx_opt.user_mss)

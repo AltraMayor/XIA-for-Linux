@@ -196,6 +196,7 @@ static inline void serval_sal_send_check(struct sal_hdr *sh)
 static inline u32 serval_sal_rto_min(struct sock *sk)
 {
 	struct dst_entry *dst = __sk_dst_get(sk);
+
 	if (dst && dst_metric_locked(dst, RTAX_RTO_MIN))
 		return dst_metric_rtt(dst, RTAX_RTO_MIN);
 	return SAL_RTO_MIN;
@@ -513,6 +514,7 @@ static inline void prepare_skb_to_send(struct sk_buff *skb, struct sock *sk)
 static struct sk_buff *sk_sal_alloc_skb(struct sock *sk, gfp_t gfp)
 {
 	struct sk_buff *skb = alloc_skb(sk->sk_prot->max_header, gfp);
+
 	if (!skb)
 		return NULL;
 	prepare_skb_to_send(skb, sk);
@@ -532,6 +534,7 @@ static int serval_sal_send_syn(struct sock *sk, u32 verno)
 	/* Ask transport to fill in */
 	if (ssk->af_ops->conn_build_syn) {
 		int err = ssk->af_ops->conn_build_syn(sk, skb);
+
 		if (err) {
 			/* Transport protocol returned error. */
 			__kfree_skb(skb);
@@ -549,6 +552,7 @@ static int serval_sal_send_syn(struct sock *sk, u32 verno)
 static void set_peer_srvc_xdst(struct serval_sock *ssk, struct xip_dst *xdst)
 {
 	struct xip_dst *prv_xdst = ssk->peer_srvc_xdst;
+
 	ssk->peer_srvc_xdst = xdst;
 	if (prv_xdst)
 		xdst_put(prv_xdst);
@@ -872,6 +876,7 @@ void serval_sal_rcv_reset(struct sock *sk)
 static void push_sal_hdr(struct sk_buff *skb, u8 protocol, int ext_len)
 {
 	struct sal_hdr *sh = (struct sal_hdr *)skb_push(skb, sizeof(*sh));
+
 	skb_reset_transport_header(skb);
 	BUILD_BUG_ON(sizeof(*sh) % 4);
 	BUG_ON(ext_len % 4);
@@ -1104,6 +1109,7 @@ static int serval_sal_send_synack(struct sock *sk,
 static struct xia_row *xip_dst_sink(struct sk_buff *skb)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
+
 	if (xiph->num_dst < 1)
 		return NULL;
 	return &xiph->dst_addr[xiph->last_node];
@@ -1112,6 +1118,7 @@ static struct xia_row *xip_dst_sink(struct sk_buff *skb)
 static struct xia_row *xip_src_sink(struct sk_buff *skb)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
+
 	if (xiph->num_src < 1)
 		return NULL;
 	return &xiph->dst_addr[xiph->num_dst + xiph->num_src - 1];
@@ -1121,6 +1128,7 @@ static struct serval_request_sock *serval_reqsk_alloc(
 	const struct request_sock_ops *ops)
 {
 	struct serval_request_sock *srsk = serval_rsk(reqsk_alloc(ops));
+
 	if (unlikely(!srsk))
 		return NULL;
 
@@ -1137,6 +1145,7 @@ static struct serval_request_sock *serval_reqsk_alloc(
 void srsk_put(struct serval_request_sock *srsk)
 {
 	int newrefcnt = atomic_dec_return(&srsk->refcnt);
+
 	BUG_ON(newrefcnt < 0);
 	if (!newrefcnt)
 		reqsk_free(&srsk->req);
@@ -1210,6 +1219,7 @@ static struct serval_request_sock *find_srsk_for_syn(struct serval_sock *ssk,
 						     const u8 *peer_nonce)
 {
 	struct serval_request_sock *srsk;
+
 	list_for_each_entry(srsk, &ssk->syn_queue, lh) {
 		if (!memcmp(&srsk->peer_srvcid, peer_srvcid,
 			    sizeof(srsk->peer_srvcid)) &&
@@ -1230,6 +1240,7 @@ static struct serval_request_sock *find_srsk_for_ack(struct serval_sock *ssk,
 						     const u8 *local_flowid)
 {
 	struct serval_request_sock *srsk;
+
 	list_for_each_entry(srsk, &ssk->syn_queue, lh) {
 		if (!memcmp(srsk->flow_fxid.fx_xid, local_flowid, XIA_XID_MAX))
 			return srsk;
@@ -1898,6 +1909,7 @@ static int serval_sal_finwait2_state_process(struct sock *sk,
 	/* We've received our FIN-ACK already */
 	if (ctx->flags & SVH_FIN) {
 		int err = serval_sal_rcv_fin(sk, skb, ctx);
+
 		if (!err)
 			serval_sal_timewait(sk, SAL_TIMEWAIT, SAL_TIMEWAIT_LEN);
 	}
@@ -2200,6 +2212,7 @@ void serval_sal_rexmit_timeout(unsigned long data)
 void serval_sal_timewait_timeout(unsigned long data)
 {
 	struct sock *sk = (struct sock *)data;
+
 	bh_lock_sock(sk);
 	serval_sal_done(sk);
 	bh_unlock_sock(sk);
@@ -2381,6 +2394,7 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 	if (unlikely(sk->sk_state == SAL_INIT && sk->sk_type == SOCK_DGRAM)) {
 		/* Src: ServiceID. */
 		struct xia_row *last_row = xia->xia_ssink;
+
 		BUG_ON(!xia_sk_bound(xia));
 		src = xia->xia_saddr.s_row;
 		src_sink_type = last_row->s_xid.xid_type;
@@ -2410,6 +2424,7 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 	if (unlikely(flags & SVH_SYN)) {
 		/* Src: ServiceID. */
 		struct xia_row *last_row = xia->xia_ssink;
+
 		BUG_ON(!xia_sk_bound(xia));
 		src = xia->xia_saddr.s_row;
 		src_sink_type = last_row->s_xid.xid_type;
@@ -2449,6 +2464,7 @@ static int add_xip_sal_headers_xdst(struct sock *sk, struct sk_buff *skb)
 	/* Add control extension header if needed. */
 	if (flags & ~SVH_RETRANS) {
 		struct sal_control_ext *ctrl_ext = push_ctrl_ext_hdr(skb);
+
 		ctrl_ext->verno = htonl(SAL_SKB_CB(skb)->verno);
 		ctrl_ext->ackno = htonl(ssk->rcv_seq.nxt);
 		memcpy(ctrl_ext->nonce, ssk->local_nonce, SAL_NONCE_SIZE);

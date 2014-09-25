@@ -41,6 +41,7 @@ static inline int are_xids_equal(const __u8 *xid1, const __u8 *xid2)
 {
 	const __u32 *n1 = (const __u32 *)xid1;
 	const __u32 *n2 = (const __u32 *)xid2;
+
 	BUILD_BUG_ON(XIA_XID_MAX != sizeof(const __u32) * 5);
 	return	n1[0] == n2[0] &&
 		n1[1] == n2[1] &&
@@ -54,6 +55,7 @@ static inline int are_sxids_equal(const struct xia_xid *xid1,
 {
 	const __u64 *n1 = (const __u64 *)xid1;
 	const __u64 *n2 = (const __u64 *)xid2;
+
 	BUILD_BUG_ON(sizeof(struct xia_xid) != sizeof(const __u64) * 3);
 	return	n1[0] == n2[0] &&
 		n1[1] == n2[1] &&
@@ -140,6 +142,7 @@ static inline int xia_is_nat(xid_type_t ty)
 static inline void unmark_xia_addr(struct xia_addr *addr)
 {
 	int i;
+
 	for (i = 0; i < XIA_NODES_MAX; i++)
 		addr->s_row[i].s_edge.i &= ~XIA_CHOSEN_EDGES;
 }
@@ -147,6 +150,7 @@ static inline void unmark_xia_addr(struct xia_addr *addr)
 static inline void unmark_xia_rows(struct xia_row *addr, unsigned int n)
 {
 	unsigned int i;
+
 	BUG_ON(n >= XIA_NODES_MAX);
 	for (i = 0; i < n; i++)
 		addr[i].s_edge.i &= ~XIA_CHOSEN_EDGES;

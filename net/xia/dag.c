@@ -44,6 +44,7 @@ static __u32 djb_case_hash(const char *str)
 	 * Notice that this function expects that chars are unsigned.
 	 */
 	const __u8 *p = (const __u8 *)str;
+
 	while (*p) {
 		hash = ((hash << 5) + hash) + tolower(*p);
 		p++;
@@ -233,6 +234,7 @@ int xia_are_edges_valid(const struct xia_row *row,
 	bits = 0xffffffff;
 	for (i = 0; i < XIA_OUTDEGREE_MAX; i++, edge++) {
 		__u8 e = *edge;
+
 		if (e == XIA_EMPTY_EDGE) {
 			if ((all_edges & bits) !=
 				(XIA_EMPTY_EDGES & bits))
@@ -265,6 +267,7 @@ int xia_test_addr(const struct xia_addr *addr)
 	n = XIA_NODES_MAX;
 	for (i = 0; i < XIA_NODES_MAX; i++) {
 		xid_type_t ty = addr->s_row[i].s_xid.xid_type;
+
 		if (saw_nat) {
 			if (!xia_is_nat(ty))
 				return -XIAEADDR_NAT_MISPLACED;
@@ -278,6 +281,7 @@ int xia_test_addr(const struct xia_addr *addr)
 	/* Test edges are well formed. */
 	for (i = 0; i < n; i++) {
 		int rc = xia_are_edges_valid(&addr->s_row[i], i, n, &visited);
+
 		if (rc)
 			return rc;
 	}
@@ -287,6 +291,7 @@ int xia_test_addr(const struct xia_addr *addr)
 		 * friendlier error since it's also XIAEADDR_MULTI_COMPONENTS.
 		 */
 		__be32 all_edges = addr->s_row[n - 1].s_edge.i;
+
 		if (__be32_to_raw_cpu(all_edges) == XIA_EMPTY_EDGES)
 			return -XIAEADDR_NO_ENTRY;
 
@@ -328,6 +333,7 @@ static inline int su_ge(signed int s, unsigned int u)
 static inline int add_str(char *dst, size_t dstlen, char *s)
 {
 	int rc = snprintf(dst, dstlen, "%s", s);
+
 	if (su_ge(rc, dstlen))
 		return -ENOSPC;
 	return rc;
@@ -391,6 +397,7 @@ int xia_tytop(xid_type_t ty, char *dst, size_t dstlen)
 	if (ppal_type_to_name(ty, dst)) {
 		/* Number format. */
 		int rc = snprintf(dst, dstlen, "0x%x", __be32_to_cpu(ty));
+
 		BUILD_BUG_ON(sizeof(xid_type_t) != 4);
 		if (su_ge(rc, dstlen))
 			return -ENOSPC;
@@ -507,6 +514,7 @@ static inline int read_sep(const char **pp, size_t *pleft, char sep)
 static int read_invalid_flag(const char **pp, size_t *pleft, int *invalid_flag)
 {
 	int inv_flag;
+
 	if (*pleft <= 0) /* No XIA address is an empty string. */
 		return -1;
 	inv_flag = **pp == '!';
@@ -565,6 +573,7 @@ static int read_name(const char **pp, size_t *pleft, char *name, int len)
 static int read_0x(const char **pp, size_t *pleft)
 {
 	char ch1, ch2;
+
 	if (*pleft < 2)
 		return -1;
 	ch1 = (*pp)[0];
@@ -585,6 +594,7 @@ static int read_type(const char **pp, size_t *pleft, xid_type_t *pty)
 	if (read_0x(pp, pleft) < 0) {
 		/* It must be a name. */
 		char name[MAX_PPAL_NAME_SIZE];
+
 		if (read_name(pp, pleft, name, sizeof(name)) < 0)
 			return -1;
 		/* One does not need to test if @name is valid here because
@@ -607,6 +617,7 @@ static int read_xid(const char **pp, size_t *pleft, __u8 *xid)
 {
 	int i;
 	__be32 *pxid = (__be32 *)xid;
+
 	BUILD_BUG_ON(XIA_XID_MAX != 20);
 
 	for (i = 0; i < 5; i++) {

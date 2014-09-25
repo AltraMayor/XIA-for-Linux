@@ -111,6 +111,7 @@ nla_put_failure:
 static void local_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_ad_local *lad = fxid_lad(fxid);
+
 	xdst_free_anchor(&lad->anchor);
 	kfree(lad);
 }
@@ -133,6 +134,7 @@ static const xia_ppal_all_rt_eops_t ad_all_rt_eops = {
 static struct xip_ad_ctx *create_ad_ctx(void)
 {
 	struct xip_ad_ctx *ad_ctx = kmalloc(sizeof(*ad_ctx), GFP_KERNEL);
+
 	if (!ad_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&ad_ctx->ctx, XIDTYPE_AD);
@@ -209,6 +211,7 @@ static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 	switch (fxid->fx_table_id) {
 	case XRTABLE_LOCAL_INDEX: {
 		struct fib_xid_ad_local *lad = fxid_lad(fxid);
+
 		xdst->passthrough_action = XDA_DIG;
 		xdst->sink_action = XDA_ERROR; /* An AD cannot be a sink. */
 		xdst_attach_to_anchor(xdst, anchor_index, &lad->anchor);

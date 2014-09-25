@@ -136,6 +136,7 @@ static int xip_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
 	if (is_cloned(nlh)) {
 		struct net *net = sock_net(skb->sk);
+
 		clear_xdst_table(net);
 		return 0;
 	}
@@ -165,6 +166,7 @@ static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
 	for (i = cb->args[1]; i < divisor; i++, first_j = 0) {
 		struct fib_xid *fxid;
 		struct hlist_head *head = &abranch->buckets[i];
+
 		j = 0;
 		hlist_for_each_entry_rcu(fxid, head,
 					 fx_branch_list[aindex]) {
@@ -195,6 +197,7 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 	rcu_read_lock();
 	for (i = cb->args[0]; i < XIP_MAX_XID_TYPES; i++) {
 		struct xip_ppal_ctx *ctx = xip_find_ppal_ctx_vxt_rcu(net, i);
+
 		if (!ctx || !ctx->xpc_xtbl)
 			continue;
 		if (dumped)
@@ -270,6 +273,7 @@ static int xip_dst_dump(struct sk_buff *skb, struct netlink_callback *cb)
 
 	for (i = cb->args[0]; i < XIP_DST_TABLE_SIZE; i++, first_j = 0) {
 		struct dst_entry *dsth;
+
 		j = 0;
 		rcu_read_lock();
 		for (dsth = rcu_dereference(net->xia.xip_dst_table.buckets[i]);

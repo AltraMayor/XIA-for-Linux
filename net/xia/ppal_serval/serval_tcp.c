@@ -92,6 +92,7 @@ static int serval_tcp_disconnect(struct sock *sk, int flags)
 __u32 serval_tcp_random_sequence_number(void)
 {
 	__u32 isn;
+
 	get_random_bytes(&isn, sizeof(isn));
 	return isn;
 }
@@ -273,6 +274,7 @@ static int serval_tcp_rcv(struct sock *sk, struct sk_buff *skb)
 	if (!sock_owned_by_user(sk)) {
 #ifdef CONFIG_NET_DMA
 		struct serval_tcp_sock *tp = serval_tcp_sk(sk);
+
 		if (!tp->ucopy.dma_chan && tp->ucopy.pinned_list)
 			tp->ucopy.dma_chan = dma_find_channel(DMA_MEMCPY);
 		if (tp->ucopy.dma_chan)
@@ -538,6 +540,7 @@ static void serval_tcp_service_net_dma(struct sock *sk, bool wait)
 			break;
 		} else {
 			struct sk_buff *skb;
+
 			while ((skb = skb_peek(&sk->sk_async_wait_queue)) &&
 			       (dma_async_is_complete(skb->dma_cookie, done,
 						      used) == DMA_SUCCESS)) {
@@ -716,6 +719,7 @@ int serval_tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 			/* Stop reading if we hit a patch of urgent data */
 			if (tp->urg_data) {
 				u32 urg_offset = tp->urg_seq - seq;
+
 				if (urg_offset < len)
 					len = urg_offset;
 				if (!len)
@@ -1507,6 +1511,7 @@ found_ok_skb:
 		/* Do we have urgent data here? */
 		if (tp->urg_data) {
 			u32 urg_offset = tp->urg_seq - *seq;
+
 			if (urg_offset < used) {
 				if (!urg_offset) {
 					if (!sock_flag(sk, SOCK_URGINLINE)) {
@@ -1665,6 +1670,7 @@ void __serval_tcp_v4_send_check(struct sk_buff *skb)
 {
 	struct tcphdr *th = tcp_hdr(skb);
 	unsigned long len = skb_tail_pointer(skb) - skb_transport_header(skb);
+
 	skb->ip_summed = CHECKSUM_NONE;
 	th->check = serval_tcp_v4_check(len, csum_partial(th, len, 0));
 }
@@ -1885,6 +1891,7 @@ static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 			    !((1 << sk->sk_state) &
 			      (TCPF_CLOSE | TCPF_LISTEN))) {
 				u32 elapsed = serval_keepalive_time_elapsed(tp);
+
 				if (tp->keepalive_time > elapsed)
 					elapsed = tp->keepalive_time - elapsed;
 				else

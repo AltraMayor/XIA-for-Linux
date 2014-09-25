@@ -57,6 +57,7 @@ static inline int xt_to_vxt_rcu(xid_type_t ty)
 static inline int xt_to_vxt(xid_type_t ty)
 {
 	int ret;
+
 	rcu_read_lock();
 	ret = xt_to_vxt_rcu(ty);
 	rcu_read_unlock();

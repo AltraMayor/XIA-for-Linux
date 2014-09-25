@@ -72,6 +72,7 @@ nla_put_failure:
 static void local_free_srvc(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct serval_rt_id *rtid = fxid_rtid(fxid);
+
 	xdst_free_anchor(&rtid->anchor);
 	kfree(rtid);
 }
@@ -167,6 +168,7 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		/* Add the other side of a socket. */
 		const struct serval_request_sock *srsk = flow_fxid_srsk(fxid);
 		struct xia_xid src;
+
 		src.xid_type = XIDTYPE_SRVCID;
 		memmove(src.xid_id, srsk->peer_srvcid.s_sid,
 			sizeof(src.xid_id));
@@ -197,6 +199,7 @@ static void local_free_flow(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	switch (fxid->fx_entry_type) {
 	case SOCK_TYPE: {
 		struct serval_rt_id *rtid = fxid_rtid(fxid);
+
 		xdst_free_anchor(&rtid->anchor);
 		kfree(rtid);
 		break;
@@ -204,6 +207,7 @@ static void local_free_flow(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 
 	case REQUEST_SOCK_TYPE: {
 		struct serval_request_sock *srsk = flow_fxid_srsk(fxid);
+
 		xdst_free_anchor(&srsk->flow_anchor);
 		srsk_put(srsk);
 		break;
@@ -311,6 +315,7 @@ out:
 static void __net_exit serval_net_exit(struct net *net)
 {
 	struct xip_serval_ctx *serval_ctx, *serval_ctx2;
+
 	serval_ctx = flow_serval(xip_del_ppal_ctx(net, XIDTYPE_FLOWID));
 	serval_tcp_net_metrics_exit(serval_ctx);
 	serval_ctx2 = srvc_serval(xip_del_ppal_ctx(net, XIDTYPE_SRVCID));
@@ -482,6 +487,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 		switch (fxid->fx_entry_type) {
 		case SOCK_TYPE: {
 			struct serval_rt_id *rtid = fxid_rtid(fxid);
+
 			xdst->info = rtid_ssk(rtid);
 			if (xdst->input) {
 				xdst->dst.input = local_input_input;
@@ -497,6 +503,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 
 		case REQUEST_SOCK_TYPE: {
 			struct serval_request_sock *srsk = flow_fxid_srsk(fxid);
+
 			xdst->info = srsk->parent_ssk;
 			if (xdst->input) {
 				xdst->dst.input = serval_sal_rsk_rcv;
@@ -886,6 +893,7 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 
 	if ((1 << sk->sk_state) & (SALF_REQUEST | SALF_RESPOND)) {
 		long timeo = sock_sndtimeo(sk, flags & O_NONBLOCK);
+
 		if (!timeo) {
 			/* Error code is set above */
 			goto out;
@@ -997,6 +1005,7 @@ static int serval_accept(struct socket *sock, struct socket *newsock, int flags)
 
 	if (list_empty(&ssk->accept_queue)) {
 		long timeo = sock_rcvtimeo(sk, flags & O_NONBLOCK);
+
 		if (!timeo) {
 			/* If this is a non blocking socket don't sleep */
 			rc = -EAGAIN;
@@ -1023,6 +1032,7 @@ static unsigned int serval_poll(struct file *file, struct socket *sock,
 	sock_poll_wait(file, sk_sleep(sk), wait);
 	if (sk->sk_state == SAL_LISTEN) {
 		struct serval_sock *ssk = sk_ssk(sk);
+
 		return list_empty(&ssk->accept_queue) ? 0 :
 			(POLLIN | POLLRDNORM);
 	}

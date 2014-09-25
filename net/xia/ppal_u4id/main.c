@@ -56,6 +56,7 @@ struct u4id_xid {
 static inline int u4id_well_formed(const u8 *xid)
 {
 	struct u4id_xid *st_xid = (struct u4id_xid *)xid;
+
 	BUILD_BUG_ON(sizeof(struct u4id_xid) != XIA_XID_MAX);
 	return st_xid->ip_addr && st_xid->udp_port && !st_xid->zero1 &&
 		!st_xid->zero2 && !st_xid->zero3 && !st_xid->zero4;
@@ -256,6 +257,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 		 */
 
 		struct xip_u4id_ctx *u4id_ctx = ctx_u4id(ctx);
+
 		BUG_ON(!u4id_ctx->tunnel_sock);
 		RCU_INIT_POINTER(u4id_ctx->tunnel_sock, NULL);
 
@@ -339,6 +341,7 @@ nla_put_failure:
 static void local_free_u4id(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_u4id_local *lu4id = fxid_lu4id(fxid);
+
 	BUG_ON(!lu4id->sock);
 	schedule_work(&lu4id->del_work);
 }
@@ -359,6 +362,7 @@ static const xia_ppal_all_rt_eops_t u4id_all_rt_eops = {
 static struct xip_u4id_ctx *create_u4id_ctx(void)
 {
 	struct xip_u4id_ctx *u4id_ctx = kmalloc(sizeof(*u4id_ctx), GFP_KERNEL);
+
 	if (!u4id_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&u4id_ctx->ctx, XIDTYPE_U4ID);
@@ -446,6 +450,7 @@ struct u4id_tunnel_dest {
 static struct u4id_tunnel_dest *create_u4id_tunnel_dest(const u8 *xid)
 {
 	struct u4id_tunnel_dest *tunnel = kmalloc(sizeof(*tunnel), GFP_ATOMIC);
+
 	if (!tunnel)
 		return NULL;
 	tunnel->dest_ip_addr = *(__be32 *)xid;
@@ -515,6 +520,7 @@ static int handle_skb_to_ipv4(struct sock *tunnel_sk, struct sk_buff *skb,
 	rt = ip_route_output_flow(net, &fl4, tunnel_sk);
 	if (IS_ERR(rt)) {
 		int rc = PTR_ERR(rt);
+
 		if (rc == -ENETUNREACH)
 			IP_INC_STATS_BH(net, IPSTATS_MIB_OUTNOROUTES);
 		kfree_skb(skb);
@@ -598,6 +604,7 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	if (fxid) {
 		/* Reached tunnel destination; advance last node. */
 		struct fib_xid_u4id_local *lu4id = fxid_lu4id(fxid);
+
 		xdst->passthrough_action = XDA_DIG;
 		/* A local U4ID cannot be a sink. */
 		xdst->sink_action = XDA_ERROR;
