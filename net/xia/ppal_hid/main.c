@@ -485,7 +485,6 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 		rcu_read_unlock();
 		return XRP_ACT_FORWARD;
 	}
-
 	}
 	rcu_read_unlock();
 	BUG();

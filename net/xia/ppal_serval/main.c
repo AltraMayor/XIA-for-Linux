@@ -444,7 +444,6 @@ static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
 		fib_mrd_redirect(fxid, next_xid);
 		rcu_read_unlock();
 		return XRP_ACT_REDIRECT;
-
 	}
 	rcu_read_unlock();
 	BUG();
@@ -528,7 +527,6 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 		fib_mrd_redirect(fxid, next_xid);
 		rcu_read_unlock();
 		return XRP_ACT_REDIRECT;
-
 	}
 	rcu_read_unlock();
 	BUG();
@@ -814,7 +812,6 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 	lock_sock(sk);
 
 	switch (sock->state) {
-
 	case SS_CONNECTED:
 		rc = -EISCONN;
 		goto out;

@@ -384,7 +384,6 @@ static inline u32 fib_lock_bucket(struct fib_xid_table *xtbl,
 void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 	__releases(xip_bucket_lock)
 {
-
 	/* Make sparse happy with only one __releases. */
 	__acquire(bucket);
 

@@ -1544,7 +1544,6 @@ found_ok_skb:
 						tp->ucopy.pinned_list);
 
 				if (tp->ucopy.dma_cookie < 0) {
-
 					printk(KERN_ALERT "dma_cookie < 0\n");
 
 					/* Exception. Bailout! */

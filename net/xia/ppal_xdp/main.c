@@ -320,7 +320,6 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 		fib_mrd_redirect(fxid, next_xid);
 		rcu_read_unlock();
 		return XRP_ACT_REDIRECT;
-
 	}
 	rcu_read_unlock();
 	BUG();
@@ -423,7 +422,6 @@ static int xdp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 
 	default:
 		return -ENOIOCTLCMD;
-
 	}
 }
 
