@@ -338,15 +338,33 @@ static void xdp_close(struct sock *sk, long timeout)
 	sk_common_release(sk);
 }
 
+/* Check that @addr holds a valid, nonempty address.
+ *
+ * NOTE
+ *	Although XDP is not meant as a tool to poke other principals,
+ *	one should not enforce that all sinks of a destination address
+ *	are of type XIDTYPE_XDP; otherwise, a destination address with
+ *	a non-XDP sink that routing redirects to a local XDP cannot
+ *	be used.
+ */
+static int check_valid_nonempty_addr(struct sockaddr_xia *addr)
+{
+	int n = xia_test_addr(&addr->sxia_addr);
+
+	if (n < 1) {
+		/* Invalid address since it's empty. */
+		return -EINVAL;
+	}
+
+	return n;
+}
+
 static int xdp_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, daddr, uaddr);
 	int rc, n;
 
-	/* XDP isn't meant as a tool to poke other principals, thus
-	 * enforce that all sinks are XIDTYPE_XDP.
-	 */
-	rc = check_type_of_all_sinks(daddr, XIDTYPE_XDP);
+	rc = check_valid_nonempty_addr(daddr);
 	if (rc < 0)
 		return rc;
 	n = rc;
@@ -567,7 +585,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 			msg->msg_namelen);
 		if (rc)
 			return rc;
-		rc = check_type_of_all_sinks(addr, XIDTYPE_XDP);
+		rc = check_valid_nonempty_addr(addr);
 		if (rc < 0)
 			return rc;
 		dest_n = rc;
