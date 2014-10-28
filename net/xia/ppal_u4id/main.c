@@ -596,7 +596,8 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 		/* Reached tunnel destination; advance last node. */
 		struct fib_xid_u4id_local *lu4id = fxid_lu4id(fxid);
 		xdst->passthrough_action = XDA_DIG;
-		xdst->sink_action = XDA_ERROR; /* A U4ID cannot be a sink. */
+		/* A local U4ID cannot be a sink. */
+		xdst->sink_action = XDA_ERROR;
 		xdst_attach_to_anchor(xdst, anchor_index, &lu4id->anchor);
 		rcu_read_unlock();
 		return XRP_ACT_FORWARD;
@@ -621,7 +622,7 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 	xdst->ppal_destroy = def_ppal_destroy;
 
 	xdst->passthrough_action = XDA_METHOD;
-	xdst->sink_action = XDA_ERROR;
+	xdst->sink_action = XDA_METHOD;
 	BUG_ON(xdst->dst.dev);
 	xdst->dst.dev = net->loopback_dev;
 	dev_hold(xdst->dst.dev);
