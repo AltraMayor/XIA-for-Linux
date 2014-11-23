@@ -272,8 +272,8 @@ static void serval_sal_rtt_estimator(struct sock *sk, const __u32 mrtt)
 		/* no previous measure. */
 		ssk->srtt = m << 3;	/* take the measured time to be rtt */
 		ssk->mdev = m << 1;	/* make sure rto = 3*rtt */
-		ssk->mdev_max = ssk->rttvar = max(ssk->mdev,
-						  serval_sal_rto_min(sk));
+		ssk->rttvar = max(ssk->mdev, serval_sal_rto_min(sk));
+		ssk->mdev_max = ssk->rttvar;
 		ssk->rtt_seq = ssk->snd_seq.nxt;
 	}
 }

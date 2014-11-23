@@ -633,8 +633,8 @@ static void serval_tcp_rtt_estimator(struct sock *sk, const __u32 mrtt)
 		/* no previous measure. */
 		tp->srtt = m << 3;	/* take the measured time to be rtt */
 		tp->mdev = m << 1;	/* make sure rto = 3*rtt */
-		tp->mdev_max = tp->rttvar = max(tp->mdev,
-						serval_tcp_rto_min(sk));
+		tp->rttvar = max(tp->mdev, serval_tcp_rto_min(sk));
+		tp->mdev_max = tp->rttvar;
 		tp->rtt_seq = tp->snd_nxt;
 	}
 }
@@ -3814,7 +3814,8 @@ int serval_tcp_syn_sent_state_process(struct sock *sk, struct sk_buff *skb)
 
 		if (!tp->rx_opt.wscale_ok) {
 			/* Window scaling is NOT OK! */
-			tp->rx_opt.snd_wscale = tp->rx_opt.rcv_wscale = 0;
+			tp->rx_opt.rcv_wscale = 0;
+			tp->rx_opt.snd_wscale = 0;
 			tp->window_clamp = min(tp->window_clamp, 65535U);
 		}
 

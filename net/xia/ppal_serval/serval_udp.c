@@ -535,7 +535,8 @@ ssize_t serval_udp_splice_read(struct socket *sock, loff_t *ppos,
 	if (unlikely(*ppos))
 		return -ESPIPE;
 
-	ret = spliced = 0;
+	spliced = 0;
+	ret = 0;
 
 	lock_sock(sk);
 
