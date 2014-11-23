@@ -567,7 +567,9 @@ void serval_sock_init(struct serval_sock *ssk)
 	ssk->retransmits = 0;
 	ssk->backoff = 0;
 	ssk->srtt = 0;
-	ssk->mdev = ssk->mdev_max = ssk->rttvar = SAL_TIMEOUT_INIT;
+	ssk->rttvar = SAL_TIMEOUT_INIT;
+	ssk->mdev_max = SAL_TIMEOUT_INIT;
+	ssk->mdev = SAL_TIMEOUT_INIT;
 	ssk->rto = SAL_TIMEOUT_INIT;
 }
 

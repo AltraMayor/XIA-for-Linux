@@ -76,7 +76,8 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 	struct list_head *neighs_insert_here;
 
 	/* Inserting on mhid->xhm_haddrs. */
-	insert_here = same_dev = NULL;
+	same_dev = NULL;
+	insert_here = NULL;
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;

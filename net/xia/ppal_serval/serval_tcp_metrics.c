@@ -404,7 +404,8 @@ void serval_tcp_init_metrics(struct sock *sk)
 	val = tcp_metric_get_jiffies(tm, TCP_METRIC_RTTVAR);
 	if (val > tp->mdev) {
 		tp->mdev = val;
-		tp->mdev_max = tp->rttvar = max(tp->mdev, tcp_rto_min(sk));
+		tp->rttvar = max(tp->mdev, tcp_rto_min(sk));
+		tp->mdev_max = tp->rttvar;
 	}
 	rcu_read_unlock();
 
@@ -417,7 +418,9 @@ reset:
 		 * from the more aggressive 1sec to avoid more spurious
 		 * retransmission.
 		 */
-		tp->mdev = tp->mdev_max = tp->rttvar = TCP_TIMEOUT_FALLBACK;
+		tp->rttvar = TCP_TIMEOUT_FALLBACK;
+		tp->mdev_max = TCP_TIMEOUT_FALLBACK;
+		tp->mdev = TCP_TIMEOUT_FALLBACK;
 		tp->rto = TCP_TIMEOUT_FALLBACK;
 	}
 	/* Cut cwnd down to 1 per RFC5681 if SYN or SYN-ACK has been

@@ -460,7 +460,8 @@ static inline void skb_entail(struct sock *sk, struct sk_buff *skb)
 	struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
 
 	skb->csum    = 0;
-	tcb->seq     = tcb->end_seq = tp->write_seq;
+	tcb->end_seq = tp->write_seq;
+	tcb->seq     = tp->write_seq;
 	tcb->tcp_flags   = TCPH_ACK;
 	tcb->sacked  = 0;
 	skb_header_release(skb);
@@ -827,7 +828,8 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 	if (unlikely(*ppos))
 		return -ESPIPE;
 
-	ret = spliced = 0;
+	spliced = 0;
+	ret = 0;
 
 	lock_sock(sk);
 
@@ -2270,12 +2272,14 @@ static void serval_tcp_create_openreq_child(struct sock *sk,
 	/* Now setup serval_tcp_sock */
 	newtp->pred_flags = 0;
 
-	newtp->rcv_wup = newtp->copied_seq =
-		newtp->rcv_nxt = treq->rcv_isn + 1;
+	newtp->rcv_nxt = treq->rcv_isn + 1;
+	newtp->copied_seq = newtp->rcv_nxt;
+	newtp->rcv_wup = newtp->rcv_nxt;
 
-	newtp->snd_sml = newtp->snd_una =
-		newtp->snd_nxt = newtp->snd_up =
-		treq->snt_isn + 1 + serval_tcp_s_data_size(oldtp);
+	newtp->snd_up = treq->snt_isn + 1 + serval_tcp_s_data_size(oldtp);
+	newtp->snd_nxt = newtp->snd_up;
+	newtp->snd_una = newtp->snd_up;
+	newtp->snd_sml = newtp->snd_up;
 
 	serval_tcp_prequeue_init(newtp);
 
@@ -2309,8 +2313,8 @@ static void serval_tcp_create_openreq_child(struct sock *sk,
 	serval_tcp_set_ca_state(newsk, TCP_CA_Open);
 	serval_tcp_init_xmit_timers(newsk);
 	skb_queue_head_init(&newtp->out_of_order_queue);
-	newtp->write_seq = newtp->pushed_seq =
-		treq->snt_isn + 1 + serval_tcp_s_data_size(oldtp);
+	newtp->pushed_seq = treq->snt_isn + 1 + serval_tcp_s_data_size(oldtp);
+	newtp->write_seq = newtp->pushed_seq;
 
 	newtp->rx_opt.saw_tstamp = 0;
 
@@ -2341,7 +2345,8 @@ static void serval_tcp_create_openreq_child(struct sock *sk,
 		newtp->rx_opt.rcv_wscale = treq->rcv_wscale;
 	} else {
 		/* No TCP window scaling! */
-		newtp->rx_opt.snd_wscale = newtp->rx_opt.rcv_wscale = 0;
+		newtp->rx_opt.rcv_wscale = 0;
+		newtp->rx_opt.snd_wscale = 0;
 		newtp->window_clamp = min(newtp->window_clamp, 65535U);
 	}
 	newtp->snd_wnd = (ntohs(tcp_hdr(skb)->window) <<
