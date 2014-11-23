@@ -121,16 +121,16 @@ static int uni4id_deliver(struct xip_route_proc *rproc, struct net *net,
 
 	/* Calculate next XID. */
 	next_xid->xid_type = XIDTYPE_U4ID;
-	next_xid->xid_id[ 0] = xid[16];
-	next_xid->xid_id[ 1] = xid[17];
-	next_xid->xid_id[ 2] = xid[18];
-	next_xid->xid_id[ 3] = xid[19];
-	next_xid->xid_id[ 4] = 0x35;
-	next_xid->xid_id[ 5] = 0xd5;
-	next_xid->xid_id[ 6] = 0x00;
-	next_xid->xid_id[ 7] = 0x00;
-	next_xid->xid_id[ 8] = 0x00;
-	next_xid->xid_id[ 9] = 0x00;
+	next_xid->xid_id[0]  = xid[16];
+	next_xid->xid_id[1]  = xid[17];
+	next_xid->xid_id[2]  = xid[18];
+	next_xid->xid_id[3]  = xid[19];
+	next_xid->xid_id[4]  = 0x35;
+	next_xid->xid_id[5]  = 0xd5;
+	next_xid->xid_id[6]  = 0x00;
+	next_xid->xid_id[7]  = 0x00;
+	next_xid->xid_id[8]  = 0x00;
+	next_xid->xid_id[9]  = 0x00;
 	next_xid->xid_id[10] = 0x00;
 	next_xid->xid_id[11] = 0x00;
 	next_xid->xid_id[12] = 0x00;
