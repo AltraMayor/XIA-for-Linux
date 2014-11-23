@@ -7,7 +7,7 @@ int xia_lock_table_init(struct xia_lock_table *lock_table, int spread)
 	int cpus = num_possible_cpus();
 	int i, nlocks;
 	size_t size;
-	spinlock_t *locks;
+	spinlock_t *locks;	/* Table locks. */
 
 	BUG_ON(cpus <= 0);
 	nlocks = roundup_pow_of_two(cpus * spread);
