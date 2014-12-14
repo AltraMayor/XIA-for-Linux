@@ -6,9 +6,7 @@
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
 
-/*
- *	Neighbor Table
- */
+/* Neighbor Table */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 				gfp_t flags)
@@ -404,9 +402,7 @@ void main_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	mhid_put(mhid);
 }
 
-/*
- *	Announce myself
- */
+/* Announce myself */
 
 struct announcement_state {
 	struct hid_dev	*hdev;
@@ -606,9 +602,7 @@ out:
 	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
 }
 
-/*
- *	State associated to net
- */
+/* State associated to net */
 
 int hid_init_hid_state(struct xip_hid_ctx *hid_ctx)
 {
@@ -631,9 +625,7 @@ void hid_release_hid_state(struct xip_hid_ctx *hid_ctx)
 	del_timer_sync(&hid_ctx->announce_timer);
 }
 
-/*
- *	Receive NWP packets from the device layer
- */
+/* Receive NWP packets from the device layer */
 
 static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 					    unsigned int mtu,
@@ -930,9 +922,7 @@ static struct packet_type nwp_packet_type __read_mostly = {
 	.func = nwp_rcv,
 };
 
-/*
- *	Network Devices
- */
+/* Network Devices */
 
 void hid_dev_finish_destroy(struct hid_dev *hdev)
 {
@@ -1019,9 +1009,7 @@ static struct notifier_block hid_netdev_notifier __read_mostly = {
 	.notifier_call = hid_netdev_event,
 };
 
-/*
- *	Initialize NWP
- */
+/* Initialize NWP */
 
 int hid_nwp_init(void)
 {

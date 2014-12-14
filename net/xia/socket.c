@@ -6,10 +6,9 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_socket.h>
 
-/*
- *	Support functions for principals
- *
- * The routines beyond this point handle the behaviour of an AF_XIA
+/* Support functions for principals */
+
+/* The routines beyond this point handle the behaviour of an AF_XIA
  * socket object. Mostly it punts to the subprotocols of XIP to do
  * the work.
  */
@@ -380,9 +379,7 @@ ssize_t xia_sendpage(struct socket *sock, struct page *page,
 }
 EXPORT_SYMBOL_GPL(xia_sendpage);
 
-/*
- *	Principal-socket registering
- */
+/* Principal-socket registering */
 
 static DEFINE_MUTEX(ppal_mutex);
 static struct xia_socket_proc *principals[XIP_MAX_XID_TYPES];
@@ -500,9 +497,7 @@ void xia_del_socket_end(struct xia_socket_proc *sproc)
 }
 EXPORT_SYMBOL_GPL(xia_del_socket_end);
 
-/*
- *	Integration with socket API
- */
+/* Integration with socket API */
 
 static void xia_sock_destruct(struct sock *sk)
 {

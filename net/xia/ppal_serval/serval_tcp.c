@@ -661,9 +661,8 @@ unsigned int serval_tcp_poll(struct file *file,
 }
 
 #if defined(ENABLE_SPLICE)
-/*
- *	TCP splice context
- */
+
+/* TCP splice context */
 
 struct tcp_splice_state {
 	struct pipe_inode_info *pipe;
@@ -1684,9 +1683,7 @@ static void serval_tcp_v4_send_check(struct sock *sk, struct sk_buff *skb)
 	__serval_tcp_v4_send_check(skb);
 }
 
-/*
- *	Socket option code for TCP
- */
+/* Socket option code for TCP */
 
 static int serval_do_tcp_setsockopt(struct sock *sk, int level,
 				    int optname, char __user *optval,

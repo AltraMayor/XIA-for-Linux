@@ -28,9 +28,7 @@ void xip_route_exit(void);
 int xia_socket_init(void);
 void xia_socket_exit(void);
 
-/*
- *	Main
- */
+/* Main */
 
 /* xia_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.

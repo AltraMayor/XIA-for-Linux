@@ -102,8 +102,7 @@ void serval_tcp_cong_avoid_ai(struct serval_tcp_sock *tp, u32 w)
 	}
 }
 
-/*
- *	TCP Reno congestion control
+/* TCP Reno congestion control
  *
  * This is special case used for fallback as well.
  * This is Jacobson's slow start and congestion avoidance.

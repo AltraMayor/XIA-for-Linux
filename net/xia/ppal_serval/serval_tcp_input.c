@@ -2265,8 +2265,7 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 				break;
 #ifdef CONFIG_TCP_MD5SIG
 			case TCPOPT_MD5SIG:
-				/*
-				 * The MD5 Hash has already been
+				/* The MD5 Hash has already been
 				 * checked (see tcp_v{4,6}_do_rcv()).
 				 */
 				break;

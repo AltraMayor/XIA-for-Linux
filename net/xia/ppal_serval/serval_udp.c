@@ -423,9 +423,8 @@ out:
 }
 
 #if defined(ENABLE_SPLICE)
-/*
- *	UDP splice context
- */
+
+/* UDP splice context */
 
 struct udp_splice_state {
 	struct pipe_inode_info *pipe;

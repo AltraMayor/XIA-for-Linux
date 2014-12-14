@@ -8,9 +8,7 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_route.h>
 
-/*
- *	Route cache (DST)
- */
+/* Route cache (DST) */
 
 static struct dst_entry *xip_dst_check(struct dst_entry *dst, u32 cookie)
 {
@@ -527,9 +525,7 @@ static int xip_dst_gc(struct dst_ops *ops)
 	return dst_entries_get_slow(ops) > 2 * ops->gc_thresh;
 }
 
-/*
- *	DST Anchors
- */
+/* DST Anchors */
 
 static struct xia_lock_table anchor_locktbl __read_mostly;
 
@@ -798,9 +794,7 @@ drop:
 }
 EXPORT_SYMBOL_GPL(xdst_def_hop_limit_input_method);
 
-/*
- *	Principal routing
- */
+/* Principal routing */
 
 static DEFINE_MUTEX(ppal_mutex);
 static struct xip_route_proc *principals[XIP_MAX_XID_TYPES] __read_mostly;
@@ -1331,9 +1325,7 @@ int xip_route(struct net *net, struct sk_buff *skb, int input)
 }
 EXPORT_SYMBOL_GPL(xip_route);
 
-/*
- *	Handling XIP incoming packets
- */
+/* Handling XIP incoming packets */
 
 void skb_pull_xiphdr(struct sk_buff *skb)
 {
@@ -1410,9 +1402,7 @@ static struct packet_type xip_packet_type __read_mostly = {
 	/* XXX Implement GSO & GRO methods to improve performance. */
 };
 
-/*
- *	Initialization
- */
+/* Initialization */
 
 static int __net_init xip_route_net_init(struct net *net)
 {

@@ -17,9 +17,7 @@
 
 #include "dag_userland.h"
 
-/*
- *	Map beween principal names and numbers
- */
+/* Map beween principal names and numbers */
 
 struct ppal_node {
 	struct hlist_node	lst_per_name;
@@ -204,9 +202,7 @@ int ppal_del_map(xid_type_t type)
 }
 EXPORT_SYMBOL(ppal_del_map);
 
-/*
- *	Validating addresses
- */
+/* Validating addresses */
 
 int xia_are_edges_valid(const struct xia_row *row,
 			__u8 node, __u8 num_node, __u32 *pvisited)
@@ -303,9 +299,7 @@ int xia_test_addr(const struct xia_addr *addr)
 }
 EXPORT_SYMBOL(xia_test_addr);
 
-/*
- *	Printing addresses out
- */
+/* Printing addresses out */
 
 #define INDEX_BASE 36
 static inline char edge_to_char(__u8 e)
@@ -494,9 +488,7 @@ int xia_ntop(const struct xia_addr *src, char *dst, size_t dstlen,
 }
 EXPORT_SYMBOL(xia_ntop);
 
-/*
- *	xia_pton and its auxiliares functions
- */
+/* xia_pton and its auxiliares functions */
 
 static inline void next(const char **pp, size_t *pleft)
 {

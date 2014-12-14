@@ -7,9 +7,7 @@
 /* Autonomous Domain Principal */
 #define XIDTYPE_AD (__cpu_to_be32(0x10))
 
-/*
- *	AD context
- */
+/* AD context */
 
 struct xip_ad_ctx {
 	struct xip_ppal_ctx	ctx;
@@ -26,9 +24,7 @@ static inline struct xip_ad_ctx *ctx_ad(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
-/*
- *	Local ADs
- */
+/* Local ADs */
 
 struct fib_xid_ad_local {
 	struct fib_xid		common;
@@ -127,9 +123,7 @@ static const xia_ppal_all_rt_eops_t ad_all_rt_eops = {
 	XIP_FIB_REDIRECT_MAIN,
 };
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_ad_ctx *create_ad_ctx(void)
 {
@@ -187,9 +181,7 @@ static struct pernet_operations ad_net_ops __read_mostly = {
 	.exit = ad_net_exit,
 };
 
-/*
- *	AD Routing
- */
+/* AD Routing */
 
 static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 		      const u8 *xid, struct xia_xid *next_xid,
