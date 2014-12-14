@@ -1384,8 +1384,8 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 	}
 
 	/* We're allowed to probe. Build it now. */
-	if ((nskb = serval_sk_stream_alloc_skb(sk, probe_size, GFP_ATOMIC)) ==
-		NULL)
+	nskb = serval_sk_stream_alloc_skb(sk, probe_size, GFP_ATOMIC);
+	if (nskb == NULL)
 		return -1;
 	sk->sk_wmem_queued += nskb->truesize;
 	sk_mem_charge(sk, nskb->truesize);
@@ -2354,7 +2354,8 @@ int serval_tcp_write_wakeup(struct sock *sk)
 	if (sk->sk_state == TCP_CLOSE)
 		return -1;
 
-	if ((skb = serval_tcp_send_head(sk)) != NULL &&
+	skb = serval_tcp_send_head(sk);
+	if ((skb != NULL) &&
 	    before(TCP_SKB_CB(skb)->seq, serval_tcp_wnd_end(tp))) {
 		int err;
 		unsigned int mss = serval_tcp_current_mss(sk);

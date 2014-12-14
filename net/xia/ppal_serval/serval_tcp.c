@@ -66,7 +66,8 @@ static int serval_tcp_disconnect(struct sock *sk, int flags)
 	__skb_queue_purge(&sk->sk_async_wait_queue);
 #endif
 	tp->srtt = 0;
-	if ((tp->write_seq += tp->max_window + 2) == 0)
+	tp->write_seq += tp->max_window + 2;
+	if (tp->write_seq == 0)
 		tp->write_seq = 1;
 	tp->backoff = 0;
 	tp->snd_cwnd = 2;
@@ -930,7 +931,8 @@ static int serval_tcp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	    && !serval_tcp_passive_fastopen(sk)
 #endif
 	    ) {
-		if ((err = sk_stream_wait_connect(sk, &timeo)) != 0)
+		err = sk_stream_wait_connect(sk, &timeo);
+		if (err != 0)
 			goto do_error;
 	}
 
@@ -1057,7 +1059,8 @@ new_segment:
 
 			from += copy;
 			copied += copy;
-			if ((seglen -= copy) == 0 && iovlen == 0)
+			seglen -= copy;
+			if (seglen == 0 && iovlen == 0)
 				goto out;
 
 			if (skb->len < max || (flags & MSG_OOB))
@@ -1079,7 +1082,8 @@ wait_for_memory:
 				serval_tcp_push(sk, flags & ~MSG_MORE, mss_now,
 						TCP_NAGLE_PUSH);
 
-			if ((err = sk_stream_wait_memory(sk, &timeo)) != 0)
+			err = sk_stream_wait_memory(sk, &timeo);
+			if (err != 0)
 				goto do_error;
 
 			mss_now = serval_tcp_send_mss(sk, &size_goal, flags);
@@ -1467,7 +1471,8 @@ wait_for_event:
 
 			/* __ Restore normal policy in scheduler __ */
 
-			if ((chunk = len - tp->ucopy.len) != 0) {
+			chunk = len - tp->ucopy.len;
+			if (chunk != 0) {
 				/*
 				NET_ADD_STATS_USER(sock_net(sk),
 					LINUX_MIB_TCPDIRECTCOPYFROMBACKLOG,
@@ -1482,7 +1487,8 @@ wait_for_event:
 do_prequeue:
 				serval_tcp_prequeue_process(sk);
 
-				if ((chunk = len - tp->ucopy.len) != 0) {
+				chunk = len - tp->ucopy.len;
+				if (chunk != 0) {
 					/*
 					NET_ADD_STATS_USER(sock_net(sk),
 						LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE,
@@ -1625,13 +1631,17 @@ found_fin_ok:
 
 			serval_tcp_prequeue_process(sk);
 
-			if (copied > 0 && (chunk = len - tp->ucopy.len) != 0) {
-				/*
-				  NET_ADD_STATS_USER(sock_net(sk),
-				  LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE, chunk);
-				*/
-				len -= chunk;
-				copied += chunk;
+			if (copied > 0) {
+				chunk = len - tp->ucopy.len;
+				if (chunk != 0) {
+					/*
+				  	NET_ADD_STATS_USER(sock_net(sk),
+					LINUX_MIB_TCPDIRECTCOPYFROMPREQUEUE,
+						chunk);
+					*/
+					len -= chunk;
+					copied += chunk;
+				}
 			}
 		}
 
@@ -2327,7 +2337,8 @@ static void serval_tcp_create_openreq_child(struct sock *sk,
 	newtp->rx_opt.tstamp_ok = treq->tstamp_ok;
 
 #if defined(ENABLE_TCP_SACK)
-	if ((newtp->rx_opt.sack_ok = treq->sack_ok) != 0) {
+	newtp->rx_opt.sack_ok = treq->sack_ok;
+	if (newtp->rx_opt.sack_ok != 0) {
 		if (sysctl_serval_tcp_fack)
 			serval_tcp_enable_fack(newtp);
 	}

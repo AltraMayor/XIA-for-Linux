@@ -1440,18 +1440,27 @@ static int do_rcv_for_srsk(struct sock *sk, struct sk_buff *skb,
 	ssk = sk_ssk(sk);
 	if (!src_sink || src_sink->s_xid.xid_type != XIDTYPE_FLOWID ||
 	    !ctx->ctrl_ext || ctx->flags & SVH_SYN ||
-	    !(ctx->flags & SVH_ACK) ||
-	    !(srsk = find_srsk_for_ack(ssk, dst_sink->s_xid.xid_id)) ||
-	    !(nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx))) {
-		/* We don't send a reset packet here because we don't want to
-		 * help an adversary scanning for peding connections.
-		 */
-		kfree_skb(skb);
-		return -EINVAL;
+	    !(ctx->flags & SVH_ACK)) {
+		goto free;
 	}
+
+	srsk = find_srsk_for_ack(ssk, dst_sink->s_xid.xid_id);
+	if (!srsk)
+		goto free;
+
+	nssk = serval_sal_request_sock_handle(ssk, srsk, skb, ctx);
+	if (!nssk)
+		goto free;
 
 	/* The new sock is already locked here */
 	return serval_sal_child_process(sk, nssk, skb, ctx);
+
+free:
+	/* We don't send a reset packet here because we don't want to
+	 * help an adversary scanning for peding connections.
+	 */
+	kfree_skb(skb);
+	return -EINVAL;
 }
 
 static int serval_sal_ack_process(struct sock *sk, struct sk_buff *skb,
