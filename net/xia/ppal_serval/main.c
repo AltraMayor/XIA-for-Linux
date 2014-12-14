@@ -17,9 +17,7 @@ struct netns_serval net_serval = {
 int srvc_vxt __read_mostly = -1;
 int flow_vxt __read_mostly = -1;
 
-/*
- *	Local ServiceID
- */
+/* Local ServiceID */
 
 static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
@@ -94,9 +92,7 @@ static const xia_ppal_all_rt_eops_t srvc_all_rt_eops = {
 	XIP_FIB_REDIRECT_MAIN,
 };
 
-/*
- *	Local FlowID
- */
+/* Local FlowID */
 
 static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
@@ -245,9 +241,7 @@ static const xia_ppal_all_rt_eops_t flow_all_rt_eops = {
 	XIP_FIB_REDIRECT_MAIN,
 };
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_serval_ctx *create_serval_ctx(void)
 {
@@ -328,9 +322,7 @@ static struct pernet_operations serval_net_ops __read_mostly = {
 	.exit = serval_net_exit,
 };
 
-/*
- *	Serval Routing
- */
+/* Serval Routing */
 
 /* XXX These local_* methods were copied from XDP, and probably should
  * be moved to XIA module to be shared between principals.
@@ -537,9 +529,7 @@ static struct xip_route_proc flow_rt_proc __read_mostly = {
 	.deliver = flow_deliver,
 };
 
-/*
- *	Socket API
- */
+/* Socket API */
 
 void serval_sock_init(struct serval_sock *ssk)
 {
@@ -1373,12 +1363,9 @@ static struct xia_socket_proc serval_sock_proc __read_mostly = {
 	.procs[SOCK_DGRAM]	= &serval_dgram,
 };
 
-/*
- *	Main
- */
+/* Main */
 
-/*
- *	Module parameters
+/* Module parameters
  *
  * Permissions (affect visibility in sysfs):
  * 0 = not visible in sysfs

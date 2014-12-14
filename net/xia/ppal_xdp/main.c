@@ -10,9 +10,8 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_xdp.h>
 
-/*
- *	XDP context
- */
+/* XDP context */
+
 struct xip_xdp_ctx {
 	struct xip_ppal_ctx	ctx;
 
@@ -28,9 +27,7 @@ static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
-/*
- *	Local XDPs
- */
+/* Local XDPs */
 
 struct fib_xid_xdp_local {
 	/* Socket related fields. */
@@ -154,9 +151,7 @@ static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
 	XIP_FIB_REDIRECT_MAIN,
 };
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_xdp_ctx *create_xdp_ctx(void)
 {
@@ -214,9 +209,7 @@ static struct pernet_operations xdp_net_ops __read_mostly = {
 	.exit = xdp_net_exit,
 };
 
-/*
- *	XDP Routing
- */
+/* XDP Routing */
 
 static int local_input_input(struct sk_buff *skb)
 {
@@ -330,9 +323,7 @@ static struct xip_route_proc xdp_rt_proc __read_mostly = {
 	.deliver = xdp_deliver,
 };
 
-/*
- *	Socket API
- */
+/* Socket API */
 
 static void xdp_close(struct sock *sk, long timeout)
 {
@@ -385,8 +376,7 @@ static int xdp_disconnect(struct sock *sk, int flags)
 	return 0;
 }
 
-/**
- * first_packet_length	- return length of first packet in receive queue
+/* first_packet_length - return length of first packet in receive queue
  *	@sk: socket
  *
  *	Returns the length of found skb, or 0 if none is found.
@@ -920,9 +910,7 @@ static struct xia_socket_proc xdp_sock_proc __read_mostly = {
 	.procs[SOCK_DGRAM]	= &xdp_dgram,
 };
 
-/*
- *	Main
- */
+/* Main */
 
 static int __init xia_xdp_init(void)
 {

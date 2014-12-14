@@ -7,9 +7,7 @@
 /* HID's virtal XID type. */
 int hid_vxt __read_mostly = -1;
 
-/*
- *	Local HIDs
- */
+/* Local HIDs */
 
 struct fib_xid_hid_local {
 	struct fib_xid	xhl_common;
@@ -124,9 +122,7 @@ static void local_free_hid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(lhid);
 }
 
-/*
- *	Main HIDs
- */
+/* Main HIDs */
 
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 			 struct xia_fib_config *cfg)
@@ -237,9 +233,7 @@ static const xia_ppal_all_rt_eops_t hid_all_rt_eops = {
 	},
 };
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_hid_ctx *create_hid_ctx(struct net *net)
 {
@@ -308,9 +302,7 @@ static struct pernet_operations hid_net_ops __read_mostly = {
 	.exit = hid_net_exit,
 };
 
-/*
- *	HID Routing
- */
+/* HID Routing */
 
 static inline struct hrdw_addr *xdst_ha(struct xip_dst *xdst)
 {

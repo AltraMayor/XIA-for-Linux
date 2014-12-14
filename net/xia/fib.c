@@ -5,9 +5,7 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_fib.h>
 
-/*
- *	Lock tables
- */
+/* Lock tables */
 
 static inline u32 xtbl_hash_mix(struct fib_xid_table *xtbl)
 {
@@ -40,9 +38,7 @@ static void bucket_unlock(struct fib_xid_table *xtbl, u32 bucket)
 	xia_lock_table_unlock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
 }
 
-/*
- *	Principal context
- */
+/* Principal context */
 
 int init_fib_ppal_ctx(struct net *net)
 {
@@ -117,9 +113,7 @@ struct xip_ppal_ctx *xip_find_ppal_ctx_rcu(struct net *net, xid_type_t ty)
 }
 EXPORT_SYMBOL_GPL(xip_find_ppal_ctx_rcu);
 
-/*
- *	Routing tables
- */
+/* Routing tables */
 
 /* This function must be called in process context due to virtual memory. */
 static int alloc_buckets(struct fib_xid_buckets *branch, size_t num)
@@ -802,9 +796,7 @@ def_upd:
 }
 EXPORT_SYMBOL_GPL(fib_build_newroute);
 
-/*
- *	Main entries that only redirect.
- */
+/* Main entries that only redirect */
 
 struct fib_xid_redirect_main {
 	struct fib_xid		common;

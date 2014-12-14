@@ -8,9 +8,7 @@
 /* United 4ID Principal */
 #define XIDTYPE_UNI4ID (__cpu_to_be32(0x14))
 
-/*
- *	United 4ID context
- */
+/* United 4ID context */
 
 struct xip_uni4id_ctx {
 	struct xip_ppal_ctx	ctx;
@@ -27,9 +25,7 @@ static inline struct xip_uni4id_ctx *ctx_uni4id(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_uni4id_ctx *create_uni4id_ctx(void)
 {
@@ -82,9 +78,7 @@ static struct pernet_operations uni4id_net_ops __read_mostly = {
 	.exit = uni4id_net_exit,
 };
 
-/*
- *	United 4ID Routing
- */
+/* United 4ID Routing */
 
 /* XXX The following XID type should come from its
  * principal's header file once it is available.

@@ -7,9 +7,7 @@
 /* zFilter principal */
 #define XIDTYPE_ZF (__cpu_to_be32(0x20))
 
-/*
- *	ZF context
- */
+/* ZF context */
 
 struct xip_zf_ctx {
 	struct xip_ppal_ctx	ctx;
@@ -27,9 +25,7 @@ static inline struct xip_zf_ctx *ctx_zf(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
-/*
- *	Local ZFs
- */
+/* Local ZFs */
 
 struct fib_xid_zf_local {
 	struct fib_xid		common;
@@ -114,9 +110,7 @@ static void local_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(lzf);
 }
 
-/*
- *	Main ZFs
- */
+/* Main ZFs */
 
 struct fib_xid_zf_main {
 	struct fib_xid		common;
@@ -222,9 +216,7 @@ static const xia_ppal_all_rt_eops_t zf_all_rt_eops = {
 	},
 };
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_zf_ctx *create_zf_ctx(void)
 {
@@ -284,9 +276,7 @@ static struct pernet_operations zf_net_ops __read_mostly = {
 	.exit = zf_net_exit,
 };
 
-/*
- *	ZF Routing
- */
+/* ZF Routing */
 
 static int zf_match(const u8 *xid, const u8 *link_id)
 {

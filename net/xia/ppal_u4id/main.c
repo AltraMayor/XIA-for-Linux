@@ -8,9 +8,7 @@
 #include <net/xia_vxidty.h>
 #include <uapi/linux/udp.h>
 
-/*
- *	U4ID context
- */
+/* U4ID context */
 
 struct xip_u4id_ctx {
 	struct xip_ppal_ctx	ctx;
@@ -40,9 +38,7 @@ static inline struct xip_u4id_ctx *ctx_u4id(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
-/*
- *	Local U4IDs
- */
+/* Local U4IDs */
 
 struct u4id_xid {
 	u32	ip_addr;
@@ -355,9 +351,7 @@ static const xia_ppal_all_rt_eops_t u4id_all_rt_eops = {
 	},
 };
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static struct xip_u4id_ctx *create_u4id_ctx(void)
 {
@@ -437,9 +431,7 @@ static struct pernet_operations u4id_net_ops __read_mostly = {
 	.exit = u4id_net_exit,
 };
 
-/*
- *	U4ID Routing
- */
+/* U4ID Routing */
 
 /* Tunnel destination information held in a DST entry. */
 struct u4id_tunnel_dest {

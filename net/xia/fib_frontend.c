@@ -305,9 +305,7 @@ static int xip_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 	return xip_fib_dump_ppals(skb, cb);
 }
 
-/*
- *	Network namespace
- */
+/* Network namespace */
 
 static int __net_init fib_net_init(struct net *net)
 {
