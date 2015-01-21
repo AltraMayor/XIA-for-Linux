@@ -1,5 +1,6 @@
 config XIA_PPAL_U4ID
 	tristate "UDP/IPv4 Principal (EXPERIMENTAL)"
+	select NET_UDP_TUNNEL
 	default m
 	help
 	  UDP/IPv4 (U4ID) Principal provides the ability to encapsulate XIP
