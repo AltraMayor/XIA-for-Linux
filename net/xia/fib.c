@@ -1,5 +1,6 @@
 #include <linux/export.h>
 #include <linux/jhash.h>
+#include <linux/vmalloc.h>
 #include <net/xia_locktbl.h>
 #include <net/xia_vxidty.h>
 #include <net/xia_fib.h>
