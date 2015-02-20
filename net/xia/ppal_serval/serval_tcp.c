@@ -423,7 +423,7 @@ static inline void skb_serval_tcp_set_owner(struct sk_buff *skb,
 }
 
 /* From net/ipv4/tcp.c */
-struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp)
+struct sk_buff *serval_sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp)
 {
 	struct sk_buff *skb;
 
@@ -981,9 +981,8 @@ new_segment:
 				if (!sk_stream_memory_free(sk))
 					goto wait_for_sndbuf;
 
-				skb = sk_stream_alloc_skb(sk,
-							  select_size(sk, sg),
-							  sk->sk_allocation);
+				skb = serval_sk_stream_alloc_skb(sk,
+					select_size(sk, sg), sk->sk_allocation);
 				if (!skb)
 					goto wait_for_memory;
 
