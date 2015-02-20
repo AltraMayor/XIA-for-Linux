@@ -390,6 +390,9 @@ int serval_tcp_connection_build_synack(struct sock *sk,
 int serval_tcp_connection_build_ack(struct sock *sk,
 				    struct sk_buff *skb);
 
+struct sk_buff *serval_sk_stream_alloc_skb(struct sock *sk, int size,
+	gfp_t gfp);
+
 #if defined(ENABLE_SPLICE)
 
 #include <linux/seq_file.h>
