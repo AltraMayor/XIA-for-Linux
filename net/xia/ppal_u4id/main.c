@@ -326,7 +326,8 @@ static int local_dump_u4id(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			     &lu4id_info)))
 		goto nla_put_failure;
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);

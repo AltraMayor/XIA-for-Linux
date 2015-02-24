@@ -96,7 +96,8 @@ static int local_dump_ad(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
 		goto nla_put_failure;
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);

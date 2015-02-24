@@ -94,7 +94,8 @@ static int local_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
 		goto nla_put_failure;
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);
@@ -183,7 +184,8 @@ static int main_dump_zf(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		     nla_put(skb, RTA_GATEWAY, sizeof(mzf->gw), &mzf->gw)))
 		goto nla_put_failure;
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);

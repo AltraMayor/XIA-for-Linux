@@ -59,7 +59,8 @@ static int local_dump_srvc(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		     nla_put_u8(skb, RTA_PROTOINFO, ssk->xia_sk.sk.sk_state)))
 		goto nla_put_failure;
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);
@@ -182,7 +183,8 @@ static int local_dump_flow(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	 * what else could/should be added to this dump.
 	 */
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);

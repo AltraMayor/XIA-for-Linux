@@ -256,7 +256,8 @@ static int xip_dst_dump_entry(struct xip_dst *xdst, struct sk_buff *skb,
 			     sizeof(struct xip_dst_cachinfo), &ci)))
 		goto nla_put_failure;
 
-	return nlmsg_end(skb, nlh);
+	nlmsg_end(skb, nlh);
+	return 0;
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);
