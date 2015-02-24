@@ -2,7 +2,6 @@
 #include <linux/sockios.h>
 #include <linux/swap.h>
 #include <linux/export.h>
-#include <net/netdma.h>
 #include "serval_tcp_sock.h"
 #include "serval_tcp_request_sock.h"
 #include "serval_sal.h"
@@ -62,9 +61,6 @@ static int serval_tcp_disconnect(struct sock *sk, int flags)
 	__skb_queue_purge(&sk->sk_receive_queue);
 	serval_tcp_write_queue_purge(sk);
 	__skb_queue_purge(&tp->out_of_order_queue);
-#ifdef CONFIG_NET_DMA
-	__skb_queue_purge(&sk->sk_async_wait_queue);
-#endif
 	tp->srtt = 0;
 	tp->write_seq += tp->max_window + 2;
 	if (tp->write_seq == 0)
@@ -273,19 +269,8 @@ static int serval_tcp_rcv(struct sock *sk, struct sk_buff *skb)
 		goto discard_it;
 
 	if (!sock_owned_by_user(sk)) {
-#ifdef CONFIG_NET_DMA
-		struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-
-		if (!tp->ucopy.dma_chan && tp->ucopy.pinned_list)
-			tp->ucopy.dma_chan = dma_find_channel(DMA_MEMCPY);
-		if (tp->ucopy.dma_chan)
+		if (!serval_tcp_prequeue(sk, skb))
 			err = serval_tcp_do_rcv(sk, skb);
-		else
-#endif
-			{
-				if (!serval_tcp_prequeue(sk, skb))
-					err = serval_tcp_do_rcv(sk, skb);
-			}
 	} else {
 		/* We are processing the backlog in user/process context. */
 		if (sk_add_backlog(sk, skb,
@@ -520,40 +505,6 @@ static inline void serval_tcp_push(struct sock *sk, int flags, int mss_now,
 	}
 }
 
-#ifdef CONFIG_NET_DMA
-static void serval_tcp_service_net_dma(struct sock *sk, bool wait)
-{
-	dma_cookie_t done, used;
-	dma_cookie_t last_issued;
-	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-
-	if (!tp->ucopy.dma_chan)
-		return;
-
-	last_issued = tp->ucopy.dma_cookie;
-	dma_async_issue_pending(tp->ucopy.dma_chan);
-
-	do {
-		if (dma_async_is_tx_complete(tp->ucopy.dma_chan,
-					     last_issued, &done,
-					     &used) == DMA_SUCCESS) {
-			/* Safe to free early-copied skbs now */
-			__skb_queue_purge(&sk->sk_async_wait_queue);
-			break;
-		} else {
-			struct sk_buff *skb;
-
-			while ((skb = skb_peek(&sk->sk_async_wait_queue)) &&
-			       (dma_async_is_complete(skb->dma_cookie, done,
-						      used) == DMA_SUCCESS)) {
-				__skb_dequeue(&sk->sk_async_wait_queue);
-				kfree_skb(skb);
-			}
-		}
-	} while (wait);
-}
-#endif
-
 /* Wait for a TCP event.
  *
  * Note that we don't need to lock the socket, as the upper poll layers
@@ -751,12 +702,12 @@ int serval_tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 		if (tcp_hdr(skb)->fin) {
 			tp->fin_found = 1;
 			/* Read FIN. */
-			sk_eat_skb(sk, skb, 0);
+			sk_eat_skb(sk, skb);
 			++seq;
 			break;
 		}
 
-		sk_eat_skb(sk, skb, 0);
+		sk_eat_skb(sk, skb);
 		if (!desc->count)
 			break;
 		tp->copied_seq = seq;
@@ -1262,7 +1213,6 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 	int target;		/* Read at least this many bytes */
 	long timeo;
 	struct task_struct *user_recv = NULL;
-	int copied_early = 0;
 	struct sk_buff *skb;
 	u32 urg_hole = 0;
 
@@ -1285,28 +1235,6 @@ static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
 	}
 
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
-
-#ifdef CONFIG_NET_DMA
-	tp->ucopy.dma_chan = NULL;
-	preempt_disable();
-	skb = skb_peek_tail(&sk->sk_receive_queue);
-	{
-		int available = 0;
-
-		if (skb)
-			available = TCP_SKB_CB(skb)->seq + skb->len - (*seq);
-		if ((available < target) &&
-		    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
-		    !sysctl_serval_tcp_low_latency &&
-		    dma_find_channel(DMA_MEMCPY)) {
-			preempt_enable_no_resched();
-			tp->ucopy.pinned_list =
-					dma_pin_iovec_pages(msg->msg_iov, len);
-		} else {
-			preempt_enable_no_resched();
-		}
-	}
-#endif
 
 	do {
 		u32 offset;
@@ -1449,10 +1377,6 @@ wait_for_event:
 			/* __ Set realtime policy in scheduler __ */
 		}
 
-#ifdef CONFIG_NET_DMA
-		if (tp->ucopy.dma_chan)
-			dma_async_issue_pending(tp->ucopy.dma_chan);
-#endif
 		if (copied >= target) {
 			/* Do not sleep, just process backlog. */
 			release_sock(sk);
@@ -1461,10 +1385,6 @@ wait_for_event:
 			sk_wait_data(sk, &timeo);
 			/* Woke up after waiting for data. */
 		}
-#ifdef CONFIG_NET_DMA
-		serval_tcp_service_net_dma(sk, false);  /* Don't block */
-		tp->ucopy.wakeup = 0;
-#endif
 
 		if (user_recv) {
 			int chunk;
@@ -1534,45 +1454,13 @@ found_ok_skb:
 		}
 
 		if (!(flags & MSG_TRUNC)) {
-#ifdef CONFIG_NET_DMA
-			if (!tp->ucopy.dma_chan && tp->ucopy.pinned_list)
-				tp->ucopy.dma_chan =
-					dma_find_channel(DMA_MEMCPY);
-
-			if (tp->ucopy.dma_chan) {
-				tp->ucopy.dma_cookie =
-					dma_skb_copy_datagram_iovec(
-						tp->ucopy.dma_chan, skb,
-						offset,
-						msg->msg_iov, used,
-						tp->ucopy.pinned_list);
-
-				if (tp->ucopy.dma_cookie < 0) {
-					printk(KERN_ALERT "dma_cookie < 0\n");
-
-					/* Exception. Bailout! */
-					if (!copied)
-						copied = -EFAULT;
-					break;
-				}
-
-				dma_async_issue_pending(tp->ucopy.dma_chan);
-
-				if ((offset + used) == skb->len)
-					copied_early = 1;
-
-			} else
-#endif
-			{
-				err = skb_copy_datagram_iovec(skb, offset,
-							      msg->msg_iov,
-							      used);
-				if (err) {
-					/* Exception. Bailout! */
-					if (!copied)
-						copied = -EFAULT;
-					break;
-				}
+			err = skb_copy_datagram_iovec(skb, offset, msg->msg_iov,
+						      used);
+			if (err) {
+				/* Exception. Bailout! */
+				if (!copied)
+					copied = -EFAULT;
+				break;
 			}
 		}
 
@@ -1593,10 +1481,8 @@ skip_copy:
 		if (tcp_hdr(skb)->fin)
 			goto found_fin_ok;
 
-		if (!(flags & MSG_PEEK)) {
-			sk_eat_skb(sk, skb, copied_early);
-			copied_early = 0;
-		}
+		if (!(flags & MSG_PEEK))
+			sk_eat_skb(sk, skb);
 		continue;
 found_fin_ok:
 		++*seq;
@@ -1613,8 +1499,7 @@ found_fin_ok:
 
 		if (!(flags & MSG_PEEK)) {
 			tp->fin_found = 1;
-			sk_eat_skb(sk, skb, copied_early);
-			copied_early = 0;
+			sk_eat_skb(sk, skb);
 			continue;
 		}
 		break;
@@ -1645,16 +1530,6 @@ found_fin_ok:
 		tp->ucopy.task = NULL;
 		tp->ucopy.len = 0;
 	}
-
-#ifdef CONFIG_NET_DMA
-	serval_tcp_service_net_dma(sk, true);  /* Wait for queue to drain */
-	tp->ucopy.dma_chan = NULL;
-
-	if (tp->ucopy.pinned_list) {
-		dma_unpin_iovec_pages(tp->ucopy.pinned_list);
-		tp->ucopy.pinned_list = NULL;
-	}
-#endif
 
 	/* According to UNIX98, msg_name/msg_namelen are ignored
 	 * on connected socket. I was just happy when found this 8) --ANK
@@ -2475,11 +2350,6 @@ static void serval_tcp_destroy_sock(struct sock *sk)
 	serval_tcp_write_queue_purge(sk);
 
 	__skb_queue_purge(&tp->out_of_order_queue);
-
-#ifdef CONFIG_NET_DMA
-	/* Cleans up our sk_async_wait_queue */
-	__skb_queue_purge(&sk->sk_async_wait_queue);
-#endif
 
 	/* Clean prequeue, it must be empty really */
 	__skb_queue_purge(&tp->ucopy.prequeue);

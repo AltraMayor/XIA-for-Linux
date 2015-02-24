@@ -1,5 +1,4 @@
 #include <asm/unaligned.h>
-#include <net/netdma.h>
 #include "serval_tcp_sock.h"
 #include "serval_tcp.h"
 
@@ -3126,52 +3125,6 @@ static inline int serval_tcp_sequence(struct serval_tcp_sock *tp,
 		!after(seq, tp->rcv_nxt + serval_tcp_receive_window(tp));
 }
 
-#ifdef CONFIG_NET_DMA
-static int serval_tcp_dma_try_early_copy(struct sock *sk, struct sk_buff *skb,
-					 int hlen)
-{
-	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
-	int chunk = skb->len - hlen;
-	int dma_cookie;
-	int copied_early = 0;
-
-	if (tp->ucopy.wakeup)
-		return 0;
-
-	if (!tp->ucopy.dma_chan && tp->ucopy.pinned_list)
-		tp->ucopy.dma_chan = dma_find_channel(DMA_MEMCPY);
-
-	if (tp->ucopy.dma_chan && skb_csum_unnecessary(skb)) {
-		dma_cookie = dma_skb_copy_datagram_iovec(tp->ucopy.dma_chan,
-							 skb, hlen,
-							 tp->ucopy.iov, chunk,
-							 tp->ucopy.pinned_list);
-
-		if (dma_cookie < 0)
-			goto out;
-
-		tp->ucopy.dma_cookie = dma_cookie;
-		copied_early = 1;
-
-		tp->ucopy.len -= chunk;
-		tp->copied_seq += chunk;
-		serval_tcp_rcv_space_adjust(sk);
-
-		if ((tp->ucopy.len == 0) ||
-		    (tcp_flag_word(tcp_hdr(skb)) & TCP_FLAG_PSH) ||
-		    (atomic_read(&sk->sk_rmem_alloc) > (sk->sk_rcvbuf >> 1))) {
-			tp->ucopy.wakeup = 1;
-			sk->sk_data_ready(sk);
-		}
-	} else if (chunk > 0) {
-		tp->ucopy.wakeup = 1;
-		sk->sk_data_ready(sk);
-	}
-out:
-	return copied_early;
-}
-#endif /* CONFIG_NET_DMA */
-
 /* Does PAWS and seqno based validation of an incoming segment, flags will
  * play significant role here.
  */
@@ -3554,13 +3507,6 @@ int serval_tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 
 			if (tp->copied_seq == tp->rcv_nxt &&
 			    len - tcp_header_len <= tp->ucopy.len) {
-#ifdef CONFIG_NET_DMA
-				if (serval_tcp_dma_try_early_copy(sk, skb,
-					tcp_header_len)) {
-					copied_early = 1;
-					eaten = 1;
-				}
-#endif
 				if (tp->ucopy.task == current &&
 				    sock_owned_by_user(sk) && !copied_early) {
 					__set_current_state(TASK_RUNNING);
@@ -3638,17 +3584,10 @@ int serval_tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 			if (!copied_early || tp->rcv_nxt != tp->rcv_wup)
 				__serval_tcp_ack_snd_check(sk, 0);
 no_ack:
-#ifdef CONFIG_NET_DMA
-			if (copied_early)
-				__skb_queue_tail(&sk->sk_async_wait_queue, skb);
+			if (eaten)
+				__kfree_skb(skb);
 			else
-#endif
-			{
-				if (eaten)
-					__kfree_skb(skb);
-				else
-					sk->sk_data_ready(sk);
-			}
+				sk->sk_data_ready(sk);
 			return 0;
 		}
 	}

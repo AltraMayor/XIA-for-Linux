@@ -837,12 +837,6 @@ static inline void serval_tcp_prequeue_init(struct serval_tcp_sock *tp)
 	tp->ucopy.len = 0;
 	tp->ucopy.memory = 0;
 	skb_queue_head_init(&tp->ucopy.prequeue);
-#ifdef CONFIG_NET_DMA
-	tp->ucopy.dma_chan = NULL;
-	tp->ucopy.wakeup = 0;
-	tp->ucopy.pinned_list = NULL;
-	tp->ucopy.dma_cookie = 0;
-#endif
 }
 
 int serval_tcp_do_rcv(struct sock *sk, struct sk_buff *skb);
