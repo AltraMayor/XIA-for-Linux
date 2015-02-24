@@ -24,9 +24,6 @@ int xia_release(struct socket *sock)
 	if (sk) {
 		long timeout;
 
-		/* XXX Review this RPS call. */
-		sock_rps_reset_flow(sk);
-
 		/* If linger is set, we don't return until the close
 		 * is complete. Otherwise we return immediately.
 		 * The actually closing is done the same either way.
