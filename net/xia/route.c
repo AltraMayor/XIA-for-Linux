@@ -57,8 +57,7 @@ static struct dst_entry *xip_negative_advice(struct dst_entry *dst);
 /* XXX An ICMP-like error should be genererated here. */
 static void xip_link_failure(struct sk_buff *skb)
 {
-	if (net_ratelimit())
-		pr_warn("%s: unreachable destination\n", __func__);
+	net_warn_ratelimited("%s: unreachable destination\n", __func__);
 }
 
 static void xip_update_pmtu(struct dst_entry *dst, struct sock *sk,
@@ -750,8 +749,8 @@ void xdst_invalidate_redirect(struct net *net, xid_type_t from_type,
 	anchor = find_anchor_of_rcu(net, to);
 	if (IS_ERR(anchor)) {
 		rcu_read_unlock();
-		LIMIT_NETDEBUG(KERN_ERR pr_fmt("%s: XIP could not invalidate DST entries because of error %li. Clearing XIP DST cache as a last resource...\n"),
-			       __func__, PTR_ERR(anchor));
+		net_err_ratelimited("%s: XIP could not invalidate DST entries because of error %li. Clearing XIP DST cache as a last resource...\n",
+				    __func__, PTR_ERR(anchor));
 		clear_xdst_table(net);
 		return;
 	}
@@ -778,9 +777,8 @@ int xdst_def_hop_limit_input_method(struct sk_buff *skb)
 			/* XXX Is this warning necessary? If so,
 			 * shouldn't it report more?
 			 */
-			LIMIT_NETDEBUG(
-				KERN_WARNING pr_fmt("%s: hop limit reached\n"),
-				__func__);
+			net_warn_ratelimited("%s: hop limit reached\n",
+					     __func__);
 			goto drop;
 		}
 		xiph->hop_limit--;
@@ -1031,9 +1029,8 @@ static int deliver_rcu(struct net *net, const struct xia_xid *xid,
 /* XXX An ICMP-like error should be genererated here. */
 static inline int xip_dst_not_supported(char *direction, struct sk_buff *skb)
 {
-	if (net_ratelimit())
-		pr_warn("XIP: not supported address for principal on direction %s\n",
-			direction);
+	net_warn_ratelimited("XIP: not supported address for principal on direction %s\n",
+			     direction);
 	return dst_discard(skb);
 }
 

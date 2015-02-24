@@ -329,8 +329,7 @@ static int main_input_input(struct sk_buff *skb)
 		/* XXX Is this warning necessary? If so,
 		 * shouldn't it report more?
 		 */
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("%s: hop limit reached\n"),
-			       __func__);
+		net_warn_ratelimited("%s: hop limit reached\n", __func__);
 		goto drop;
 	}
 

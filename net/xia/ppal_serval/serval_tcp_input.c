@@ -1970,8 +1970,7 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 		if (serval_tcp_is_reno(tp)) {
 			serval_tcp_remove_reno_sacks(sk, pkts_acked);
 		} else {
-			LIMIT_NETDEBUG(KERN_ERR
-				pr_fmt("Serval: Only TCP RENO supported!\n"));
+			net_err_ratelimited("Serval: Only TCP RENO supported!\n");
 			/*
 			int delta;
 
@@ -2247,7 +2246,7 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 					tcp_sack_reset(opt_rx);
 				}
 				*/
-				LIMIT_NETDEBUG(KERN_ERR pr_fmt("Serval: TCPOPT_SACK_PERM not implemented!\n"));
+				net_err_ratelimited("Serval: TCPOPT_SACK_PERM not implemented!\n");
 				break;
 
 			case TCPOPT_SACK:
@@ -2261,7 +2260,7 @@ void serval_tcp_parse_options(struct sk_buff *skb,
 						(unsigned char *)th;
 				}
 				*/
-				LIMIT_NETDEBUG(KERN_ERR pr_fmt("Serval: TCPOPT_SACK not implemented!\n"));
+				net_err_ratelimited("Serval: TCPOPT_SACK not implemented!\n");
 				break;
 #ifdef CONFIG_TCP_MD5SIG
 			case TCPOPT_MD5SIG:

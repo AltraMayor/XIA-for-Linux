@@ -662,8 +662,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		 * each call uses flag MSG_MORE.
 		 */
 		release_sock(sk);
-		LIMIT_NETDEBUG(KERN_DEBUG pr_fmt("XDP %s(): cork app bug\n"),
-			       __func__);
+		net_dbg_ratelimited("XDP %s(): cork app bug\n", __func__);
 		rc = -EINVAL;
 		goto xdst;
 	}

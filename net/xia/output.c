@@ -128,15 +128,15 @@ static struct sk_buff *__xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 	int hh_len, xh_len, rc;
 
 	if (!dev) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIP %s: there is a bug somewhere, tried to send a datagram, but dst.dev is NULL\n"),
-			       __func__);
+		net_warn_ratelimited("XIP %s: there is a bug somewhere, tried to send a datagram, but dst.dev is NULL\n",
+				     __func__);
 		return ERR_PTR(-ENODEV);
 	}
 
 	mtu = dst_mtu(&xdst->dst);
 	if (mtu < XIP_MIN_MTU) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIP %s: cannot send datagram out because mtu (= %u) of dev %s is less than minimum MTU (= %u)\n"),
-			       __func__, mtu, dev->name, XIP_MIN_MTU);
+		net_warn_ratelimited("XIP %s: cannot send datagram out because mtu (= %u) of dev %s is less than minimum MTU (= %u)\n",
+				     __func__, mtu, dev->name, XIP_MIN_MTU);
 		return ERR_PTR(-EMSGSIZE);
 	}
 

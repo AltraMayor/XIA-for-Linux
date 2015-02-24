@@ -55,10 +55,7 @@ static int serval_tcp_out_of_resources(struct sock *sk, int do_reset)
 		shift++;
 
 	if (serval_tcp_too_many_orphans(sk, shift)) {
-		/*
-		if (net_ratelimit())
-			printk(KERN_INFO "Out of socket memory\n");
-		*/
+		/* net_info_ratelimited("Out of socket memory\n"); */
 		/* Catch exceptional cases, when connection requires reset.
 		 *      1. Last segment was sent recently.
 		 */
@@ -136,8 +133,7 @@ static int retransmits_timed_out(struct sock *sk,
 		struct sk_buff *skb = serval_tcp_write_queue_head(sk);
 
 		if (!skb) {
-			LIMIT_NETDEBUG(KERN_ERR
-				pr_fmt("BUG! Transmit queue empty!\n"));
+			net_err_ratelimited("BUG! Transmit queue empty!\n");
 			return 0;
 		}
 		start_ts = TCP_SKB_CB(skb)->when;
@@ -470,8 +466,7 @@ static void serval_tcp_keepalive_timer(unsigned long data)
 	}
 
 	/* XXX Implement it or drop it. */
-	LIMIT_NETDEBUG(KERN_WARNING
-		pr_fmt("Keepalive timer not implemented!\n"));
+	net_warn_ratelimited("Keepalive timer not implemented!\n");
 
 out:
 	bh_unlock_sock(sk);

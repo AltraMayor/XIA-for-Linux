@@ -360,12 +360,12 @@ static int forward_local(struct iterate_arg *iarg,
 
 	cpy_skb = pskb_copy(iarg->skb, GFP_ATOMIC);
 	if (!cpy_skb) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: no atomic memory to forward a patcket with the chosen local ZF edge\n"));
+		net_warn_ratelimited("XIA/ZF: no atomic memory to forward a patcket with the chosen local ZF edge\n");
 		goto out;
 	}
 
 	if (dig_last_node(cpy_skb)) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward ill-formed patcket with the chosen local ZF edge\n"));
+		net_warn_ratelimited("XIA/ZF: can't forward ill-formed patcket with the chosen local ZF edge\n");
 		/* If one cannot dig the last node once,
 		 * one cannot dig it for all local entries.
 		 * Thus, we mark the packet as forwarded.
@@ -377,8 +377,8 @@ static int forward_local(struct iterate_arg *iarg,
 	skb_dst_drop(cpy_skb);
 	rc = xip_route(iarg->net, cpy_skb, 0);
 	if (rc) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after digging the local ZF edge: %i\n"),
-			       rc);
+		net_warn_ratelimited("XIA/ZF: can't route a packet after digging the local ZF edge: %i\n",
+				     rc);
 		/* If one cannot forward this packet once,
 		 * one cannot forward it for all local entries.
 		 * Thus, we mark the packet as forwarded.
@@ -387,8 +387,8 @@ static int forward_local(struct iterate_arg *iarg,
 	}
 	rc = dst_output(cpy_skb);
 	if (rc)
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward a packet after digging the local ZF edge: %i\n"),
-			       rc);
+		net_warn_ratelimited("XIA/ZF: can't forward a packet after digging the local ZF edge: %i\n",
+				     rc);
 	goto forwarded;
 
 failed_to_forward:
@@ -406,7 +406,7 @@ static int forward_main(struct iterate_arg *iarg, struct fib_xid_zf_main *mzf)
 
 	cpy_skb = pskb_copy(iarg->skb, GFP_ATOMIC);
 	if (!cpy_skb) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: no atomic memory to forward a patcket with the chosen main ZF edge\n"));
+		net_warn_ratelimited("XIA/ZF: no atomic memory to forward a patcket with the chosen main ZF edge\n");
 		return 0;
 	}
 
@@ -418,15 +418,15 @@ static int forward_main(struct iterate_arg *iarg, struct fib_xid_zf_main *mzf)
 	rc = xip_route_with_a_redirect(iarg->net, cpy_skb, &mzf->gw,
 				       iarg->xdst->chosen_edge, 0);
 	if (rc) {
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't route a packet after redirecting the main ZF edge: %i\n"),
-			       rc);
+		net_warn_ratelimited("XIA/ZF: can't route a packet after redirecting the main ZF edge: %i\n",
+				     rc);
 		kfree_skb(cpy_skb);
 		return 0;
 	}
 	rc = dst_output(cpy_skb);
 	if (rc)
-		LIMIT_NETDEBUG(KERN_WARNING pr_fmt("XIA/ZF: can't forward a packet after routing the main ZF edge: %i\n"),
-			       rc);
+		net_warn_ratelimited("XIA/ZF: can't forward a packet after routing the main ZF edge: %i\n",
+				     rc);
 	return 0;
 }
 

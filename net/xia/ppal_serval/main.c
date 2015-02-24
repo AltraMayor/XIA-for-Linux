@@ -582,9 +582,8 @@ void serval_sock_destroy(struct sock *sk)
 	WARN_ON(ssk->flow_rtid);
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
-		LIMIT_NETDEBUG(KERN_WARNING
-			pr_fmt("Attempt to release alive XIA/Serval socket %p\n"),
-			sk);
+		net_warn_ratelimited("Attempt to release alive XIA/Serval socket %p\n",
+				     sk);
 		return;
 	}
 

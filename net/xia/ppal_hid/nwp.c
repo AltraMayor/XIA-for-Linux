@@ -471,18 +471,16 @@ static int __announce_on_dev(struct fib_xid_table *xtbl,
 	dev = state->hdev->dev;
 	if (skb->len + XIA_XID_MAX > state->data_len) {
 		/* XXX Enhance NWP to support multiple-frame announcements. */
-		if (net_ratelimit())
-			pr_warn("XIA HID NWP: Can't announce all local HIDs on dev %s because its largest frame (MTU=%u) doesn't fit them\n",
-				dev->name, state->mtu);
+		net_warn_ratelimited("XIA HID NWP: Can't announce all local HIDs on dev %s because its largest frame (MTU=%u) doesn't fit them\n",
+				     dev->name, state->mtu);
 		return 1;
 	}
 
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
 	if (nwp->hid_count == 0xff) {
 		/* XXX Enhance NWP to support multiple-frame announcements. */
-		if (net_ratelimit())
-			pr_warn("XIA HID NWP: Can't announce all local HIDs on dev %s because there are more than 255 local HIDs\n",
-				dev->name);
+		net_warn_ratelimited("XIA HID NWP: Can't announce all local HIDs on dev %s because there are more than 255 local HIDs\n",
+				     dev->name);
 		return 1;
 	}
 
@@ -769,9 +767,8 @@ static void read_announcement(struct sk_buff *skb)
 		u8 *next_xid = skb_pull(skb, XIA_XID_MAX);
 
 		if (!next_xid) {
-			if (net_ratelimit())
-				pr_warn("XIA HID NWP: An announcement was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
-					nwp->hid_count, count);
+			net_warn_ratelimited("XIA HID NWP: An announcement was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
+					     nwp->hid_count, count);
 			break;
 		}
 		/* Ignore errors. */
@@ -841,9 +838,8 @@ static int process_neigh_list(struct sk_buff *skb)
 		int original_ha_count, ha_count;
 
 		if (!haddr_or_xid) {
-			if (net_ratelimit())
-				pr_warn("XIA HID NWP: A neighbor list was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
-					nwp->hid_count, hid_count);
+			net_warn_ratelimited("XIA HID NWP: A neighbor list was received truncated. It should contain %i HID(s), but %i HID(s) are missing\n",
+					     nwp->hid_count, hid_count);
 			break;
 		}
 		original_ha_count = xid[XIA_XID_MAX];

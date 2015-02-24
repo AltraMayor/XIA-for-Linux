@@ -736,8 +736,8 @@ void serval_sal_close(struct sock *sk, long timeout)
 
 	if ((1 << sk->sk_state) & (SALF_FINWAIT1 | SALF_FINWAIT2 |
 		SALF_TIMEWAIT | SALF_CLOSING)) {
-		LIMIT_NETDEBUG(KERN_ERR pr_fmt("XIP/Serval: close() called in post close state (= %i)\n"),
-			       sk->sk_state);
+		net_err_ratelimited("XIP/Serval: close() called in post close state (= %i)\n",
+				    sk->sk_state);
 		return;
 	}
 
