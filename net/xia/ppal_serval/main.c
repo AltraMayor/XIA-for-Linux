@@ -1013,58 +1013,6 @@ out:
 	return rc;
 }
 
-static unsigned int serval_poll(struct file *file, struct socket *sock,
-				poll_table *wait)
-{
-	struct sock *sk = sock->sk;
-	unsigned int mask;
-
-	sock_poll_wait(file, sk_sleep(sk), wait);
-	if (sk->sk_state == SAL_LISTEN) {
-		struct serval_sock *ssk = sk_ssk(sk);
-
-		return list_empty(&ssk->accept_queue) ? 0 :
-			(POLLIN | POLLRDNORM);
-	}
-
-	mask = 0;
-
-	if (sk->sk_err)
-		mask = POLLERR;
-
-	if (sk->sk_shutdown == SHUTDOWN_MASK ||
-	    sk->sk_state == SAL_CLOSED)
-		mask |= POLLHUP;
-	if (sk->sk_shutdown & RCV_SHUTDOWN)
-		mask |= POLLIN | POLLRDNORM | POLLRDHUP;
-
-	if ((1 << sk->sk_state) & ~(SALF_REQUEST | SALF_RESPOND)) {
-		if (atomic_read(&sk->sk_rmem_alloc) > 0)
-			mask |= POLLIN | POLLRDNORM;
-
-		if (!(sk->sk_shutdown & SEND_SHUTDOWN)) {
-			if (sk_stream_wspace(sk) >=
-			    sk_stream_min_wspace(sk)) {
-				mask |= POLLOUT | POLLWRNORM;
-			} else {  /* send SIGIO later */
-				set_bit(SOCK_ASYNC_NOSPACE,
-					&sk->sk_socket->flags);
-				set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-
-				/* Race breaker. If space is freed after
-				 * wspace test but before the flags are set,
-				 * IO signal will be lost.
-				 */
-				if (sk_stream_wspace(sk) >=
-				    sk_stream_min_wspace(sk))
-					mask |= POLLOUT | POLLWRNORM;
-			}
-		}
-	}
-
-	return mask;
-}
-
 /* Next FlowID. */
 static atomic64_t serval_flow_id;
 
@@ -1285,10 +1233,6 @@ extern unsigned int serval_tcp_poll(struct file *file, struct socket *sock,
 				    poll_table *wait);
 
 #if defined(ENABLE_SPLICE)
-extern ssize_t serval_udp_splice_read(struct socket *sock, loff_t *ppos,
-				      struct pipe_inode_info *pipe,
-				      size_t len, unsigned int flags);
-
 extern ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 				      struct pipe_inode_info *pipe,
 				      size_t len, unsigned int flags);
@@ -1318,32 +1262,7 @@ static const struct proto_ops serval_stream_ops = {
 #endif
 };
 
-static const struct proto_ops serval_dgram_ops = {
-	.family		= PF_XIA,
-	.owner		= THIS_MODULE,
-	.release	= xia_release,
-	.bind		= xia_bind,
-	.connect	= serval_connect,
-	.socketpair	= sock_no_socketpair,
-	.accept		= serval_accept,
-	.getname	= xia_getname,
-	.poll		= serval_poll,
-	.ioctl		= xia_ioctl,
-	.listen		= serval_listen,
-	.shutdown	= serval_shutdown,
-	.setsockopt	= sock_common_setsockopt,
-	.getsockopt	= sock_common_getsockopt,
-	.sendmsg	= serval_sendmsg,
-	.recvmsg	= xia_recvmsg,
-	.mmap		= sock_no_mmap,
-	.sendpage	= xia_sendpage,
-#if defined(ENABLE_SPLICE)
-	.splice_read	= serval_udp_splice_read,
-#endif
-};
-
 extern struct proto serval_tcp_proto;
-extern struct proto serval_udp_proto;
 
 static const struct xia_socket_type_proc serval_stream = {
 	.proto		= &serval_tcp_proto,
@@ -1351,17 +1270,10 @@ static const struct xia_socket_type_proc serval_stream = {
 	.ops		= &serval_stream_ops,
 };
 
-static const struct xia_socket_type_proc serval_dgram = {
-	.proto		= &serval_udp_proto,
-	.alloc_slab	= true,
-	.ops		= &serval_dgram_ops,
-};
-
 static struct xia_socket_proc serval_sock_proc __read_mostly = {
 	.name			= "Serval",
 	.ppal_type		= XIDTYPE_SRVCID,
 	.procs[SOCK_STREAM]	= &serval_stream,
-	.procs[SOCK_DGRAM]	= &serval_dgram,
 };
 
 /* Main */
