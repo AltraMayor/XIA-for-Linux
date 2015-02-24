@@ -414,7 +414,7 @@ int xia_add_socket(struct xia_socket_proc *sproc)
 	if (unlikely(vxt < 0))
 		return -EINVAL;
 
-	rc = percpu_counter_init(&sproc->sockets_allocated, 0);
+	rc = percpu_counter_init(&sproc->sockets_allocated, 0, GFP_KERNEL);
 	if (rc)
 		goto out;
 
