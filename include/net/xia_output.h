@@ -32,14 +32,14 @@ int xip_start_skb(struct sock *sk, struct xip_dst *xdst,
 int xip_append_data(struct sock *sk,
 	int getfrag(void *from, char *to, int offset,
 		int len, int odd, struct sk_buff *skb),
-	struct iovec *from, int length, unsigned int flags);
+	struct msghdr *from, int length, unsigned int flags);
 struct sk_buff *xip_finish_skb(struct sock *sk);
 
 struct sk_buff *xip_make_skb(struct sock *sk,
 	const struct xia_addr *dest, int dest_n, u8 dest_last_node,
 	int getfrag(void *from, char *to, int offset,
 		int len, int odd, struct sk_buff *skb),
-	struct iovec *from, int length, int transhdrlen, struct xip_dst *xdst,
+	struct msghdr *from, int length, int transhdrlen, struct xip_dst *xdst,
 	unsigned int flags);
 
 void xip_fill_in_hdr(struct sk_buff *skb, struct xip_dst *xdst,

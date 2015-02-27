@@ -530,7 +530,8 @@ static int xdp_getsockopt(struct sock *sk, int level, int optname,
 static int xdp_getfrag(void *from, char *to, int  offset, int len,
 		       int odd, struct sk_buff *skb)
 {
-	return memcpy_fromiovecend(to, (struct iovec *)from, offset, len);
+	struct msghdr *msg = from;
+	return copy_from_iter(to, len, &msg->msg_iter) != len ? -EFAULT : 0;
 }
 
 static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
@@ -554,7 +555,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 		 */
 		lock_sock(sk);
 		if (likely(lxdp->pending)) {
-			rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len,
+			rc = xip_append_data(sk, xdp_getfrag, msg, len,
 					     corkreq ?
 					     msg->msg_flags|MSG_MORE :
 					     msg->msg_flags);
@@ -641,7 +642,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	/* Lockless fast path for the non-corking case. */
 	if (!corkreq) {
 		struct sk_buff *skb = xip_make_skb(sk, dest, dest_n,
-			dest_last_node, xdp_getfrag, msg->msg_iov, len,
+			dest_last_node, xdp_getfrag, msg, len,
 			0, xdst, msg->msg_flags);
 		if (IS_ERR(skb))
 			rc = PTR_ERR(skb);
@@ -677,7 +678,7 @@ static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
 	/* Now cork the socket to append data. */
 	lxdp->pending = true;
 
-	rc = xip_append_data(sk, xdp_getfrag, msg->msg_iov, len,
+	rc = xip_append_data(sk, xdp_getfrag, msg, len,
 			     corkreq ?
 			     msg->msg_flags|MSG_MORE :
 			     msg->msg_flags);
@@ -719,7 +720,7 @@ static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	else if (copied < ulen)
 		 msg->msg_flags |= MSG_TRUNC;
 
-	rc = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
+	rc = skb_copy_datagram_msg(skb, 0, msg, copied);
 	if (unlikely(rc))
 		goto out_free;
 
