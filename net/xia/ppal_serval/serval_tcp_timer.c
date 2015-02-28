@@ -136,7 +136,7 @@ static int retransmits_timed_out(struct sock *sk,
 			net_err_ratelimited("BUG! Transmit queue empty!\n");
 			return 0;
 		}
-		start_ts = TCP_SKB_CB(skb)->when;
+		start_ts = SERVAL_TCP_SKB_CB(skb)->when;
 	} else {
 		start_ts = serval_tcp_sk(sk)->retrans_stamp;
 	}

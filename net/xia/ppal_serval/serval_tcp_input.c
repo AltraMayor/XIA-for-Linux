@@ -1211,7 +1211,7 @@ static inline int serval_tcp_dupack_heuristics(struct serval_tcp_sock *tp)
 static inline int serval_tcp_skb_timedout(struct sock *sk,
 					  struct sk_buff *skb)
 {
-	return tcp_time_stamp - TCP_SKB_CB(skb)->when >
+	return tcp_time_stamp - SERVAL_TCP_SKB_CB(skb)->when >
 		serval_tcp_sk(sk)->rto;
 }
 
@@ -1872,16 +1872,16 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 
 	while ((skb = serval_tcp_write_queue_head(sk)) &&
 	       skb != serval_tcp_send_head(sk)) {
-		struct tcp_skb_cb *scb = TCP_SKB_CB(skb);
+		struct serval_tcp_skb_cb *scb = SERVAL_TCP_SKB_CB(skb);
 		u32 acked_pcount;
-		u8 sacked = scb->sacked;
+		u8 sacked = scb->tcp_cb.sacked;
 
 		/* Determine how many packets and what bytes were
 		 * acked, tso and else.
 		 */
-		if (after(scb->end_seq, tp->snd_una)) {
+		if (after(scb->tcp_cb.end_seq, tp->snd_una)) {
 			if (serval_tcp_skb_pcount(skb) == 1 ||
-			    !after(tp->snd_una, scb->seq))
+			    !after(tp->snd_una, scb->tcp_cb.seq))
 				break;
 
 			acked_pcount = serval_tcp_tso_acked(sk, skb);
@@ -1925,9 +1925,9 @@ static int serval_tcp_clean_rtx_queue(struct sock *sk,
 		 * connection startup slow start one packet too
 		 * quickly.  This is severely frowned upon behavior.
 		 */
-		if (!(scb->tcp_flags & TCPH_SYN)) {
+		if (!(scb->tcp_cb.tcp_flags & TCPH_SYN)) {
 			flag |= FLAG_DATA_ACKED;
-			if (scb->tcp_flags & TCPH_FIN)
+			if (scb->tcp_cb.tcp_flags & TCPH_FIN)
 				flag |= FLAG_FIN_ACKED;
 		} else {
 			flag |= FLAG_SYN_ACKED;

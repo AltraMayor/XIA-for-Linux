@@ -232,8 +232,10 @@ int serval_tcp_rcv_checks(struct sock *sk, struct sk_buff *skb, int is_syn)
 	TCP_SKB_CB(skb)->end_seq = (TCP_SKB_CB(skb)->seq +
 		th->syn + th->fin + skb->len - th->doff * 4);
 	TCP_SKB_CB(skb)->ack_seq = ntohl(th->ack_seq);
-	TCP_SKB_CB(skb)->when = 0;
 	TCP_SKB_CB(skb)->sacked = 0;
+
+	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(struct serval_tcp_skb_cb));
+	SERVAL_TCP_SKB_CB(skb)->when = 0;
 
 	/* Serval's original code copies IP's header's field TOS, that is,
 	 * ip_hdr(skb)->tos . XIA doesn't have equivalent field.

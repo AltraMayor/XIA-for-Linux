@@ -808,7 +808,7 @@ int serval_tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
 	/* Looks stupid, but our code really uses when of
 	 * skbs, which it never sent before. --ANK
 	 */
-	TCP_SKB_CB(buff)->when = TCP_SKB_CB(skb)->when;
+	SERVAL_TCP_SKB_CB(buff)->when = SERVAL_TCP_SKB_CB(skb)->when;
 	buff->tstamp = skb->tstamp;
 
 	old_factor = serval_tcp_skb_pcount(skb);
@@ -1223,7 +1223,7 @@ int serval_tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
 	/* Make a copy, if the first transmission SKB clone we made
 	 * is still in somebody's hands, else make a clone.
 	 */
-	TCP_SKB_CB(skb)->when = tcp_time_stamp;
+	SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
 
 	err = serval_tcp_transmit_skb(sk, skb, 1, GFP_ATOMIC);
 
@@ -1240,7 +1240,7 @@ int serval_tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
 
 		/* Save stamp of the first retransmit. */
 		if (!tp->retrans_stamp)
-			tp->retrans_stamp = TCP_SKB_CB(skb)->when;
+			tp->retrans_stamp = SERVAL_TCP_SKB_CB(skb)->when;
 
 		tp->undo_retrans++;
 
@@ -1445,7 +1445,7 @@ static int serval_tcp_mtu_probe(struct sock *sk)
 	/* We're ready to send. If this fails, the probe will
 	 * be resegmented into mss-sized pieces by tcp_write_xmit().
 	 */
-	TCP_SKB_CB(nskb)->when = tcp_time_stamp;
+	SERVAL_TCP_SKB_CB(nskb)->when = tcp_time_stamp;
 	if (!serval_tcp_transmit_skb(sk, nskb, 1, GFP_ATOMIC)) {
 		/* Decrement cwnd here because we are sending
 		 * effectively two packets.
@@ -1575,7 +1575,7 @@ static int serval_tcp_write_xmit(struct sock *sk, unsigned int mss_now,
 		    unlikely(serval_tso_fragment(sk, skb, limit, mss_now, gfp)))
 			break;
 
-		TCP_SKB_CB(skb)->when = tcp_time_stamp;
+		SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
 
 		if (unlikely(serval_tcp_transmit_skb(sk, skb, 1, gfp)))
 			break;
@@ -1936,8 +1936,8 @@ int serval_tcp_connection_build_syn(struct sock *sk, struct sk_buff *skb)
 	tp->snd_nxt = tp->write_seq;
 	serval_tcp_init_nondata_skb(skb, tp->write_seq++, TCPH_SYN);
 
-	TCP_SKB_CB(skb)->when = tcp_time_stamp;
-	tp->retrans_stamp = TCP_SKB_CB(skb)->when;
+	SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
+	tp->retrans_stamp = SERVAL_TCP_SKB_CB(skb)->when;
 
 	memset(th, 0, tcp_header_size);
 	th->seq			= htonl(TCP_SKB_CB(skb)->seq);
@@ -1989,7 +1989,7 @@ int serval_tcp_connection_build_synack(struct sock *sk, struct dst_entry *dst,
 	serval_tcp_init_nondata_skb(skb, trsk->snt_isn, TCPH_SYN | TCPH_ACK);
 
 	memset(&opts, 0, sizeof(opts));
-	TCP_SKB_CB(skb)->when = tcp_time_stamp;
+	SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
 	tcp_options_size = serval_tcp_synack_options(sk, trsk, mss,
 						     skb, &opts, &md5);
 	tcp_header_size = tcp_options_size  + sizeof(struct tcphdr);
@@ -2048,7 +2048,7 @@ int serval_tcp_connection_build_ack(struct sock *sk, struct sk_buff *skb)
 	th->check = 0;
 	th->urg_ptr = 0;
 
-	TCP_SKB_CB(skb)->when = tcp_time_stamp;
+	SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
 
 	if (sk_ssk(sk)->af_ops->send_check)
 		sk_ssk(sk)->af_ops->send_check(sk, skb);
@@ -2309,7 +2309,7 @@ void serval_tcp_send_ack(struct sock *sk)
 				    TCPH_ACK);
 
 	/* Send it off, this clears delayed acks for us. */
-	TCP_SKB_CB(buff)->when = tcp_time_stamp;
+	SERVAL_TCP_SKB_CB(buff)->when = tcp_time_stamp;
 	serval_tcp_transmit_skb(sk, buff, 0, GFP_ATOMIC);
 }
 
@@ -2341,7 +2341,7 @@ static int serval_tcp_xmit_probe_skb(struct sock *sk, int urgent)
 	 * send it.
 	 */
 	serval_tcp_init_nondata_skb(skb, tp->snd_una - !urgent, TCPH_ACK);
-	TCP_SKB_CB(skb)->when = tcp_time_stamp;
+	SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
 	return serval_tcp_transmit_skb(sk, skb, 0, GFP_ATOMIC);
 }
 
@@ -2380,7 +2380,7 @@ int serval_tcp_write_wakeup(struct sock *sk)
 			serval_tcp_set_skb_tso_segs(sk, skb, mss);
 		}
 		TCP_SKB_CB(skb)->tcp_flags |= TCPH_PSH;
-		TCP_SKB_CB(skb)->when = tcp_time_stamp;
+		SERVAL_TCP_SKB_CB(skb)->when = tcp_time_stamp;
 		err = serval_tcp_transmit_skb(sk, skb, 1, GFP_ATOMIC);
 		if (!err)
 			serval_tcp_event_new_data_sent(sk, skb);

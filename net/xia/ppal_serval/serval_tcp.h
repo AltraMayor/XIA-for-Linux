@@ -5,6 +5,15 @@
 #include "serval_tcp_sock.h"
 #include "serval_sal.h"
 
+struct serval_tcp_skb_cb {
+	/* It must be the first field. */
+	struct tcp_skb_cb	tcp_cb;
+	/* Used in output path to compute rtt's. */
+	__u32			when;
+};
+
+#define SERVAL_TCP_SKB_CB(__skb) ((struct serval_tcp_skb_cb *)&((__skb)->cb[0]))
+
 /* TCP timestamps are only 32-bits, this causes a slight
  * complication on 64-bit systems since we store a snapshot
  * of jiffies in the buffer control blocks below.  We decided
