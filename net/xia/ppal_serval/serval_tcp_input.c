@@ -2060,7 +2060,7 @@ static int serval_tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 		tp->snd_una = ack;
 		flag |= FLAG_WIN_UPDATE;
 
-		serval_tcp_ca_event(sk, CA_EVENT_FAST_ACK);
+		/*serval_tcp_ca_event(sk, CA_EVENT_FAST_ACK);*/
 
 		/* NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPHPACKS); */
 	} else {
@@ -2080,7 +2080,7 @@ static int serval_tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 			flag |= FLAG_ECE;
 		*/
 
-		serval_tcp_ca_event(sk, CA_EVENT_SLOW_ACK);
+		serval_tcp_ca_event(sk, CA_ACK_SLOWPATH);
 	}
 
 	/* We passed data and got it acked, remove any soft error
