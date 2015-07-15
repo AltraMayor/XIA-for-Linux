@@ -1,0 +1,704 @@
+#include <linux/export.h>
+#include <linux/jhash.h>
+#include <linux/vmalloc.h>
+#include <net/xia_locktbl.h>
+#include <net/xia_vxidty.h>
+#include <net/xia_list_fib.h>
+
+/* Lock tables */
+
+static inline u32 xtbl_hash_mix(struct fib_xid_table *xtbl)
+{
+	return (u32)(((unsigned long)xtbl) >> L1_CACHE_SHIFT);
+}
+
+/* @divisor *MUST* be a power of 2. */
+static inline u32 get_bucket(const u8 *xid, int divisor)
+{
+	BUILD_BUG_ON(XIA_XID_MAX != sizeof(u32) * 5);
+	return jhash2((const u32 *)xid, 5, 0) & (divisor - 1);
+}
+
+static inline u32 hash_bucket(struct fib_xid_table *xtbl, u32 bucket)
+{
+	return xtbl_hash_mix(xtbl) * bucket + xtbl->fxt_seed;
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+static void bucket_lock(struct fib_xid_table *xtbl, u32 bucket)
+	__acquires(bucket)
+{
+	xia_lock_table_lock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
+}
+
+/* Don't make this function inline, it's bigger than it looks like! */
+static void bucket_unlock(struct fib_xid_table *xtbl, u32 bucket)
+	__releases(bucket)
+{
+	xia_lock_table_unlock(xtbl->fxt_locktbl, hash_bucket(xtbl, bucket));
+}
+
+/* Routing tables */
+
+/* This function must be called in process context due to virtual memory. */
+static int alloc_buckets(struct fib_xid_buckets *branch, size_t num)
+{
+	struct hlist_head *buckets;
+	size_t size = sizeof(*buckets) * num;
+
+	buckets = kmalloc(size, GFP_KERNEL);
+	if (unlikely(!buckets)) {
+		buckets = vmalloc(size);
+		if (!buckets)
+			return -ENOMEM;
+		pr_warn("XIP %s: the kernel is running out of memory and/or memory is too fragmented. Allocated virtual memory for now; hopefully, it's going to gracefully degrade packet forwarding performance.\n",
+			__func__);
+	}
+	memset(buckets, 0, size);
+	branch->buckets = buckets;
+	branch->divisor = num;
+	return 0;
+}
+
+/* This function must be called in process context due to virtual memory. */
+static inline void free_buckets(struct fib_xid_buckets *branch)
+{
+	if (unlikely(is_vmalloc_addr(branch->buckets)))
+		vfree(branch->buckets);
+	else
+		kfree(branch->buckets);
+	branch->buckets = NULL;
+	branch->divisor = 0;
+}
+
+/* XTBL_INITIAL_DIV must be a power of 2. */
+#define XTBL_INITIAL_DIV 1
+
+static void list_fib_death_work(struct work_struct *work);
+static void rehash_work(struct work_struct *work);
+
+int list_init_xid_table(struct xip_ppal_ctx *ctx, struct net *net,
+			struct xia_lock_table *locktbl,
+			const xia_ppal_all_rt_eops_t all_eops)
+{
+	struct fib_xid_table *new_xtbl;
+	struct fib_xid_buckets *abranch;
+	int rc;
+
+	if (ctx->xpc_xtbl) {
+		rc = -EEXIST;
+		goto out; /* Duplicate. */
+	}
+
+	rc = -ENOMEM;
+	new_xtbl = kzalloc(sizeof(*new_xtbl), GFP_KERNEL);
+	if (!new_xtbl)
+		goto out;
+	abranch = &new_xtbl->fxt_branch[0];
+	new_xtbl->fxt_active_branch = abranch;
+	BUILD_BUG_ON_NOT_POWER_OF_2(XTBL_INITIAL_DIV);
+	if (alloc_buckets(abranch, XTBL_INITIAL_DIV))
+		goto new_xtbl;
+
+	new_xtbl->fxt_ppal_type = ctx->xpc_ppal_type;
+	new_xtbl->fxt_net = net;
+	hold_net(net);
+	new_xtbl->fxt_locktbl = locktbl;
+	atomic_set(&new_xtbl->fxt_count, 0);
+	get_random_bytes(&new_xtbl->fxt_seed, sizeof(new_xtbl->fxt_seed));
+	INIT_WORK(&new_xtbl->fxt_rehash_work, rehash_work);
+	rwlock_init(&new_xtbl->fxt_writers_lock);
+	new_xtbl->all_eops = all_eops;
+
+	atomic_set(&new_xtbl->refcnt, 1);
+	INIT_WORK(&new_xtbl->fxt_death_work, list_fib_death_work);
+	ctx->xpc_xtbl = new_xtbl;
+
+	rc = 0;
+	goto out;
+
+new_xtbl:
+	kfree(new_xtbl);
+out:
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_init_xid_table);
+
+void __list_init_fxid(struct fib_xid *fxid, int table_id, int entry_type)
+{
+	INIT_HLIST_NODE(&fxid->fx_branch_list[0]);
+	INIT_HLIST_NODE(&fxid->fx_branch_list[1]);
+
+	BUILD_BUG_ON(XRTABLE_MAX_INDEX > 0x100);
+	BUG_ON(table_id >= XRTABLE_MAX_INDEX);
+	fxid->fx_table_id = table_id;
+
+	BUG_ON(entry_type > 0xff);
+	fxid->fx_entry_type = entry_type;
+
+	fxid->dead.xtbl = NULL;
+}
+EXPORT_SYMBOL_GPL(__list_init_fxid);
+
+static void list_fib_death_work(struct work_struct *work)
+{
+	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
+		fxt_death_work);
+	struct fib_xid_buckets *abranch;
+	int adivisor, aindex;
+	int rm_count = 0;
+	int i, c;
+
+	cancel_work_sync(&xtbl->fxt_rehash_work);
+	/* Now it's safe to obtain the following variables. */
+	abranch = xtbl->fxt_active_branch;
+	adivisor = abranch->divisor;
+	aindex = xtbl_branch_index(xtbl, abranch);
+
+	/* Make sure that we don't have any reader. */
+	synchronize_rcu();
+
+	for (i = 0; i < adivisor; i++) {
+		struct fib_xid *fxid;
+		struct hlist_node *n;
+		struct hlist_head *head = &abranch->buckets[i];
+
+		hlist_for_each_entry_safe(fxid, n, head,
+					  fx_branch_list[aindex]) {
+			hlist_del(&fxid->fx_branch_list[aindex]);
+			free_fxid_norcu(xtbl, fxid);
+			rm_count++;
+		}
+	}
+
+	/* It doesn't return an error here because there's nothing
+	 * the caller can do about this error/bug.
+	 */
+	c = atomic_read(&xtbl->fxt_count);
+	if (c != rm_count) {
+		pr_err("While freeing XID table of principal %x, %i entries were found, whereas %i are counted! Ignoring it, but it's a serious bug!\n",
+		       __be32_to_cpu(xtbl->fxt_ppal_type), rm_count, c);
+		dump_stack();
+	}
+
+	release_net(xtbl->fxt_net);
+	free_buckets(abranch);
+	xtbl->fxt_locktbl = NULL; /* Being redundant. */
+	kfree(xtbl);
+}
+
+void list_xtbl_finish_destroy(struct fib_xid_table *xtbl)
+{
+	xtbl->dead = 1;
+	barrier(); /* Announce that @xtbl is dead as soon as possible. */
+
+	if (in_interrupt())
+		schedule_work(&xtbl->fxt_death_work);
+	else
+		list_fib_death_work(&xtbl->fxt_death_work);
+}
+EXPORT_SYMBOL_GPL(list_xtbl_finish_destroy);
+
+static inline struct hlist_head *__xidhead(struct hlist_head *buckets,
+					   u32 bucket)
+{
+	return &buckets[bucket];
+}
+
+static inline struct hlist_head *xidhead(struct fib_xid_buckets *branch,
+					 const u8 *xid)
+{
+	return __xidhead(branch->buckets, get_bucket(xid, branch->divisor));
+}
+
+static struct fib_xid *list_find_xid_locked(struct fib_xid_table *xtbl,
+					    u32 bucket, const u8 *xid,
+					    struct hlist_head **phead)
+{
+	struct fib_xid *fxid;
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int aindex = xtbl_branch_index(xtbl, abranch);
+	*phead = __xidhead(abranch->buckets, bucket);
+	hlist_for_each_entry(fxid, *phead, fx_branch_list[aindex]) {
+		if (are_xids_equal(fxid->fx_xid, xid))
+			return fxid;
+	}
+	return NULL;
+}
+
+struct fib_xid *list_xia_find_xid_rcu(struct fib_xid_table *xtbl,
+				      const u8 *xid)
+{
+	struct fib_xid_buckets *abranch;
+	int aindex;
+	struct fib_xid *fxid;
+	struct hlist_head *head;
+
+	abranch = rcu_dereference(xtbl->fxt_active_branch);
+	aindex = xtbl_branch_index(xtbl, abranch);
+	head = xidhead(abranch, xid);
+	hlist_for_each_entry_rcu(fxid, head, fx_branch_list[aindex]) {
+		if (are_xids_equal(fxid->fx_xid, xid))
+			return fxid;
+	}
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(list_xia_find_xid_rcu);
+
+static u32 list_fib_lock_bucket_xid(struct fib_xid_table *xtbl, const u8 *xid)
+	__acquires(xip_bucket_lock)
+{
+	u32 bucket;
+
+	read_lock(&xtbl->fxt_writers_lock);
+	bucket = get_bucket(xid, xtbl->fxt_active_branch->divisor);
+	bucket_lock(xtbl, bucket);
+
+	/* Make sparse happy with only one __acquires. */
+	__release(bucket);
+
+	return bucket;
+}
+
+static inline u32 list_fib_lock_bucket(struct fib_xid_table *xtbl,
+				       struct fib_xid *fxid)
+				       __acquires(xip_bucket_lock)
+{
+	return list_fib_lock_bucket_xid(xtbl, fxid->fx_xid);
+}
+
+void list_fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
+	__releases(xip_bucket_lock)
+{
+	/* Make sparse happy with only one __releases. */
+	__acquire(bucket);
+
+	bucket_unlock(xtbl, bucket);
+	read_unlock(&xtbl->fxt_writers_lock);
+}
+EXPORT_SYMBOL_GPL(list_fib_unlock_bucket);
+
+struct fib_xid *list_xia_find_xid_lock(u32 *pbucket,
+	struct fib_xid_table *xtbl, const u8 *xid) __acquires(xip_bucket_lock)
+{
+	struct hlist_head *head;
+	*pbucket = list_fib_lock_bucket_xid(xtbl, xid);
+	return list_find_xid_locked(xtbl, *pbucket, xid, &head);
+}
+EXPORT_SYMBOL_GPL(list_xia_find_xid_lock);
+
+int list_xia_iterate_xids(struct fib_xid_table *xtbl,
+			  int (*locked_callback)(struct fib_xid_table *xtbl,
+						 struct fib_xid *fxid,
+						 const void *arg),
+			  const void *arg)
+{
+	struct fib_xid_buckets *abranch;
+	int aindex;
+	u32 bucket;
+	int rc = 0;
+
+	read_lock(&xtbl->fxt_writers_lock);
+	abranch = xtbl->fxt_active_branch;
+	aindex = xtbl_branch_index(xtbl, abranch);
+
+	for (bucket = 0; bucket < abranch->divisor; bucket++) {
+		struct fib_xid *fxid;
+		struct hlist_node *nxt;
+		struct hlist_head *head = __xidhead(abranch->buckets, bucket);
+
+		bucket_lock(xtbl, bucket);
+		hlist_for_each_entry_safe(fxid, nxt, head,
+					  fx_branch_list[aindex]) {
+			rc = locked_callback(xtbl, fxid, arg);
+			if (rc) {
+				bucket_unlock(xtbl, bucket);
+				goto out;
+			}
+		}
+		bucket_unlock(xtbl, bucket);
+	}
+
+out:
+	read_unlock(&xtbl->fxt_writers_lock);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_xia_iterate_xids);
+
+int list_xia_iterate_xids_rcu(struct fib_xid_table *xtbl,
+			      int (*rcu_callback)(struct fib_xid_table *xtbl,
+						  struct fib_xid *fxid,
+						  const void *arg),
+			      const void *arg)
+{
+	struct fib_xid_buckets *abranch;
+	int aindex;
+	u32 bucket;
+	int rc = 0;
+
+	abranch = rcu_dereference(xtbl->fxt_active_branch);
+	aindex = xtbl_branch_index(xtbl, abranch);
+	for (bucket = 0; bucket < abranch->divisor; bucket++) {
+		struct fib_xid *fxid;
+		struct hlist_head *head = __xidhead(abranch->buckets, bucket);
+
+		hlist_for_each_entry_rcu(fxid, head, fx_branch_list[aindex]) {
+			rc = rcu_callback(xtbl, fxid, arg);
+			if (rc)
+				goto out;
+		}
+	}
+
+out:
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_xia_iterate_xids_rcu);
+
+/* Grow table as needed. */
+static void rehash_work(struct work_struct *work)
+{
+	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
+						  fxt_rehash_work);
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int aindex = xtbl_branch_index(xtbl, abranch);
+	int nindex = 1 - aindex;
+	/* The next branch. */
+	struct fib_xid_buckets *nbranch = &xtbl->fxt_branch[nindex];
+	int old_divisor = abranch->divisor;
+	int new_divisor = old_divisor * 2;
+	int mv_count = 0;
+	int rc, i, c, should_rehash;
+
+	/* Allocate memory before aquiring write lock because it sleeps. */
+	BUG_ON(!is_power_of_2(new_divisor));
+	rc = alloc_buckets(nbranch, new_divisor);
+	if (rc) {
+		pr_err(
+		"Rehashing XID table %x was not possible due to error %i.\n",
+			__be32_to_cpu(xtbl->fxt_ppal_type), rc);
+		dump_stack();
+		return;
+	}
+
+	write_lock(&xtbl->fxt_writers_lock);
+
+	/* We must test if we @should_rehash again because we may be
+	 * following another rehash_work that just finished.
+	 * Even if we're not following another rehash_work, fxt_count may have
+	 * changed while we waited on write_lock() or to be scheduled, and
+	 * a rehash became unnecessary.
+	 */
+	should_rehash = atomic_read(&xtbl->fxt_count) / old_divisor > 2;
+	if (!should_rehash) {
+		/* The calling order here is very important because
+		 * function free_buckets sleeps.
+		 */
+		write_unlock(&xtbl->fxt_writers_lock);
+		free_buckets(nbranch);
+		return;
+	}
+
+	/* Add entries to @nbranch. */
+	for (i = 0; i < old_divisor; i++) {
+		struct fib_xid *fxid;
+		struct hlist_head *head = &abranch->buckets[i];
+
+		hlist_for_each_entry(fxid, head, fx_branch_list[aindex]) {
+			struct hlist_head *new_head =
+				xidhead(nbranch, fxid->fx_xid);
+			hlist_add_head(&fxid->fx_branch_list[nindex], new_head);
+			mv_count++;
+		}
+	}
+	rcu_assign_pointer(xtbl->fxt_active_branch, nbranch);
+
+	/* It doesn't return an error here because there's nothing
+	 * the caller can do about this error/bug.
+	 */
+	c = atomic_read(&xtbl->fxt_count);
+	if (c != mv_count) {
+		pr_err("While rehashing XID table of principal %x, %i entries were found, whereas %i are registered! Fixing the counter for now, but it's a serious bug!\n",
+		       __be32_to_cpu(xtbl->fxt_ppal_type), mv_count, c);
+		dump_stack();
+		/* "Fixing" bug. */
+		atomic_set(&xtbl->fxt_count, mv_count);
+	}
+
+	write_unlock(&xtbl->fxt_writers_lock);
+
+	/* Make sure that there's no reader in @abranch. */
+	synchronize_rcu();
+
+	/* From now on, all readers are using @nbranch. */
+
+	free_buckets(abranch);
+}
+
+int list_fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+			     struct fib_xid *fxid)
+{
+	struct hlist_head *head;
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int aindex = xtbl_branch_index(xtbl, abranch);
+	int should_rehash;
+
+	if (list_find_xid_locked(xtbl, bucket, fxid->fx_xid, &head))
+		return -EEXIST;
+
+	hlist_add_head_rcu(&fxid->fx_branch_list[aindex], head);
+	should_rehash =
+		atomic_inc_return(&xtbl->fxt_count) / abranch->divisor > 2;
+
+	/* Grow table as needed. */
+	if (should_rehash && !xtbl->dead)
+		schedule_work(&xtbl->fxt_rehash_work);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(list_fib_add_fxid_locked);
+
+int list_fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	u32 bucket;
+	int rc;
+
+	bucket = list_fib_lock_bucket(xtbl, fxid);
+	rc = list_fib_add_fxid_locked(bucket, xtbl, fxid);
+	list_fib_unlock_bucket(xtbl, bucket);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_fib_add_fxid);
+
+static inline void __list_rm_fxid_locked(struct fib_xid_table *xtbl,
+					 struct fib_xid_buckets *abranch,
+					 struct fib_xid *fxid)
+{
+	hlist_del_rcu(&fxid->fx_branch_list[xtbl_branch_index(xtbl, abranch)]);
+	atomic_dec(&xtbl->fxt_count);
+}
+
+void list_fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+			     struct fib_xid *fxid)
+{
+	/* Currently, @bucket is not necessary. */
+
+	/* Notice that calling list_fib_rm_fxid_locked is different from
+	 * calling __list_rm_fxid_locked because the latter is inline.
+	 */
+	__list_rm_fxid_locked(xtbl, xtbl->fxt_active_branch, fxid);
+}
+EXPORT_SYMBOL_GPL(list_fib_rm_fxid_locked);
+
+struct fib_xid *list_fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid)
+{
+	u32 bucket;
+	struct fib_xid *fxid = list_xia_find_xid_lock(&bucket, xtbl, xid);
+
+	if (!fxid) {
+		list_fib_unlock_bucket(xtbl, bucket);
+		return NULL;
+	}
+	__list_rm_fxid_locked(xtbl, xtbl->fxt_active_branch, fxid);
+	list_fib_unlock_bucket(xtbl, bucket);
+	return fxid;
+}
+EXPORT_SYMBOL_GPL(list_fib_rm_xid);
+
+void list_fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	u32 bucket = list_fib_lock_bucket(xtbl, fxid);
+
+	__list_rm_fxid_locked(xtbl, xtbl->fxt_active_branch, fxid);
+	list_fib_unlock_bucket(xtbl, bucket);
+}
+EXPORT_SYMBOL_GPL(list_fib_rm_fxid);
+
+void list_fib_replace_fxid_locked(struct fib_xid_table *xtbl,
+				  struct fib_xid *old_fxid,
+				  struct fib_xid *new_fxid)
+{
+	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
+	int aindex = xtbl_branch_index(xtbl, abranch);
+
+	hlist_replace_rcu(&old_fxid->fx_branch_list[aindex],
+			  &new_fxid->fx_branch_list[aindex]);
+}
+EXPORT_SYMBOL_GPL(list_fib_replace_fxid_locked);
+
+int list_fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
+			    struct xia_fib_config *cfg)
+{
+	struct fib_xid *fxid;
+	u32 bucket;
+	int rc;
+
+	fxid = list_xia_find_xid_lock(&bucket, xtbl, cfg->xfc_dst->xid_id);
+	if (!fxid) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+	if (fxid->fx_table_id != tbl_id) {
+		rc = -EINVAL;
+		goto unlock_bucket;
+	}
+
+	list_fib_rm_fxid_locked(bucket, xtbl, fxid);
+	list_fib_unlock_bucket(xtbl, bucket);
+	free_fxid(xtbl, fxid);
+	return 0;
+
+unlock_bucket:
+	list_fib_unlock_bucket(xtbl, bucket);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_fib_build_delroute);
+
+int list_fib_default_local_delroute(struct xip_ppal_ctx *ctx,
+				    struct fib_xid_table *xtbl,
+				    struct xia_fib_config *cfg)
+{
+	return list_fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
+}
+EXPORT_SYMBOL_GPL(list_fib_default_local_delroute);
+
+int list_fib_default_main_delroute(struct xip_ppal_ctx *ctx,
+				   struct fib_xid_table *xtbl,
+				   struct xia_fib_config *cfg)
+{
+	return list_fib_build_delroute(XRTABLE_MAIN_INDEX, xtbl, cfg);
+}
+EXPORT_SYMBOL_GPL(list_fib_default_main_delroute);
+
+int list_fib_build_newroute(struct fib_xid *new_fxid,
+			    struct fib_xid_table *xtbl,
+			    struct xia_fib_config *cfg, int *padded)
+{
+	struct xip_deferred_negdep_flush *dnf;
+	struct fib_xid *cur_fxid;
+	const u8 *id;
+	u32 bucket;
+	int rc;
+
+	if (padded)
+		*padded = 0;
+
+	/* Allocate memory before acquiring lock because we can sleep now. */
+	dnf = fib_alloc_dnf(GFP_KERNEL);
+	if (!dnf)
+		return -ENOMEM;
+
+	/* Acquire lock. */
+	id = cfg->xfc_dst->xid_id;
+	cur_fxid = list_xia_find_xid_lock(&bucket, xtbl, id);
+
+	if (cur_fxid) {
+		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
+		    !(cfg->xfc_nlflags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock_bucket;
+		}
+
+		if (cur_fxid->fx_table_id != new_fxid->fx_table_id) {
+			rc = -EINVAL;
+			goto unlock_bucket;
+		}
+
+		/* Replace entry.
+		 * Notice that @cur_fxid and @new_fxid may be of different
+		 * types
+		 */
+		rc = 0;
+		list_fib_replace_fxid_locked(xtbl, cur_fxid, new_fxid);
+		list_fib_unlock_bucket(xtbl, bucket);
+		free_fxid(xtbl, cur_fxid);
+		goto def_upd;
+	}
+
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+
+	/* Add new entry. */
+	BUG_ON(list_fib_add_fxid_locked(bucket, xtbl, new_fxid));
+	list_fib_unlock_bucket(xtbl, bucket);
+
+	/* Before invalidating old anchors to force dependencies to
+	 * migrate to @new_fxid, wait an RCU synchronization to make sure that
+	 * every thread see @new_fxid.
+	 */
+	fib_defer_dnf(dnf, xtbl_net(xtbl), xtbl_ppalty(xtbl));
+
+	if (padded)
+		*padded = 1;
+	return 0;
+
+unlock_bucket:
+	list_fib_unlock_bucket(xtbl, bucket);
+def_upd:
+	fib_free_dnf(dnf);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_fib_build_newroute);
+
+int list_fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
+{
+	struct fib_xid_redirect_main *new_mrd;
+	int rc;
+
+	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == xtbl_ppalty(xtbl))
+		return -EINVAL;
+
+	new_mrd = kmalloc(sizeof(*new_mrd), GFP_KERNEL);
+	if (!new_mrd)
+		return -ENOMEM;
+	list_init_fxid(&new_mrd->common, cfg->xfc_dst->xid_id,
+		       XRTABLE_MAIN_INDEX, 0);
+	new_mrd->gw = *cfg->xfc_gw;
+
+	rc = list_fib_build_newroute(&new_mrd->common, xtbl, cfg, NULL);
+	if (rc)
+		free_fxid_norcu(xtbl, &new_mrd->common);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_fib_mrd_newroute);
+
+int list_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
+			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			   struct netlink_callback *cb)
+{
+	struct fib_xid_buckets *abranch;
+	long i, j = 0;
+	long first_j = cb->args[2];
+	int divisor, aindex;
+	int rc;
+
+	abranch = rcu_dereference(xtbl->fxt_active_branch);
+	divisor = abranch->divisor;
+	aindex = xtbl_branch_index(xtbl, abranch);
+	for (i = cb->args[1]; i < divisor; i++, first_j = 0) {
+		struct fib_xid *fxid;
+		struct hlist_head *head = &abranch->buckets[i];
+
+		j = 0;
+		hlist_for_each_entry_rcu(fxid, head,
+					 fx_branch_list[aindex]) {
+			if (j < first_j)
+				goto next;
+			rc = xtbl->all_eops[fxid->fx_table_id].dump_fxid(
+				fxid, xtbl, ctx, skb, cb);
+			if (rc < 0)
+				goto out;
+next:
+			j++;
+		}
+	}
+	rc = 0;
+
+out:
+	cb->args[1] = i;
+	cb->args[2] = j;
+	return rc;
+}
+EXPORT_SYMBOL_GPL(list_fib_dump_xtbl_rcu);

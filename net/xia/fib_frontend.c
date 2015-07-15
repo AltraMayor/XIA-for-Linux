@@ -2,7 +2,7 @@
 #include <linux/socket.h>
 #include <linux/export.h>
 #include <net/rtnetlink.h>
-#include <net/xia_fib.h>
+#include <net/xia_list_fib.h>
 #include <net/xia_route.h>
 
 #define FIELD_TYPE(t, f)	typeof(((struct t *)0)->f)
@@ -150,44 +150,6 @@ static inline void clear_cb_from(struct netlink_callback *cb, int from)
 		from * sizeof(cb->args[0]));
 }
 
-static int xia_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
-				 struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-				 struct netlink_callback *cb)
-{
-	struct fib_xid_buckets *abranch;
-	long i, j = 0;
-	long first_j = cb->args[2];
-	int divisor, aindex;
-	int rc;
-
-	abranch = rcu_dereference(xtbl->fxt_active_branch);
-	divisor = abranch->divisor;
-	aindex = xtbl_branch_index(xtbl, abranch);
-	for (i = cb->args[1]; i < divisor; i++, first_j = 0) {
-		struct fib_xid *fxid;
-		struct hlist_head *head = &abranch->buckets[i];
-
-		j = 0;
-		hlist_for_each_entry_rcu(fxid, head,
-					 fx_branch_list[aindex]) {
-			if (j < first_j)
-				goto next;
-			rc = xtbl->all_eops[fxid->fx_table_id].dump_fxid(
-				fxid, xtbl, ctx, skb, cb);
-			if (rc < 0)
-				goto out;
-next:
-			j++;
-		}
-	}
-	rc = 0;
-
-out:
-	cb->args[1] = i;
-	cb->args[2] = j;
-	return rc;
-}
-
 static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct net *net = sock_net(skb->sk);
@@ -202,7 +164,7 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 			continue;
 		if (dumped)
 			clear_cb_from(cb, 1);
-		if (xia_fib_dump_xtbl_rcu(ctx->xpc_xtbl, ctx, skb, cb) < 0)
+		if (list_fib_dump_xtbl_rcu(ctx->xpc_xtbl, ctx, skb, cb) < 0)
 			break;
 		dumped = 1;
 	}

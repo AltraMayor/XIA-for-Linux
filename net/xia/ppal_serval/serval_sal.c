@@ -12,6 +12,7 @@
  */
 #include <net/xia_serval.h>
 #include <net/xia_output.h>
+#include <net/xia_list_fib.h>
 #include "af_serval.h"
 #include "serval_sal.h"
 

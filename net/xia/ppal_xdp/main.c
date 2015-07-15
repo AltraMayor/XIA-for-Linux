@@ -2,7 +2,7 @@
 #include <linux/swap.h>
 #include <asm/ioctls.h>
 #include <net/tcp_states.h>
-#include <net/xia_fib.h>
+#include <net/xia_list_fib.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
 #include <net/xia_socket.h>

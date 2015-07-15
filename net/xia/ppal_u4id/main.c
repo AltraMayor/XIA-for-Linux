@@ -3,7 +3,7 @@
 #include <net/udp.h>
 #include <net/udp_tunnel.h>
 #include <net/xia_dag.h>
-#include <net/xia_fib.h>
+#include <net/xia_list_fib.h>
 #include <net/xia_u4id.h>
 #include <net/xia_vxidty.h>
 #include <uapi/linux/udp.h>

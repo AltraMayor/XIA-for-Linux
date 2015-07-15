@@ -1,6 +1,7 @@
 #include <linux/module.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
+#include <net/xia_list_fib.h>
 #include <net/xia_socket.h>
 #include <net/xia_vxidty.h>
 #include <net/xia_output.h> /* Needed for xip_trim_packet_if_needed(). */
