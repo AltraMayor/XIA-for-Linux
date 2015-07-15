@@ -182,22 +182,22 @@ typedef struct xia_ppal_rt_eops xia_ppal_all_rt_eops_t[XRTABLE_MAX_INDEX];
  * IMPORTANT
  *	This function may sleep.
  */
-int fib_build_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg, int *padded);
+int list_fib_build_newroute(struct fib_xid *new_fxid,
+	struct fib_xid_table *xtbl, struct xia_fib_config *cfg, int *padded);
 
 /* NOTE
  *	If it returns ZERO, that is, success, the entry was deleted.
  */
-int fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
+int list_fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg);
 
 /* These functions are meant to be a used in field delroute of
  * struct xia_ppal_rt_eops when all that is needed is to remove the entry from
  * @xtbl, and free it.
  */
-int fib_default_local_delroute(struct xip_ppal_ctx *ctx,
+int list_fib_default_local_delroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
-int fib_default_main_delroute(struct xip_ppal_ctx *ctx,
+int list_fib_default_main_delroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
 
 /* In case newroute and/or delroute are not supported, use these functions. */
@@ -206,16 +206,16 @@ int fib_no_newroute(struct xip_ppal_ctx *ctx,
 #define fib_no_delroute	fib_no_newroute
 
 /* Do not call these functions, use macro XIP_FIB_REDIRECT_MAIN instead. */
-int fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+int list_fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	struct xia_fib_config *cfg);
 int fib_mrd_dump(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb);
 void fib_mrd_free(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
-#define XIP_FIB_REDIRECT_MAIN [XRTABLE_MAIN_INDEX] = {			\
-	.newroute = fib_mrd_newroute,					\
-	.delroute = fib_default_main_delroute,				\
+#define XIP_LIST_FIB_REDIRECT_MAIN [XRTABLE_MAIN_INDEX] = {		\
+	.newroute = list_fib_mrd_newroute,				\
+	.delroute = list_fib_default_main_delroute,			\
 	.dump_fxid = fib_mrd_dump,					\
 	.free_fxid = fib_mrd_free,					\
 }
@@ -321,14 +321,14 @@ int xip_add_ppal_ctx(struct net *net, struct xip_ppal_ctx *ctx);
  */
 struct xip_ppal_ctx *xip_del_ppal_ctx(struct net *net, xid_type_t ty);
 
-/** init_xid_table - create a new XID table in @ctx.
+/** list_init_xid_table - create a new XID table in @ctx.
  * RETURN
  *	-EEXIST in case an XID table already exists.
  *	0 on success.
  * NOTE
  *	@ctx should not haven been added to @net yet; see xip_add_ppal_ctx().
  */
-int init_xid_table(struct xip_ppal_ctx *ctx, struct net *net,
+int list_init_xid_table(struct xip_ppal_ctx *ctx, struct net *net,
 	struct xia_lock_table *locktbl, const xia_ppal_all_rt_eops_t all_eops);
 
 /** xip_find_ppal_ctx_vxt_rcu - Find context of principal of virtual type @vxt.
@@ -381,12 +381,12 @@ static inline struct xip_ppal_ctx *xip_find_my_ppal_ctx_vxt(struct net *net,
 }
 
 /* Don't call this function directly, call xtbl_put() instead. */
-void xtbl_finish_destroy(struct fib_xid_table *xtbl);
+void list_xtbl_finish_destroy(struct fib_xid_table *xtbl);
 
 static inline void xtbl_put(struct fib_xid_table *xtbl)
 {
 	if (atomic_dec_and_test(&xtbl->refcnt))
-		xtbl_finish_destroy(xtbl);
+		list_xtbl_finish_destroy(xtbl);
 }
 
 static inline void xtbl_hold(struct fib_xid_table *xtbl)
@@ -399,12 +399,12 @@ static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
 	return atomic_read(&xtbl->fxt_count);
 }
 
-void __init_fxid(struct fib_xid *fxid, int table_id, int entry_type);
+void __list_init_fxid(struct fib_xid *fxid, int table_id, int entry_type);
 
-static inline void init_fxid(struct fib_xid *fxid, const u8 *xid, int table_id,
-	int entry_type)
+static inline void list_init_fxid(struct fib_xid *fxid, const u8 *xid,
+	int table_id, int entry_type)
 {
-	__init_fxid(fxid, table_id, entry_type);
+	__list_init_fxid(fxid, table_id, entry_type);
 	memmove(fxid->fx_xid, xid, XIA_XID_MAX);
 }
 
@@ -428,21 +428,22 @@ static inline void free_fxid_norcu(struct fib_xid_table *xtbl,
 	xtbl->all_eops[fxid->fx_table_id].free_fxid(xtbl, fxid);
 }
 
-/** xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
+/** list_xia_find_xid_rcu - Find struct fib_xid in @xtbl that has key @xid.
  * RETURN
  *	It returns the struct on success, otherwise NULL.
  * NOTE
  *	Caller must hold an RCU read lock to be safe against paralel calls to
- *	fib_add_fxid, fib_rm_fxid, fib_rm_xid, and end_xid_table.
+ *	list_fib_add_fxid, list_fib_rm_fxid, and list_fib_rm_xid.
  */
-struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
+struct fib_xid *list_xia_find_xid_rcu(struct fib_xid_table *xtbl,
+	const u8 *xid);
 
-/** xia_find_xid_lock - Find struct fib_xid in @xtbl that has key @xid.
+/** list_xia_find_xid_lock - Find struct fib_xid in @xtbl that has key @xid.
  * RETURN
  *	It returns the struct on success, otherwise NULL.
  * NOTE
  *	@pbucket always receives the bucket to be unlocked later.
- *	Caller must always unlock with fib_unlock_bucket afterwards.
+ *	Caller must always unlock with list_fib_unlock_bucket afterwards.
  *
  *	Caller should never call this function with a lock on @xtbl
  *	already held because @xtbl uses a single table lock because
@@ -450,10 +451,10 @@ struct fib_xid *xia_find_xid_rcu(struct fib_xid_table *xtbl, const u8 *xid);
  *	The same problem happens if it's called on different @xtbl's
  *	that share the same lock table.
  */
-struct fib_xid *xia_find_xid_lock(u32 *pbucket, struct fib_xid_table *xtbl,
-	const u8 *xid) __acquires(xip_bucket_lock);
+struct fib_xid *list_xia_find_xid_lock(u32 *pbucket,
+	struct fib_xid_table *xtbl, const u8 *xid) __acquires(xip_bucket_lock);
 
-/** xia_iterate_xids - Visit all XIDs in @xtbl.
+/** list_xia_iterate_xids - Visit all XIDs in @xtbl.
  * NOTE
  *	The lock is held when @locked_callback is called.
  *	@locked_callback may remove the received @fxid it received.
@@ -464,12 +465,12 @@ struct fib_xid *xia_find_xid_lock(u32 *pbucket, struct fib_xid_table *xtbl,
  *	Zero if all xids were visited, or the value that @locked_callback
  *	returned when it aborted.
  */
-int xia_iterate_xids(struct fib_xid_table *xtbl,
+int list_xia_iterate_xids(struct fib_xid_table *xtbl,
 	int (*locked_callback)(struct fib_xid_table *xtbl,
 		struct fib_xid *fxid, const void *arg),
 	const void *arg);
 
-/** xia_iterate_xids_rcu - Visit all XIDs in @xtbl.
+/** list_xia_iterate_xids_rcu - Visit all XIDs in @xtbl.
  * NOTE
  *	The caller must hold an RCU read lock.
  *
@@ -479,47 +480,47 @@ int xia_iterate_xids(struct fib_xid_table *xtbl,
  *	Zero if all xids were visited, or the value that @locked_callback
  *	returned when it aborted.
  */
-int xia_iterate_xids_rcu(struct fib_xid_table *xtbl,
+int list_xia_iterate_xids_rcu(struct fib_xid_table *xtbl,
 	int (*rcu_callback)(struct fib_xid_table *xtbl,
 		struct fib_xid *fxid, const void *arg),
 	const void *arg);
 
-/** fib_add_fxid - Add @fxid into @xtbl.
+/** list_fib_add_fxid - Add @fxid into @xtbl.
  * RETURN
  *	-EEXIST in case an fxid with same XID is already in @xtbl.
  *	0 on success.
  */
-int fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+int list_fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
-/** fib_add_fxid_locked - Same as fib_add_fxid, that is,
- *		it adds @fxid into @xtbl. However, fib_add_fxid_locked
+/** list_fib_add_fxid_locked - Same as list_fib_add_fxid, that is,
+ *		it adds @fxid into @xtbl. However, list_fib_add_fxid_locked
  *		assumes that the lock is already held.
  * NOTE
  *	BE VERY CAREFUL when calling this function because if the needed lock
  *	is not held, it may corrupt @xtbl!
  */
-int fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+int list_fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 	struct fib_xid *fxid);
 
-/** fib_rm_fxid - Remove @fxid from @xtbl. */
-void fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+/** list_fib_rm_fxid - Remove @fxid from @xtbl. */
+void list_fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
-/** fib_rm_fxid_locked - Same as fib_rm_fxid, but
+/** list_fib_rm_fxid_locked - Same as list_fib_rm_fxid, but
  *			it assumes that the lock is already held.
  * NOTE
  *	BE VERY CAREFUL when calling this function because if the needed lock
  *	is not held, it may corrupt @xtbl!
  */
-void fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+void list_fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
 	struct fib_xid *fxid);
 
-/** fib_rm_xid - Remove @xid from @xtbl.
+/** list_fib_rm_xid - Remove @xid from @xtbl.
  * RETURN
  *	It returns the fxid with same @xid on success, otherwise NULL.
  */
-struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
+struct fib_xid *list_fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
 
-/** Replace @old_fxid to @new_fxid.
+/** Replace @old_fxid with @new_fxid.
  *
  * NOTE
  *	@old_fxid MUST be in @xtbl.
@@ -531,10 +532,10 @@ struct fib_xid *fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
  *	BE VERY CAREFUL when calling this function because if the needed lock
  *	is not held, it may corrupt @xtbl!
  */
-void fib_replace_fxid_locked(struct fib_xid_table *xtbl,
+void list_fib_replace_fxid_locked(struct fib_xid_table *xtbl,
 	struct fib_xid *old_fxid, struct fib_xid *new_fxid);
 
-void fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
+void list_fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 	__releases(xip_bucket_lock);
 
 /** fib_alloc_dnf - allocate an struct xip_deferred_negdep_flush.

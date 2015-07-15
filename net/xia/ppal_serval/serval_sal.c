@@ -1188,7 +1188,8 @@ static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 	}
 
 	/* Hash @srsk. */
-	__init_fxid(&srsk->flow_fxid, XRTABLE_LOCAL_INDEX, REQUEST_SOCK_TYPE);
+	__list_init_fxid(&srsk->flow_fxid, XRTABLE_LOCAL_INDEX,
+			 REQUEST_SOCK_TYPE);
 	srsk_hold(srsk);
 	/* No error should be possible because FlowIDs should be kernel-wide
 	 * unique.

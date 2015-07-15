@@ -50,11 +50,11 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	new_lzf = kmalloc(sizeof(*new_lzf), GFP_KERNEL);
 	if (!new_lzf)
 		return -ENOMEM;
-	init_fxid(&new_lzf->common, cfg->xfc_dst->xid_id,
+	list_init_fxid(&new_lzf->common, cfg->xfc_dst->xid_id,
 		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&new_lzf->anchor);
 
-	rc = fib_build_newroute(&new_lzf->common, xtbl, cfg, NULL);
+	rc = list_fib_build_newroute(&new_lzf->common, xtbl, cfg, NULL);
 	if (rc)
 		free_fxid_norcu(xtbl, &new_lzf->common);
 	return rc;
@@ -137,11 +137,11 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	new_mzf = kmalloc(sizeof(*new_mzf), GFP_KERNEL);
 	if (!new_mzf)
 		return -ENOMEM;
-	init_fxid(&new_mzf->common, cfg->xfc_dst->xid_id,
+	list_init_fxid(&new_mzf->common, cfg->xfc_dst->xid_id,
 		  XRTABLE_MAIN_INDEX, 0);
 	new_mzf->gw = *cfg->xfc_gw;
 
-	rc = fib_build_newroute(&new_mzf->common, xtbl, cfg, NULL);
+	rc = list_fib_build_newroute(&new_mzf->common, xtbl, cfg, NULL);
 	if (rc)
 		free_fxid_norcu(xtbl, &new_mzf->common);
 	return rc;
@@ -205,14 +205,14 @@ static void main_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 static const xia_ppal_all_rt_eops_t zf_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
-		.delroute = fib_default_local_delroute,
+		.delroute = list_fib_default_local_delroute,
 		.dump_fxid = local_dump_zf,
 		.free_fxid = local_free_zf,
 	},
 
 	[XRTABLE_MAIN_INDEX] = {
 		.newroute = main_newroute,
-		.delroute = fib_default_local_delroute,
+		.delroute = list_fib_default_local_delroute,
 		.dump_fxid = main_dump_zf,
 		.free_fxid = main_free_zf,
 	},
@@ -250,8 +250,8 @@ static int __net_init zf_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = init_xid_table(&zf_ctx->ctx, net, &xia_main_lock_table,
-			    zf_all_rt_eops);
+	rc = list_init_xid_table(&zf_ctx->ctx, net, &xia_main_lock_table,
+				 zf_all_rt_eops);
 	if (rc)
 		goto zf_ctx;
 
@@ -461,7 +461,7 @@ static int zf_output(struct sock *sk, struct sk_buff *skb)
 
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
-	BUG_ON(xia_iterate_xids_rcu(ctx->xpc_xtbl, match_xids_rcu, &arg));
+	BUG_ON(list_xia_iterate_xids_rcu(ctx->xpc_xtbl, match_xids_rcu, &arg));
 	rcu_read_unlock();
 
 	if (!arg.matched) {
@@ -492,7 +492,7 @@ static int zf_deliver(struct xip_route_proc *rproc, struct net *net,
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 	zf_ctx = ctx_zf(ctx);
 
-	if (!xia_iterate_xids_rcu(ctx->xpc_xtbl, match_any_xid_rcu, xid)) {
+	if (!list_xia_iterate_xids_rcu(ctx->xpc_xtbl, match_any_xid_rcu, xid)) {
 		/* There's no matches. */
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();
