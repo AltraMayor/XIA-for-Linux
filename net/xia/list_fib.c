@@ -267,9 +267,19 @@ static inline u32 list_fib_lock_bucket(struct fib_xid_table *xtbl,
 	return list_fib_lock_bucket_xid(xtbl, fxid->fx_xid);
 }
 
-void list_fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
+/* For the list FIB, @parg represents a u32 bucket. */
+static inline u32 parg_bucket(void *parg)
+{
+	if (unlikely(!parg))
+		BUG();
+	return *(u32 *)parg;
+}
+
+void list_fib_unlock_bucket(struct fib_xid_table *xtbl, void *parg)
 	__releases(xip_bucket_lock)
 {
+	u32 bucket = parg_bucket(parg);
+
 	/* Make sparse happy with only one __releases. */
 	__acquire(bucket);
 
@@ -278,10 +288,11 @@ void list_fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
 }
 EXPORT_SYMBOL_GPL(list_fib_unlock_bucket);
 
-struct fib_xid *list_xia_find_xid_lock(u32 *pbucket,
-	struct fib_xid_table *xtbl, const u8 *xid) __acquires(xip_bucket_lock)
+struct fib_xid *list_xia_find_xid_lock(void *parg, struct fib_xid_table *xtbl,
+	const u8 *xid) __acquires(xip_bucket_lock)
 {
 	struct hlist_head *head;
+	u32 *pbucket = parg;
 	*pbucket = list_fib_lock_bucket_xid(xtbl, xid);
 	return list_find_xid_locked(xtbl, *pbucket, xid, &head);
 }
@@ -434,13 +445,14 @@ static void rehash_work(struct work_struct *work)
 	free_buckets(abranch);
 }
 
-int list_fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+int list_fib_add_fxid_locked(void *parg, struct fib_xid_table *xtbl,
 			     struct fib_xid *fxid)
 {
 	struct hlist_head *head;
 	struct fib_xid_buckets *abranch = xtbl->fxt_active_branch;
 	int aindex = xtbl_branch_index(xtbl, abranch);
 	int should_rehash;
+	u32 bucket = parg_bucket(parg);
 
 	if (list_find_xid_locked(xtbl, bucket, fxid->fx_xid, &head))
 		return -EEXIST;
@@ -463,8 +475,8 @@ int list_fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	int rc;
 
 	bucket = list_fib_lock_bucket(xtbl, fxid);
-	rc = list_fib_add_fxid_locked(bucket, xtbl, fxid);
-	list_fib_unlock_bucket(xtbl, bucket);
+	rc = list_fib_add_fxid_locked(&bucket, xtbl, fxid);
+	list_fib_unlock_bucket(xtbl, &bucket);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(list_fib_add_fxid);
@@ -477,10 +489,12 @@ static inline void __list_rm_fxid_locked(struct fib_xid_table *xtbl,
 	atomic_dec(&xtbl->fxt_count);
 }
 
-void list_fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+void list_fib_rm_fxid_locked(void *parg, struct fib_xid_table *xtbl,
 			     struct fib_xid *fxid)
 {
-	/* Currently, @bucket is not necessary. */
+	/* Currently, @parg is not necessary, but if it is, one should
+	 * call parg_bucket() instead of dereferencing it directly.
+	 */
 
 	/* Notice that calling list_fib_rm_fxid_locked is different from
 	 * calling __list_rm_fxid_locked because the latter is inline.
@@ -495,11 +509,11 @@ struct fib_xid *list_fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid)
 	struct fib_xid *fxid = list_xia_find_xid_lock(&bucket, xtbl, xid);
 
 	if (!fxid) {
-		list_fib_unlock_bucket(xtbl, bucket);
+		list_fib_unlock_bucket(xtbl, &bucket);
 		return NULL;
 	}
 	__list_rm_fxid_locked(xtbl, xtbl->fxt_active_branch, fxid);
-	list_fib_unlock_bucket(xtbl, bucket);
+	list_fib_unlock_bucket(xtbl, &bucket);
 	return fxid;
 }
 EXPORT_SYMBOL_GPL(list_fib_rm_xid);
@@ -509,7 +523,7 @@ void list_fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	u32 bucket = list_fib_lock_bucket(xtbl, fxid);
 
 	__list_rm_fxid_locked(xtbl, xtbl->fxt_active_branch, fxid);
-	list_fib_unlock_bucket(xtbl, bucket);
+	list_fib_unlock_bucket(xtbl, &bucket);
 }
 EXPORT_SYMBOL_GPL(list_fib_rm_fxid);
 
@@ -542,13 +556,13 @@ int list_fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
 		goto unlock_bucket;
 	}
 
-	list_fib_rm_fxid_locked(bucket, xtbl, fxid);
-	list_fib_unlock_bucket(xtbl, bucket);
+	list_fib_rm_fxid_locked(&bucket, xtbl, fxid);
+	list_fib_unlock_bucket(xtbl, &bucket);
 	free_fxid(xtbl, fxid);
 	return 0;
 
 unlock_bucket:
-	list_fib_unlock_bucket(xtbl, bucket);
+	list_fib_unlock_bucket(xtbl, &bucket);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(list_fib_build_delroute);
@@ -609,7 +623,7 @@ int list_fib_build_newroute(struct fib_xid *new_fxid,
 		 */
 		rc = 0;
 		list_fib_replace_fxid_locked(xtbl, cur_fxid, new_fxid);
-		list_fib_unlock_bucket(xtbl, bucket);
+		list_fib_unlock_bucket(xtbl, &bucket);
 		free_fxid(xtbl, cur_fxid);
 		goto def_upd;
 	}
@@ -620,8 +634,8 @@ int list_fib_build_newroute(struct fib_xid *new_fxid,
 	}
 
 	/* Add new entry. */
-	BUG_ON(list_fib_add_fxid_locked(bucket, xtbl, new_fxid));
-	list_fib_unlock_bucket(xtbl, bucket);
+	BUG_ON(list_fib_add_fxid_locked(&bucket, xtbl, new_fxid));
+	list_fib_unlock_bucket(xtbl, &bucket);
 
 	/* Before invalidating old anchors to force dependencies to
 	 * migrate to @new_fxid, wait an RCU synchronization to make sure that
@@ -634,7 +648,7 @@ int list_fib_build_newroute(struct fib_xid *new_fxid,
 	return 0;
 
 unlock_bucket:
-	list_fib_unlock_bucket(xtbl, bucket);
+	list_fib_unlock_bucket(xtbl, &bucket);
 def_upd:
 	fib_free_dnf(dnf);
 	return rc;

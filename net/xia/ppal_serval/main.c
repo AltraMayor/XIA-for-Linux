@@ -1065,15 +1065,15 @@ int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
 		/* This case should only happen if another thread was faster
 		 * than us and has already removed @cur_fxid.
 		 */
-		BUG_ON(list_fib_add_fxid_locked(bucket, xtbl, &rtid->fxid));
-		list_fib_unlock_bucket(xtbl, bucket);
+		BUG_ON(list_fib_add_fxid_locked(&bucket, xtbl, &rtid->fxid));
+		list_fib_unlock_bucket(xtbl, &bucket);
 		fib_defer_dnf(dnf, net, xtbl_ppalty(xtbl));
 		goto out;
 	}
 
 	BUG_ON(found_fxid != cur_fxid);
 	list_fib_replace_fxid_locked(xtbl, cur_fxid, &rtid->fxid);
-	list_fib_unlock_bucket(xtbl, bucket);
+	list_fib_unlock_bucket(xtbl, &bucket);
 	free_fxid(xtbl, cur_fxid);
 	fib_free_dnf(dnf);
 

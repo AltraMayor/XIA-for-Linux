@@ -89,7 +89,7 @@ struct fib_xid *list_xia_find_xid_rcu(struct fib_xid_table *xtbl,
  * RETURN
  *	It returns the struct on success, otherwise NULL.
  * NOTE
- *	@pbucket always receives the bucket to be unlocked later.
+ *	@parg always receives the bucket to be unlocked later.
  *	Caller must always unlock with list_fib_unlock_bucket afterwards.
  *
  *	Caller should never call this function with a lock on @xtbl
@@ -98,8 +98,8 @@ struct fib_xid *list_xia_find_xid_rcu(struct fib_xid_table *xtbl,
  *	The same problem happens if it's called on different @xtbl's
  *	that share the same lock table.
  */
-struct fib_xid *list_xia_find_xid_lock(u32 *pbucket,
-	struct fib_xid_table *xtbl, const u8 *xid) __acquires(xip_bucket_lock);
+struct fib_xid *list_xia_find_xid_lock(void *parg, struct fib_xid_table *xtbl,
+	const u8 *xid) __acquires(xip_bucket_lock);
 
 /** list_xia_iterate_xids - Visit all XIDs in @xtbl.
  * NOTE
@@ -146,7 +146,7 @@ int list_fib_add_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
  *	BE VERY CAREFUL when calling this function because if the needed lock
  *	is not held, it may corrupt @xtbl!
  */
-int list_fib_add_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+int list_fib_add_fxid_locked(void *parg, struct fib_xid_table *xtbl,
 	struct fib_xid *fxid);
 
 /** list_fib_rm_fxid - Remove @fxid from @xtbl. */
@@ -158,7 +158,7 @@ void list_fib_rm_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
  *	BE VERY CAREFUL when calling this function because if the needed lock
  *	is not held, it may corrupt @xtbl!
  */
-void list_fib_rm_fxid_locked(u32 bucket, struct fib_xid_table *xtbl,
+void list_fib_rm_fxid_locked(void *parg, struct fib_xid_table *xtbl,
 	struct fib_xid *fxid);
 
 /** list_fib_rm_xid - Remove @xid from @xtbl.
@@ -182,7 +182,7 @@ struct fib_xid *list_fib_rm_xid(struct fib_xid_table *xtbl, const u8 *xid);
 void list_fib_replace_fxid_locked(struct fib_xid_table *xtbl,
 	struct fib_xid *old_fxid, struct fib_xid *new_fxid);
 
-void list_fib_unlock_bucket(struct fib_xid_table *xtbl, u32 bucket)
+void list_fib_unlock_bucket(struct fib_xid_table *xtbl, void *parg)
 	__releases(xip_bucket_lock);
 
 int list_fib_dump_xtbl_rcu(struct fib_xid_table *xtbl,
