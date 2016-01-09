@@ -80,13 +80,6 @@ struct fib_xid {
 	void			*fx_data[0];
 };
 
-struct fib_xid_buckets {
-	/* Heads of bucket lists. */
-	struct hlist_head	*buckets;
-	/* Number of buckets; it is a power of 2. */
-	int			divisor;
-};
-
 struct fib_xid_table {
 	atomic_t			refcnt;
 	int				dead;
@@ -96,22 +89,15 @@ struct fib_xid_table {
 	xid_type_t			fxt_ppal_type;	/* Principal type. */
 	struct net			*fxt_net;	/* Context. */
 
-	/* Buckets. */
-	struct fib_xid_buckets __rcu	*fxt_active_branch;
-	struct fib_xid_buckets		fxt_branch[2];
-	struct xia_lock_table		*fxt_locktbl;
-
 	/* Number of struct fib_xid's in this table. */
 	atomic_t			fxt_count;
 
-	/* Used to minimize collisions on the lock table. */
-	u32				fxt_seed;
-
-	struct work_struct		fxt_rehash_work;
-	/* Avoid writers while rehashing table. */
-	rwlock_t			fxt_writers_lock;
-
 	const struct xia_ppal_rt_eops	*all_eops;
+
+	/* Extra data that needs to go with every struct fib_xid_table,
+	 * depending on the type of FIB used.
+	 */
+	void				*fxt_data[0];
 };
 
 static inline xid_type_t xtbl_ppalty(const struct fib_xid_table *xtbl)
