@@ -119,7 +119,7 @@ static void local_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 static const xia_ppal_all_rt_eops_t ad_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
-		.delroute = list_fib_default_local_delroute,
+		.delroute = list_fib_default_local_main_delroute,
 		.dump_fxid = local_dump_ad,
 		.free_fxid = local_free_ad,
 	},

@@ -212,14 +212,14 @@ static void main_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 static const xia_ppal_all_rt_eops_t zf_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
-		.delroute = list_fib_default_local_delroute,
+		.delroute = list_fib_default_local_main_delroute,
 		.dump_fxid = local_dump_zf,
 		.free_fxid = local_free_zf,
 	},
 
 	[XRTABLE_MAIN_INDEX] = {
 		.newroute = main_newroute,
-		.delroute = list_fib_default_local_delroute,
+		.delroute = list_fib_default_local_main_delroute,
 		.dump_fxid = main_dump_zf,
 		.free_fxid = main_free_zf,
 	},

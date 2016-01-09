@@ -62,7 +62,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 			  struct fib_xid_table *xtbl,
 			  struct xia_fib_config *cfg)
 {
-	int rc = list_fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
+	int rc = list_fib_default_local_main_delroute(ctx, xtbl, cfg);
 
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);

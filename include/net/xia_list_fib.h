@@ -35,16 +35,7 @@ int list_fib_build_newroute(struct fib_xid *new_fxid,
 /* NOTE
  *	If it returns ZERO, that is, success, the entry was deleted.
  */
-int list_fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
-	struct xia_fib_config *cfg);
-
-/* These functions are meant to be a used in field delroute of
- * struct xia_ppal_rt_eops when all that is needed is to remove the entry from
- * @xtbl, and free it.
- */
-int list_fib_default_local_delroute(struct xip_ppal_ctx *ctx,
-	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
-int list_fib_default_main_delroute(struct xip_ppal_ctx *ctx,
+int list_fib_default_local_main_delroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
 
 int list_fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
@@ -52,7 +43,7 @@ int list_fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 
 #define XIP_LIST_FIB_REDIRECT_MAIN [XRTABLE_MAIN_INDEX] = {		\
 	.newroute = list_fib_mrd_newroute,				\
-	.delroute = list_fib_default_main_delroute,			\
+	.delroute = list_fib_default_local_main_delroute,		\
 	.dump_fxid = fib_mrd_dump,					\
 	.free_fxid = fib_mrd_free,					\
 }

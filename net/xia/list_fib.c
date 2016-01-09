@@ -563,8 +563,9 @@ void list_fib_replace_fxid_locked(struct fib_xid_table *xtbl,
 }
 EXPORT_SYMBOL_GPL(list_fib_replace_fxid_locked);
 
-int list_fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
-			    struct xia_fib_config *cfg)
+int list_fib_default_local_main_delroute(struct xip_ppal_ctx *ctx,
+					 struct fib_xid_table *xtbl,
+					 struct xia_fib_config *cfg)
 {
 	struct fib_xid *fxid;
 	u32 bucket;
@@ -575,7 +576,7 @@ int list_fib_build_delroute(int tbl_id, struct fib_xid_table *xtbl,
 		rc = -ENOENT;
 		goto unlock_bucket;
 	}
-	if (fxid->fx_table_id != tbl_id) {
+	if (fxid->fx_table_id != cfg->xfc_table) {
 		rc = -EINVAL;
 		goto unlock_bucket;
 	}
@@ -589,23 +590,7 @@ unlock_bucket:
 	list_fib_unlock_bucket(xtbl, &bucket);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_fib_build_delroute);
-
-int list_fib_default_local_delroute(struct xip_ppal_ctx *ctx,
-				    struct fib_xid_table *xtbl,
-				    struct xia_fib_config *cfg)
-{
-	return list_fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
-}
-EXPORT_SYMBOL_GPL(list_fib_default_local_delroute);
-
-int list_fib_default_main_delroute(struct xip_ppal_ctx *ctx,
-				   struct fib_xid_table *xtbl,
-				   struct xia_fib_config *cfg)
-{
-	return list_fib_build_delroute(XRTABLE_MAIN_INDEX, xtbl, cfg);
-}
-EXPORT_SYMBOL_GPL(list_fib_default_main_delroute);
+EXPORT_SYMBOL_GPL(list_fib_default_local_main_delroute);
 
 int list_fib_build_newroute(struct fib_xid *new_fxid,
 			    struct fib_xid_table *xtbl,
