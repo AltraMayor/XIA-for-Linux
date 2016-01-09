@@ -164,7 +164,7 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 			continue;
 		if (dumped)
 			clear_cb_from(cb, 1);
-		if (list_fib_dump_xtbl_rcu(ctx->xpc_xtbl, ctx, skb, cb) < 0)
+		if (list_xtbl_dump_rcu(ctx->xpc_xtbl, ctx, skb, cb) < 0)
 			break;
 		dumped = 1;
 	}

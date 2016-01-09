@@ -52,13 +52,13 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	new_lad = list_fxid_ppal_alloc(sizeof(*new_lad), GFP_KERNEL);
 	if (!new_lad)
 		return -ENOMEM;
-	list_init_fxid(&new_lad->common, cfg->xfc_dst->xid_id,
+	list_fxid_init(&new_lad->common, cfg->xfc_dst->xid_id,
 		       XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&new_lad->anchor);
 
-	rc = list_fib_build_newroute(&new_lad->common, xtbl, cfg, NULL);
+	rc = list_fib_newroute(&new_lad->common, xtbl, cfg, NULL);
 	if (rc)
-		free_fxid_norcu(xtbl, &new_lad->common);
+		fxid_free_norcu(xtbl, &new_lad->common);
 	return rc;
 }
 
@@ -119,7 +119,7 @@ static void local_free_ad(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 static const xia_ppal_all_rt_eops_t ad_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
-		.delroute = list_fib_default_local_main_delroute,
+		.delroute = list_fib_delroute,
 		.dump_fxid = local_dump_ad,
 		.free_fxid = local_free_ad,
 	},
@@ -157,8 +157,8 @@ static int __net_init ad_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_init_xid_table(&ad_ctx->ctx, net, &xia_main_lock_table,
-				 ad_all_rt_eops);
+	rc = list_xtbl_init(&ad_ctx->ctx, net, &xia_main_lock_table,
+			    ad_all_rt_eops);
 	if (rc)
 		goto ad_ctx;
 
@@ -197,7 +197,7 @@ static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 
-	fxid = list_xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid) {
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();

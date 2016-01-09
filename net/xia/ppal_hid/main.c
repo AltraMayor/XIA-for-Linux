@@ -41,11 +41,11 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	lhid = list_fxid_ppal_alloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		return -ENOMEM;
-	list_init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id,
+	list_fxid_init(&lhid->xhl_common, cfg->xfc_dst->xid_id,
 		       XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lhid->xhl_anchor);
 
-	rc = list_fib_build_newroute(&lhid->xhl_common, xtbl, cfg, &added);
+	rc = list_fib_newroute(&lhid->xhl_common, xtbl, cfg, &added);
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
 
@@ -53,7 +53,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 			atomic_inc(&hid_ctx->me);
 		atomic_inc(&hid_ctx->to_announce);
 	} else {
-		free_fxid_norcu(xtbl, &lhid->xhl_common);
+		fxid_free_norcu(xtbl, &lhid->xhl_common);
 	}
 	return rc;
 }
@@ -62,7 +62,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 			  struct fib_xid_table *xtbl,
 			  struct xia_fib_config *cfg)
 {
-	int rc = list_fib_default_local_main_delroute(ctx, xtbl, cfg);
+	int rc = list_fib_delroute(ctx, xtbl, cfg);
 
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
@@ -273,8 +273,8 @@ static int __net_init hid_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_init_xid_table(&hid_ctx->ctx, net, &xia_main_lock_table,
-				 hid_all_rt_eops);
+	rc = list_xtbl_init(&hid_ctx->ctx, net, &xia_main_lock_table,
+			    hid_all_rt_eops);
 	if (rc)
 		goto hid_ctx;
 
@@ -437,7 +437,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, hid_vxt);
 
-	fxid = list_xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid)
 		goto out;
 

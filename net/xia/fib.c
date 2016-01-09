@@ -80,23 +80,23 @@ struct xip_ppal_ctx *xip_find_ppal_ctx_rcu(struct net *net, xid_type_t ty)
 }
 EXPORT_SYMBOL_GPL(xip_find_ppal_ctx_rcu);
 
-static void __free_fxid(struct rcu_head *head)
+static void __fxid_free(struct rcu_head *head)
 {
 	struct fib_xid *fxid =
 		container_of(head, struct fib_xid, dead.rcu_head);
 	struct fib_xid_table *xtbl = fxid->dead.xtbl;
 
-	free_fxid_norcu(xtbl, fxid);
+	fxid_free_norcu(xtbl, fxid);
 	xtbl_put(xtbl);
 }
 
-void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+void fxid_free(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	fxid->dead.xtbl = xtbl;
 	xtbl_hold(xtbl);
-	call_rcu(&fxid->dead.rcu_head, __free_fxid);
+	call_rcu(&fxid->dead.rcu_head, __fxid_free);
 }
-EXPORT_SYMBOL_GPL(free_fxid);
+EXPORT_SYMBOL_GPL(fxid_free);
 
 void release_fib_ppal_ctx(struct net *net)
 {

@@ -185,8 +185,8 @@ static int __net_init xdp_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_init_xid_table(&xdp_ctx->ctx, net, &xia_main_lock_table,
-				 xdp_all_rt_eops);
+	rc = list_xtbl_init(&xdp_ctx->ctx, net, &xia_main_lock_table,
+			    xdp_all_rt_eops);
 	if (rc)
 		goto xdp_ctx;
 
@@ -281,7 +281,7 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 
-	fxid = list_xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid) {
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();
@@ -777,18 +777,18 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 
 	lxdp = sk_lxdp(sk);
 	id = ssink->s_xid.xid_id;
-	list_init_fxid(&lxdp->fxid, id, XRTABLE_LOCAL_INDEX, 0);
+	list_fxid_init(&lxdp->fxid, id, XRTABLE_LOCAL_INDEX, 0);
 
 	net = sock_net(sk);
 	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
 	xtbl = ctx->xpc_xtbl;
 
-	rc = list_fib_add_fxid(xtbl, &lxdp->fxid);
+	rc = list_fxid_add(xtbl, &lxdp->fxid);
 	/* We don't sock_hold(sk) because @lxdp->fxid is always released
 	 * before @lxdp is freed.
 	 */
 	if (rc) {
-		free_fxid_norcu(xtbl, &lxdp->fxid);
+		fxid_free_norcu(xtbl, &lxdp->fxid);
 		fib_free_dnf(dnf);
 		return rc == -EEXIST ? -EADDRINUSE : rc;
 	}
@@ -839,13 +839,13 @@ static void xdp_unhash(struct sock *sk)
 	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
 	xtbl = ctx->xpc_xtbl;
 	lxdp = xiask_lxdp(xia);
-	list_fib_rm_fxid(xtbl, &lxdp->fxid);
+	list_fxid_rm(xtbl, &lxdp->fxid);
 
 	/* Free DST entries. */
 
 	/* We must wait here because, @lxdp may be reused before RCU synchs.*/
 	synchronize_rcu();
-	free_fxid_norcu(xtbl, &lxdp->fxid);
+	fxid_free_norcu(xtbl, &lxdp->fxid);
 }
 
 static long sysctl_xdp_mem[3] __read_mostly;

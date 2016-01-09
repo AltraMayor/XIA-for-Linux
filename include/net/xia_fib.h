@@ -334,12 +334,12 @@ static inline struct xip_ppal_ctx *xip_find_my_ppal_ctx_vxt(struct net *net,
 }
 
 /* Don't call this function directly, call xtbl_put() instead. */
-void list_xtbl_finish_destroy(struct fib_xid_table *xtbl);
+void list_xtbl_destroy(struct fib_xid_table *xtbl);
 
 static inline void xtbl_put(struct fib_xid_table *xtbl)
 {
 	if (atomic_dec_and_test(&xtbl->refcnt))
-		list_xtbl_finish_destroy(xtbl);
+		list_xtbl_destroy(xtbl);
 }
 
 static inline void xtbl_hold(struct fib_xid_table *xtbl)
@@ -357,7 +357,7 @@ static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
  *
  *	This function doesn't sleep.
  */
-void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+void fxid_free(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
 /* NOTE
  *	@fxid must not be in any XID table!
@@ -366,7 +366,7 @@ void free_fxid(struct fib_xid_table *xtbl, struct fib_xid *fxid);
  *	readers, for example calling synchronize_rcu(), otherwise use
  *	free_fxid.
  */
-static inline void free_fxid_norcu(struct fib_xid_table *xtbl,
+static inline void fxid_free_norcu(struct fib_xid_table *xtbl,
 	struct fib_xid *fxid)
 {
 	xtbl->all_eops[fxid->fx_table_id].free_fxid(xtbl, fxid);

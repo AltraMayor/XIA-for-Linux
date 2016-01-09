@@ -276,12 +276,12 @@ static int __net_init serval_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_init_xid_table(&serval_ctx->srvc, net, &xia_main_lock_table,
-				 srvc_all_rt_eops);
+	rc = list_xtbl_init(&serval_ctx->srvc, net, &xia_main_lock_table,
+			    srvc_all_rt_eops);
 	if (rc)
 		goto serval_ctx;
-	rc = list_init_xid_table(&serval_ctx->flow, net, &xia_main_lock_table,
-				 flow_all_rt_eops);
+	rc = list_xtbl_init(&serval_ctx->flow, net, &xia_main_lock_table,
+			    flow_all_rt_eops);
 	if (rc)
 		goto serval_ctx;
 
@@ -402,7 +402,7 @@ static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, srvc_vxt);
 
-	fxid = list_xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid) {
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();
@@ -459,7 +459,7 @@ static int flow_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, flow_vxt);
 
-	fxid = list_xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid) {
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();
@@ -640,8 +640,8 @@ int serval_listen_stop(struct sock *sk)
 
 		/* Deleting SYN queued request socket. */
 		list_del(&srsk->lh);
-		list_fib_rm_fxid(xtbl, &srsk->flow_fxid);
-		free_fxid(xtbl, &srsk->flow_fxid);
+		list_fxid_rm(xtbl, &srsk->flow_fxid);
+		fxid_free(xtbl, &srsk->flow_fxid);
 		sk->sk_ack_backlog--;
 		srsk_put(srsk);
 	}
@@ -697,14 +697,14 @@ static inline void __rtid_init_common(struct serval_rt_id *rtid,
 static void __rtid_init(struct serval_rt_id *rtid, struct serval_sock *ssk,
 			int table_id, int entry_type)
 {
-	__list_init_fxid(&rtid->fxid, table_id, entry_type);
+	__list_fxid_init(&rtid->fxid, table_id, entry_type);
 	__rtid_init_common(rtid, ssk);
 }
 
 static void rtid_init(struct serval_rt_id *rtid, struct serval_sock *ssk,
 		      const u8 *xid, int table_id, int entry_type)
 {
-	list_init_fxid(&rtid->fxid, xid, table_id, entry_type);
+	list_fxid_init(&rtid->fxid, xid, table_id, entry_type);
 	__rtid_init_common(rtid, ssk);
 }
 
@@ -721,7 +721,7 @@ static void rtid_free_norcu(struct fib_xid_table *xtbl,
 			    struct serval_rt_id *rtid)
 {
 	__rtid_free_common(rtid);
-	free_fxid_norcu(xtbl, &rtid->fxid);
+	fxid_free_norcu(xtbl, &rtid->fxid);
 }
 
 /* ATTENTION, only call this function after rtid_init() or __rtid_init()
@@ -730,7 +730,7 @@ static void rtid_free_norcu(struct fib_xid_table *xtbl,
 static void rtid_free(struct fib_xid_table *xtbl, struct serval_rt_id *rtid)
 {
 	__rtid_free_common(rtid);
-	free_fxid(xtbl, &rtid->fxid);
+	fxid_free(xtbl, &rtid->fxid);
 }
 
 int serval_sock_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
@@ -765,7 +765,7 @@ int serval_sock_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	ctx = xip_find_my_ppal_ctx_vxt(net, srvc_vxt);
 	xtbl = ctx->xpc_xtbl;
 
-	rc = list_fib_add_fxid(xtbl, &rtid->fxid);
+	rc = list_fxid_add(xtbl, &rtid->fxid);
 	if (rc) {
 		rc = rc == -EEXIST ? -EADDRINUSE : rc;
 		goto rtid;
@@ -843,7 +843,7 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 		serval_sock_set_state(sk, SAL_REQUEST);
 		xtbl = xip_find_my_ppal_ctx_vxt(sock_net(sk),
 						flow_vxt)->xpc_xtbl;
-		rc = list_fib_add_fxid(xtbl, &rtid->fxid);
+		rc = list_fxid_add(xtbl, &rtid->fxid);
 		if (rc) {
 			serval_sock_set_state(sk, SAL_CLOSED);
 			rtid_free_norcu(xtbl, rtid);
@@ -1055,21 +1055,21 @@ int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
 
 	net = sock_net(&new_ssk->xia_sk.sk);
 	xtbl = xip_find_my_ppal_ctx_vxt(net, flow_vxt)->xpc_xtbl;
-	found_fxid = list_xia_find_xid_lock(&bucket, xtbl, cur_fxid->fx_xid);
+	found_fxid = list_fxid_find_lock(&bucket, xtbl, cur_fxid->fx_xid);
 	if (unlikely(!found_fxid)) {
 		/* This case should only happen if another thread was faster
 		 * than us and has already removed @cur_fxid.
 		 */
-		BUG_ON(list_fib_add_fxid_locked(&bucket, xtbl, &rtid->fxid));
-		list_fib_unlock_bucket(xtbl, &bucket);
+		BUG_ON(list_fxid_add_locked(&bucket, xtbl, &rtid->fxid));
+		list_fib_unlock(xtbl, &bucket);
 		fib_defer_dnf(dnf, net, xtbl_ppalty(xtbl));
 		goto out;
 	}
 
 	BUG_ON(found_fxid != cur_fxid);
-	list_fib_replace_fxid_locked(xtbl, cur_fxid, &rtid->fxid);
-	list_fib_unlock_bucket(xtbl, &bucket);
-	free_fxid(xtbl, cur_fxid);
+	list_fxid_replace_locked(xtbl, cur_fxid, &rtid->fxid);
+	list_fib_unlock(xtbl, &bucket);
+	fxid_free(xtbl, cur_fxid);
 	fib_free_dnf(dnf);
 
 out:
@@ -1081,7 +1081,7 @@ out:
 int __serval_sock_hash_flowid(struct net *net, struct fib_xid *fxid)
 {
 	struct xip_ppal_ctx *ctx = xip_find_my_ppal_ctx_vxt(net, flow_vxt);
-	return list_fib_add_fxid(ctx->xpc_xtbl, fxid);
+	return list_fxid_add(ctx->xpc_xtbl, fxid);
 }
 
 static void serval_sock_unhash_s_f(struct sock *sk,
@@ -1100,7 +1100,7 @@ static void serval_sock_unhash_s_f(struct sock *sk,
 
 		/* Removing socket @sk from the service table. */
 		srvc_xtbl = xip_find_my_ppal_ctx_vxt(net, srvc_vxt)->xpc_xtbl;
-		list_fib_rm_fxid(srvc_xtbl, &rtid->fxid);
+		list_fxid_rm(srvc_xtbl, &rtid->fxid);
 		rtid_free(srvc_xtbl, rtid);
 		sock_prot_inuse_add(net, sk->sk_prot, -1);
 	}
@@ -1113,7 +1113,7 @@ static void serval_sock_unhash_s_f(struct sock *sk,
 
 		/* Removing socket @sk from the flow table. */
 		flow_xtbl = xip_find_my_ppal_ctx_vxt(net, flow_vxt)->xpc_xtbl;
-		list_fib_rm_fxid(flow_xtbl, &rtid->fxid);
+		list_fxid_rm(flow_xtbl, &rtid->fxid);
 		rtid_free(flow_xtbl, rtid);
 		sock_prot_inuse_add(net, sk->sk_prot, -1);
 	}
