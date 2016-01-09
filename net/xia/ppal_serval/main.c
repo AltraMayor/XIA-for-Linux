@@ -686,11 +686,6 @@ int serval_listen_stop(struct sock *sk)
 	return 0;
 }
 
-static inline struct serval_rt_id *rtid_alloc(gfp_t flags)
-{
-	return kmalloc(sizeof(struct serval_rt_id), flags);
-}
-
 /* Don't call this function, use rtid_init() or __rtid_init() instead. */
 static inline void __rtid_init_common(struct serval_rt_id *rtid,
 				      struct serval_sock *ssk)
@@ -758,7 +753,7 @@ int serval_sock_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 	if (!dnf)
 		return -ENOMEM;
 
-	rtid = rtid_alloc(GFP_KERNEL);
+	rtid = list_fxid_ppal_alloc(sizeof(*rtid), GFP_KERNEL);
 	if (!rtid) {
 		rc = -ENOMEM;
 		goto dnf;
@@ -834,7 +829,7 @@ static int serval_connect(struct socket *sock, struct sockaddr *uaddr,
 		BUG_ON(!ssk->srvc_rtid);
 
 		/* Allocate a FlowID. */
-		rtid = rtid_alloc(GFP_KERNEL);
+		rtid = list_fxid_ppal_alloc(sizeof(*rtid), GFP_KERNEL);
 		if (!rtid) {
 			rc = -ENOMEM;
 			goto out;
@@ -1050,7 +1045,7 @@ int serval_swap_srsk_ssk_flowid(struct fib_xid *cur_fxid,
 	if (!dnf)
 		return -ENOMEM;
 
-	rtid = rtid_alloc(GFP_ATOMIC);
+	rtid = list_fxid_ppal_alloc(sizeof(*rtid), GFP_ATOMIC);
 	if (!rtid) {
 		fib_free_dnf(dnf);
 		return -ENOMEM;

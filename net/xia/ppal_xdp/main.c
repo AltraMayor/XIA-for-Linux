@@ -44,8 +44,11 @@ struct fib_xid_xdp_local {
 	/* Two free bytes. */
 
 	/* FIB XID related fields. */
-	struct fib_xid		fxid;
 	struct xip_dst_anchor   anchor;
+	/* WARNING: @fxid is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		fxid;
 };
 
 static inline struct fib_xid_xdp_local *fxid_lxdp(struct fib_xid *fxid)
@@ -873,7 +876,8 @@ static struct proto xdp_prot __read_mostly = {
 	.sysctl_mem		= sysctl_xdp_mem,
 	.sysctl_wmem		= &sysctl_xdp_wmem_min,
 	.sysctl_rmem		= &sysctl_xdp_rmem_min,
-	.obj_size		= sizeof(struct fib_xid_xdp_local),
+	.obj_size		= sizeof(struct fib_xid_xdp_local) +
+				  sizeof(struct list_fib_xid),
 	.slab_flags		= 0,
 };
 

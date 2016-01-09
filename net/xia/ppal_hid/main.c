@@ -11,14 +11,17 @@ int hid_vxt __read_mostly = -1;
 /* Local HIDs */
 
 struct fib_xid_hid_local {
-	struct fib_xid	xhl_common;
-
 	/* XXX Adding a list of devs in which the HID is valid, would allow
 	 * a network administrator to enforce physical network isolations;
 	 * support dev == NULL as a wildcard.
 	 */
 
 	struct xip_dst_anchor	xhl_anchor;
+
+	/* WARNING: @xhl_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		xhl_common;
 };
 
 static inline struct fib_xid_hid_local *fxid_lhid(struct fib_xid *fxid)
@@ -35,7 +38,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_hid_local *lhid;
 	int rc, added;
 
-	lhid = kmalloc(sizeof(*lhid), GFP_KERNEL);
+	lhid = list_fxid_ppal_alloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		return -ENOMEM;
 	list_init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id,

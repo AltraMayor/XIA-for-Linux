@@ -317,7 +317,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		goto unlock_bucket;
 	}
 
-	new_mhid = kmalloc(sizeof(*new_mhid), GFP_ATOMIC);
+	new_mhid = list_fxid_ppal_alloc(sizeof(*new_mhid), GFP_ATOMIC);
 	if (!new_mhid) {
 		rc = -ENOMEM;
 		goto def_upd;

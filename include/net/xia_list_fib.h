@@ -5,6 +5,11 @@
 
 #include <net/xia_fib.h>
 
+struct list_fib_xid {
+	/* Pointers to add this struct in bucket lists of an XID table. */
+	struct hlist_node	fx_branch_list[2];
+};
+
 /* Return index of @branch. One must use it to scan buckets. */
 static inline int xtbl_branch_index(struct fib_xid_table *xtbl,
 				    struct fib_xid_buckets *branch)
@@ -65,6 +70,8 @@ int list_fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
  */
 int list_init_xid_table(struct xip_ppal_ctx *ctx, struct net *net,
 	struct xia_lock_table *locktbl, const xia_ppal_all_rt_eops_t all_eops);
+
+void *list_fxid_ppal_alloc(size_t ppal_entry_size, gfp_t flags);
 
 void __list_init_fxid(struct fib_xid *fxid, int table_id, int entry_type);
 

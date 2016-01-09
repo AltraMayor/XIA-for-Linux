@@ -63,7 +63,6 @@ static inline int u4id_well_formed(const u8 *xid)
  */
 
 struct fib_xid_u4id_local {
-	struct fib_xid		common;
 	struct xip_dst_anchor	anchor;
 	struct socket		*sock;
 	struct work_struct	del_work;
@@ -77,6 +76,11 @@ struct fib_xid_u4id_local {
 	bool			no_check;
 
 	/* Two free bytes. */
+
+	/* WARNING: @common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		common;
 };
 
 static inline struct fib_xid_u4id_local *fxid_lu4id(struct fib_xid *fxid)
@@ -187,11 +191,11 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (lu4id_info->tunnel && u4id_ctx->tunnel_sock)
 		return -EEXIST;
 
-	lu4id = kmalloc(sizeof(*lu4id), GFP_KERNEL);
+	lu4id = list_fxid_ppal_alloc(sizeof(*lu4id), GFP_KERNEL);
 	if (!lu4id)
 		return -ENOMEM;
 	list_init_fxid(&lu4id->common, cfg->xfc_dst->xid_id,
-		      XRTABLE_LOCAL_INDEX, 0);
+		       XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lu4id->anchor);
 	lu4id->sock = NULL;
 	INIT_WORK(&lu4id->del_work, u4id_local_del_work);

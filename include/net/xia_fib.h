@@ -44,11 +44,11 @@ struct xia_fib_config {
 /* This structure should be the first element of a struct that specializes
  * for a given principal.
  * This structure is principal independent.
+ * The true size of this structure varies depending on the type of FIB
+ * it is used for. When using struct fib_xid as a member in other structs,
+ * it must be placed last.
  */
 struct fib_xid {
-	/* Pointers to add this struct in bucket lists of an XID table. */
-	struct hlist_node	fx_branch_list[2];
-
 	/* XID */
 	u8			fx_xid[XIA_XID_MAX];
 
@@ -73,6 +73,11 @@ struct fib_xid {
 		struct fib_xid_table	*xtbl;
 		struct rcu_head		rcu_head;
 	} dead;
+
+	/* Extra data that needs to go with every struct fib_xid,
+	 * depending on the type of FIB used.
+	 */
+	void			*fx_data[0];
 };
 
 struct fib_xid_buckets {
@@ -171,8 +176,12 @@ int fib_no_newroute(struct xip_ppal_ctx *ctx,
 /* Main entries that only redirect */
 
 struct fib_xid_redirect_main {
-	struct fib_xid		common;
 	struct xia_xid		gw;
+
+	/* WARNING: @common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		common;
 };
 
 static inline struct fib_xid_redirect_main *fxid_mrd(struct fib_xid *fxid)

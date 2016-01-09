@@ -2,6 +2,7 @@
 #include <linux/sockios.h>
 #include <linux/swap.h>
 #include <linux/export.h>
+#include <net/xia_list_fib.h>
 #include "serval_tcp_sock.h"
 #include "serval_tcp_request_sock.h"
 #include "serval_sal.h"
@@ -2344,7 +2345,8 @@ static void serval_tcp_request_sock_destructor(struct request_sock *req)
 
 struct request_sock_ops serval_tcp_request_sock_ops __read_mostly = {
 	.family		=	PF_INET,
-	.obj_size	=	sizeof(struct serval_tcp_request_sock),
+	.obj_size	=	sizeof(struct serval_tcp_request_sock) +
+				sizeof(struct list_fib_xid),
 	.destructor     =       serval_tcp_request_sock_destructor,
 };
 

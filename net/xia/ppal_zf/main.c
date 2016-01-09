@@ -28,9 +28,12 @@ static int my_vxt __read_mostly = -1;
 /* Local ZFs */
 
 struct fib_xid_zf_local {
-	struct fib_xid		common;
-
 	struct xip_dst_anchor   anchor;
+
+	/* WARNING: @common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		common;
 };
 
 static inline struct fib_xid_zf_local *fxid_lzf(struct fib_xid *fxid)
@@ -47,7 +50,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_zf_local *new_lzf;
 	int rc;
 
-	new_lzf = kmalloc(sizeof(*new_lzf), GFP_KERNEL);
+	new_lzf = list_fxid_ppal_alloc(sizeof(*new_lzf), GFP_KERNEL);
 	if (!new_lzf)
 		return -ENOMEM;
 	list_init_fxid(&new_lzf->common, cfg->xfc_dst->xid_id,
@@ -114,8 +117,12 @@ static void local_free_zf(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 /* Main ZFs */
 
 struct fib_xid_zf_main {
-	struct fib_xid		common;
 	struct xia_xid		gw;
+
+	/* WARNING: @common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		common;
 };
 
 static inline struct fib_xid_zf_main *fxid_mzf(struct fib_xid *fxid)
@@ -134,11 +141,11 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == XIDTYPE_ZF)
 		return -EINVAL;
 
-	new_mzf = kmalloc(sizeof(*new_mzf), GFP_KERNEL);
+	new_mzf = list_fxid_ppal_alloc(sizeof(*new_mzf), GFP_KERNEL);
 	if (!new_mzf)
 		return -ENOMEM;
 	list_init_fxid(&new_mzf->common, cfg->xfc_dst->xid_id,
-		  XRTABLE_MAIN_INDEX, 0);
+		       XRTABLE_MAIN_INDEX, 0);
 	new_mzf->gw = *cfg->xfc_gw;
 
 	rc = list_fib_build_newroute(&new_mzf->common, xtbl, cfg, NULL);

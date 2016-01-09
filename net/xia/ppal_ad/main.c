@@ -27,9 +27,12 @@ static int my_vxt __read_mostly = -1;
 /* Local ADs */
 
 struct fib_xid_ad_local {
-	struct fib_xid		common;
-
 	struct xip_dst_anchor   anchor;
+
+	/* WARNING: @common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		common;
 };
 
 static inline struct fib_xid_ad_local *fxid_lad(struct fib_xid *fxid)
@@ -46,7 +49,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_ad_local *new_lad;
 	int rc;
 
-	new_lad = kmalloc(sizeof(*new_lad), GFP_KERNEL);
+	new_lad = list_fxid_ppal_alloc(sizeof(*new_lad), GFP_KERNEL);
 	if (!new_lad)
 		return -ENOMEM;
 	list_init_fxid(&new_lad->common, cfg->xfc_dst->xid_id,

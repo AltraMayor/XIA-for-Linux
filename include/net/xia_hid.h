@@ -87,10 +87,14 @@ struct hrdw_addr {
 };
 
 struct fib_xid_hid_main {
-	struct fib_xid		xhm_common;
 	struct list_head	xhm_haddrs;
 	atomic_t		xhm_refcnt;
 	bool			xhm_dead;
+
+	/* WARNING: @xhm_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		xhm_common;
 };
 
 static inline struct fib_xid_hid_main *fxid_mhid(struct fib_xid *fxid)
