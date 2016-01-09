@@ -98,12 +98,13 @@ static inline void free_buckets(struct fib_xid_buckets *branch)
 /* XTBL_INITIAL_DIV must be a power of 2. */
 #define XTBL_INITIAL_DIV 1
 
-static void list_xtbl_death_work(struct work_struct *work);
 static void rehash_work(struct work_struct *work);
+static void list_xtbl_death_work(struct work_struct *work);
 
-int list_xtbl_init(struct xip_ppal_ctx *ctx, struct net *net,
-		   struct xia_lock_table *locktbl,
-		   const xia_ppal_all_rt_eops_t all_eops)
+static int list_xtbl_init(struct xip_ppal_ctx *ctx, struct net *net,
+			  struct xia_lock_table *locktbl,
+			  const xia_ppal_all_rt_eops_t all_eops,
+			  const struct xia_ppal_rt_iops *all_iops)
 {
 	struct fib_xid_table *new_xtbl;
 	struct list_fib_xid_table *lxtbl;
@@ -135,6 +136,7 @@ int list_xtbl_init(struct xip_ppal_ctx *ctx, struct net *net,
 	INIT_WORK(&lxtbl->fxt_rehash_work, rehash_work);
 	rwlock_init(&lxtbl->fxt_writers_lock);
 	new_xtbl->all_eops = all_eops;
+	new_xtbl->all_iops = all_iops;
 
 	atomic_set(&new_xtbl->refcnt, 1);
 	INIT_WORK(&new_xtbl->fxt_death_work, list_xtbl_death_work);
@@ -148,15 +150,13 @@ new_xtbl:
 out:
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_xtbl_init);
 
-void *list_fxid_ppal_alloc(size_t ppal_entry_size, gfp_t flags)
+static void *list_fxid_ppal_alloc(size_t ppal_entry_size, gfp_t flags)
 {
 	return kmalloc(ppal_entry_size + sizeof(struct list_fib_xid), flags);
 }
-EXPORT_SYMBOL_GPL(list_fxid_ppal_alloc);
 
-void __list_fxid_init(struct fib_xid *fxid, int table_id, int entry_type)
+static void list_fxid_init(struct fib_xid *fxid, int table_id, int entry_type)
 {
 	struct list_fib_xid *lfxid = fxid_lfxid(fxid);
 	INIT_HLIST_NODE(&lfxid->fx_branch_list[0]);
@@ -171,7 +171,6 @@ void __list_fxid_init(struct fib_xid *fxid, int table_id, int entry_type)
 
 	fxid->dead.xtbl = NULL;
 }
-EXPORT_SYMBOL_GPL(__list_fxid_init);
 
 static void list_xtbl_death_work(struct work_struct *work)
 {
@@ -221,18 +220,6 @@ static void list_xtbl_death_work(struct work_struct *work)
 	kfree(xtbl);
 }
 
-void list_xtbl_destroy(struct fib_xid_table *xtbl)
-{
-	xtbl->dead = 1;
-	barrier(); /* Announce that @xtbl is dead as soon as possible. */
-
-	if (in_interrupt())
-		schedule_work(&xtbl->fxt_death_work);
-	else
-		list_xtbl_death_work(&xtbl->fxt_death_work);
-}
-EXPORT_SYMBOL_GPL(list_xtbl_destroy);
-
 static inline struct hlist_head *__xidhead(struct hlist_head *buckets,
 					   u32 bucket)
 {
@@ -261,8 +248,8 @@ static struct fib_xid *list_fxid_find_locked(struct fib_xid_table *xtbl,
 	return NULL;
 }
 
-struct fib_xid *list_fxid_find_rcu(struct fib_xid_table *xtbl,
-				   const u8 *xid)
+static struct fib_xid *list_fxid_find_rcu(struct fib_xid_table *xtbl,
+					  const u8 *xid)
 {
 	struct list_fib_xid_table *lxtbl = xtbl_lxtbl(xtbl);
 	struct fib_xid_buckets *abranch;
@@ -279,7 +266,6 @@ struct fib_xid *list_fxid_find_rcu(struct fib_xid_table *xtbl,
 	}
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(list_fxid_find_rcu);
 
 static u32 list_fib_lock_bucket_xid(struct fib_xid_table *xtbl, const u8 *xid)
 	__acquires(xip_bucket_lock)
@@ -312,7 +298,7 @@ static inline u32 parg_bucket(void *parg)
 	return *(u32 *)parg;
 }
 
-void list_fib_unlock(struct fib_xid_table *xtbl, void *parg)
+static void list_fib_unlock(struct fib_xid_table *xtbl, void *parg)
 	__releases(xip_bucket_lock)
 {
 	struct list_fib_xid_table *lxtbl = xtbl_lxtbl(xtbl);
@@ -324,23 +310,21 @@ void list_fib_unlock(struct fib_xid_table *xtbl, void *parg)
 	bucket_unlock(lxtbl, bucket);
 	read_unlock(&lxtbl->fxt_writers_lock);
 }
-EXPORT_SYMBOL_GPL(list_fib_unlock);
 
-struct fib_xid *list_fxid_find_lock(void *parg, struct fib_xid_table *xtbl,
-	const u8 *xid) __acquires(xip_bucket_lock)
+static struct fib_xid *list_fxid_find_lock(void *parg,
+	struct fib_xid_table *xtbl, const u8 *xid) __acquires(xip_bucket_lock)
 {
 	struct hlist_head *head;
 	u32 *pbucket = parg;
 	*pbucket = list_fib_lock_bucket_xid(xtbl, xid);
 	return list_fxid_find_locked(xtbl, *pbucket, xid, &head);
 }
-EXPORT_SYMBOL_GPL(list_fxid_find_lock);
 
-int list_iterate_xids(struct fib_xid_table *xtbl,
-		      int (*locked_callback)(struct fib_xid_table *xtbl,
-					     struct fib_xid *fxid,
-					     const void *arg),
-		      const void *arg)
+static int list_iterate_xids(struct fib_xid_table *xtbl,
+			     int (*locked_callback)(struct fib_xid_table *xtbl,
+						    struct fib_xid *fxid,
+						    const void *arg),
+			     const void *arg)
 {
 	struct list_fib_xid_table *lxtbl = xtbl_lxtbl(xtbl);
 	struct fib_xid_buckets *abranch;
@@ -373,13 +357,12 @@ out:
 	read_unlock(&lxtbl->fxt_writers_lock);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_iterate_xids);
 
-int list_iterate_xids_rcu(struct fib_xid_table *xtbl,
-			  int (*rcu_callback)(struct fib_xid_table *xtbl,
-					      struct fib_xid *fxid,
-					      const void *arg),
-			  const void *arg)
+static int list_iterate_xids_rcu(struct fib_xid_table *xtbl,
+				 int (*rcu_callback)(struct fib_xid_table *xtbl,
+						     struct fib_xid *fxid,
+						     const void *arg),
+				 const void *arg)
 {
 	struct list_fib_xid_table *lxtbl = xtbl_lxtbl(xtbl);
 	struct fib_xid_buckets *abranch;
@@ -403,7 +386,6 @@ int list_iterate_xids_rcu(struct fib_xid_table *xtbl,
 out:
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_iterate_xids_rcu);
 
 /* Grow table as needed. */
 static void rehash_work(struct work_struct *work)
@@ -488,8 +470,8 @@ static void rehash_work(struct work_struct *work)
 	free_buckets(abranch);
 }
 
-int list_fxid_add_locked(void *parg, struct fib_xid_table *xtbl,
-			 struct fib_xid *fxid)
+static int list_fxid_add_locked(void *parg, struct fib_xid_table *xtbl,
+				struct fib_xid *fxid)
 {
 	struct list_fib_xid *lfxid = fxid_lfxid(fxid);
 	struct list_fib_xid_table *lxtbl = xtbl_lxtbl(xtbl);
@@ -512,9 +494,8 @@ int list_fxid_add_locked(void *parg, struct fib_xid_table *xtbl,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(list_fxid_add_locked);
 
-int list_fxid_add(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+static int list_fxid_add(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	u32 bucket;
 	int rc;
@@ -524,7 +505,6 @@ int list_fxid_add(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	list_fib_unlock(xtbl, &bucket);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_fxid_add);
 
 static inline void __list_fxid_rm_locked(struct fib_xid_table *xtbl,
 					 struct fib_xid_buckets *abranch,
@@ -535,8 +515,8 @@ static inline void __list_fxid_rm_locked(struct fib_xid_table *xtbl,
 	atomic_dec(&xtbl->fxt_count);
 }
 
-void list_fxid_rm_locked(void *parg, struct fib_xid_table *xtbl,
-			 struct fib_xid *fxid)
+static void list_fxid_rm_locked(void *parg, struct fib_xid_table *xtbl,
+				struct fib_xid *fxid)
 {
 	/* Currently, @parg is not necessary, but if it is, one should
 	 * call parg_bucket() instead of dereferencing it directly.
@@ -547,9 +527,8 @@ void list_fxid_rm_locked(void *parg, struct fib_xid_table *xtbl,
 	 */
 	__list_fxid_rm_locked(xtbl, xtbl_lxtbl(xtbl)->fxt_active_branch, fxid);
 }
-EXPORT_SYMBOL_GPL(list_fxid_rm_locked);
 
-struct fib_xid *list_xid_rm(struct fib_xid_table *xtbl, const u8 *xid)
+static struct fib_xid *list_xid_rm(struct fib_xid_table *xtbl, const u8 *xid)
 {
 	u32 bucket;
 	struct fib_xid *fxid = list_fxid_find_lock(&bucket, xtbl, xid);
@@ -562,20 +541,18 @@ struct fib_xid *list_xid_rm(struct fib_xid_table *xtbl, const u8 *xid)
 	list_fib_unlock(xtbl, &bucket);
 	return fxid;
 }
-EXPORT_SYMBOL_GPL(list_xid_rm);
 
-void list_fxid_rm(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+static void list_fxid_rm(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	u32 bucket = list_fib_lock(xtbl, fxid);
 
 	__list_fxid_rm_locked(xtbl, xtbl_lxtbl(xtbl)->fxt_active_branch, fxid);
 	list_fib_unlock(xtbl, &bucket);
 }
-EXPORT_SYMBOL_GPL(list_fxid_rm);
 
-void list_fxid_replace_locked(struct fib_xid_table *xtbl,
-			      struct fib_xid *old_fxid,
-			      struct fib_xid *new_fxid)
+static void list_fxid_replace_locked(struct fib_xid_table *xtbl,
+				     struct fib_xid *old_fxid,
+				     struct fib_xid *new_fxid)
 {
 	struct list_fib_xid *old_lfxid = fxid_lfxid(old_fxid);
 	struct list_fib_xid *new_lfxid = fxid_lfxid(new_fxid);
@@ -585,7 +562,6 @@ void list_fxid_replace_locked(struct fib_xid_table *xtbl,
 	hlist_replace_rcu(&old_lfxid->fx_branch_list[aindex],
 			  &new_lfxid->fx_branch_list[aindex]);
 }
-EXPORT_SYMBOL_GPL(list_fxid_replace_locked);
 
 int list_fib_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		      struct xia_fib_config *cfg)
@@ -615,8 +591,9 @@ unlock_bucket:
 }
 EXPORT_SYMBOL_GPL(list_fib_delroute);
 
-int list_fib_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
-		      struct xia_fib_config *cfg, int *padded)
+static int list_fib_newroute(struct fib_xid *new_fxid,
+			     struct fib_xid_table *xtbl,
+			     struct xia_fib_config *cfg, int *padded)
 {
 	struct xip_deferred_negdep_flush *dnf;
 	struct fib_xid *cur_fxid;
@@ -684,34 +661,10 @@ def_upd:
 	fib_free_dnf(dnf);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_fib_newroute);
 
-int list_fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
-			  struct xia_fib_config *cfg)
-{
-	struct fib_xid_redirect_main *new_mrd;
-	int rc;
-
-	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == xtbl_ppalty(xtbl))
-		return -EINVAL;
-
-	new_mrd = list_fxid_ppal_alloc(sizeof(*new_mrd), GFP_KERNEL);
-	if (!new_mrd)
-		return -ENOMEM;
-	list_fxid_init(&new_mrd->common, cfg->xfc_dst->xid_id,
-		       XRTABLE_MAIN_INDEX, 0);
-	new_mrd->gw = *cfg->xfc_gw;
-
-	rc = list_fib_newroute(&new_mrd->common, xtbl, cfg, NULL);
-	if (rc)
-		fxid_free_norcu(xtbl, &new_mrd->common);
-	return rc;
-}
-EXPORT_SYMBOL_GPL(list_fib_mrd_newroute);
-
-int list_xtbl_dump_rcu(struct fib_xid_table *xtbl,
-		       struct xip_ppal_ctx *ctx, struct sk_buff *skb,
-		       struct netlink_callback *cb)
+static int list_xtbl_dump_rcu(struct fib_xid_table *xtbl,
+			      struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			      struct netlink_callback *cb)
 {
 	struct fib_xid_buckets *abranch;
 	long i, j = 0;
@@ -746,4 +699,33 @@ out:
 	cb->args[2] = j;
 	return rc;
 }
-EXPORT_SYMBOL_GPL(list_xtbl_dump_rcu);
+
+const struct xia_ppal_rt_iops xia_ppal_list_rt_iops = {
+	.xtbl_init = list_xtbl_init,
+	.xtbl_death_work = list_xtbl_death_work,
+
+	.fxid_ppal_alloc = list_fxid_ppal_alloc,
+	.fxid_init = list_fxid_init,
+
+	.fxid_find_rcu = list_fxid_find_rcu,
+	.fxid_find_lock = list_fxid_find_lock,
+	.iterate_xids = list_iterate_xids,
+	.iterate_xids_rcu = list_iterate_xids_rcu,
+
+	.fxid_add = list_fxid_add,
+	.fxid_add_locked = list_fxid_add_locked,
+
+	.fxid_rm = list_fxid_rm,
+	.fxid_rm_locked = list_fxid_rm_locked,
+	.xid_rm = list_xid_rm,
+
+	.fxid_replace_locked = list_fxid_replace_locked,
+
+	.fib_unlock = list_fib_unlock,
+
+	.fib_newroute = list_fib_newroute,
+	.fib_delroute = list_fib_delroute,
+
+	.xtbl_dump_rcu = list_xtbl_dump_rcu,
+};
+EXPORT_SYMBOL_GPL(xia_ppal_list_rt_iops);

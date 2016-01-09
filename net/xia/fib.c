@@ -80,6 +80,18 @@ struct xip_ppal_ctx *xip_find_ppal_ctx_rcu(struct net *net, xid_type_t ty)
 }
 EXPORT_SYMBOL_GPL(xip_find_ppal_ctx_rcu);
 
+void xtbl_destroy(struct fib_xid_table *xtbl)
+{
+	xtbl->dead = 1;
+	barrier(); /* Announce that @xtbl is dead as soon as possible. */
+
+	if (in_interrupt())
+		schedule_work(&xtbl->fxt_death_work);
+	else
+		xtbl->all_iops->xtbl_death_work(&xtbl->fxt_death_work);
+}
+EXPORT_SYMBOL_GPL(xtbl_destroy);
+
 static void __fxid_free(struct rcu_head *head)
 {
 	struct fib_xid *fxid =
@@ -161,6 +173,30 @@ void fib_defer_dnf(struct xip_deferred_negdep_flush *dnf,
 	call_rcu(&dnf->rcu_head, __fib_defer_dnf);
 }
 EXPORT_SYMBOL_GPL(fib_defer_dnf);
+
+int fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+		     struct xia_fib_config *cfg)
+{
+	const struct xia_ppal_rt_iops *iops = xtbl->all_iops;
+	struct fib_xid_redirect_main *new_mrd;
+	int rc;
+
+	if (!cfg->xfc_gw || cfg->xfc_gw->xid_type == xtbl_ppalty(xtbl))
+		return -EINVAL;
+
+	new_mrd = iops->fxid_ppal_alloc(sizeof(*new_mrd), GFP_KERNEL);
+	if (!new_mrd)
+		return -ENOMEM;
+	fxid_init(xtbl, &new_mrd->common, cfg->xfc_dst->xid_id,
+		  XRTABLE_MAIN_INDEX, 0);
+	new_mrd->gw = *cfg->xfc_gw;
+
+	rc = iops->fib_newroute(&new_mrd->common, xtbl, cfg, NULL);
+	if (rc)
+		fxid_free_norcu(xtbl, &new_mrd->common);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(fib_mrd_newroute);
 
 int fib_mrd_dump(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		 struct xip_ppal_ctx *ctx, struct sk_buff *skb,

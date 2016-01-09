@@ -24,6 +24,14 @@ static inline struct xip_ad_ctx *ctx_ad(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
+/* Use a list FIB.
+ *
+ * NOTE
+ *	To fully change the list FIB, you must
+ *	change member delroute of @ad_all_rt_eops.
+ */
+static const struct xia_ppal_rt_iops *ad_rt_iops = &xia_ppal_list_rt_iops;
+
 /* Local ADs */
 
 struct fib_xid_ad_local {
@@ -49,14 +57,14 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_ad_local *new_lad;
 	int rc;
 
-	new_lad = list_fxid_ppal_alloc(sizeof(*new_lad), GFP_KERNEL);
+	new_lad = ad_rt_iops->fxid_ppal_alloc(sizeof(*new_lad), GFP_KERNEL);
 	if (!new_lad)
 		return -ENOMEM;
-	list_fxid_init(&new_lad->common, cfg->xfc_dst->xid_id,
-		       XRTABLE_LOCAL_INDEX, 0);
+	fxid_init(xtbl, &new_lad->common, cfg->xfc_dst->xid_id,
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&new_lad->anchor);
 
-	rc = list_fib_newroute(&new_lad->common, xtbl, cfg, NULL);
+	rc = ad_rt_iops->fib_newroute(&new_lad->common, xtbl, cfg, NULL);
 	if (rc)
 		fxid_free_norcu(xtbl, &new_lad->common);
 	return rc;
@@ -157,8 +165,8 @@ static int __net_init ad_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_xtbl_init(&ad_ctx->ctx, net, &xia_main_lock_table,
-			    ad_all_rt_eops);
+	rc = ad_rt_iops->xtbl_init(&ad_ctx->ctx, net, &xia_main_lock_table,
+				   ad_all_rt_eops, ad_rt_iops);
 	if (rc)
 		goto ad_ctx;
 
@@ -197,7 +205,7 @@ static int ad_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 
-	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
+	fxid = ad_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid) {
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();

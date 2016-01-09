@@ -2,7 +2,7 @@
 #include <linux/socket.h>
 #include <linux/export.h>
 #include <net/rtnetlink.h>
-#include <net/xia_list_fib.h>
+#include <net/xia_fib.h>
 #include <net/xia_route.h>
 
 #define FIELD_TYPE(t, f)	typeof(((struct t *)0)->f)
@@ -164,7 +164,8 @@ static int xip_fib_dump_ppals(struct sk_buff *skb, struct netlink_callback *cb)
 			continue;
 		if (dumped)
 			clear_cb_from(cb, 1);
-		if (list_xtbl_dump_rcu(ctx->xpc_xtbl, ctx, skb, cb) < 0)
+		if (ctx->xpc_xtbl->all_iops->xtbl_dump_rcu(ctx->xpc_xtbl,
+							   ctx, skb, cb) < 0)
 			break;
 		dumped = 1;
 	}

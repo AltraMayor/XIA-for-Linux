@@ -12,7 +12,6 @@
  */
 #include <net/xia_serval.h>
 #include <net/xia_output.h>
-#include <net/xia_list_fib.h>
 #include "af_serval.h"
 #include "serval_sal.h"
 
@@ -1189,8 +1188,8 @@ static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 	}
 
 	/* Hash @srsk. */
-	__list_fxid_init(&srsk->flow_fxid, XRTABLE_LOCAL_INDEX,
-			 REQUEST_SOCK_TYPE);
+	flow_rt_iops->fxid_init(&srsk->flow_fxid, XRTABLE_LOCAL_INDEX,
+				REQUEST_SOCK_TYPE);
 	srsk_hold(srsk);
 	/* No error should be possible because FlowIDs should be kernel-wide
 	 * unique.

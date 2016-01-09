@@ -93,6 +93,7 @@ struct fib_xid_table {
 	atomic_t			fxt_count;
 
 	const struct xia_ppal_rt_eops	*all_eops;
+	const struct xia_ppal_rt_iops	*all_iops;
 
 	/* Extra data that needs to go with every struct fib_xid_table,
 	 * depending on the type of FIB used.
@@ -154,6 +155,205 @@ struct xia_ppal_rt_eops {
 
 typedef struct xia_ppal_rt_eops xia_ppal_all_rt_eops_t[XRTABLE_MAX_INDEX];
 
+/* Operations implemented *i*nternally by the code that instantiates an xtbl. */
+struct xia_ppal_rt_iops {
+	/* All callbacks are required. */
+
+	/* xtbl_init - initialize FIB-specific memory. */
+	int (*xtbl_init)(struct xip_ppal_ctx *ctx, struct net *net,
+		struct xia_lock_table *locktbl,
+		const xia_ppal_all_rt_eops_t all_eops,
+		const struct xia_ppal_rt_iops *all_iops);
+
+	/* xtbl_death_work - destroy FIB-specific memory.
+	 *
+	 * NOTE
+	 *	Don't call this function directly,
+	 *	call xtbl_put() instead.
+	 */
+	void (*xtbl_death_work)(struct work_struct *work);
+
+	/* fxid_ppal_alloc - allocate FIB entry-specific memory.
+	 *
+	 * NOTE
+	 *	Parameter @ppal_entry_size represents the size of the
+	 *	base principal-specific structure that needs to be
+	 *	allocated, which should be added to the size of
+	 *	the FIB-specific memory.
+	 */
+	void *(*fxid_ppal_alloc)(size_t ppal_entry_size, gfp_t flags);
+
+	/* fxid_init - initialize the fields of an @fxid.
+	 *
+	 * NOTE
+	 *	Don't call this function directly,
+	 *	call the general purpose fxid_init().
+	 */
+	void (*fxid_init)(struct fib_xid *fxid, int table_id, int entry_type);
+
+	/** fxid_find_rcu - Find struct fib_xid in @xtbl that has key @xid.
+	 *
+	 * RETURN
+	 *	It returns the struct on success, otherwise NULL.
+	 * NOTE
+	 *	Caller must hold a read lock (RCU or otherwise) to be safe
+	 *	against parallel calls to fxid_add, fxid_rm, and xid_rm.
+	 */
+	struct fib_xid *(*fxid_find_rcu)(struct fib_xid_table *xtbl,
+		const u8 *xid);
+
+	/** fxid_find_lock - Find struct fib_xid in @xtbl that has key @xid.
+	 *
+	 * RETURN
+	 *	It returns the struct on success, otherwise NULL.
+	 * NOTE
+	 *	@parg is a pointer to FIB-specific data.
+	 *	Caller must always unlock with fib_unlock afterwards.
+	 *
+	 *	Caller should never call this function with a lock on @xtbl
+	 *	already held because @xtbl uses a single table lock because
+	 *	this MAY lead to a deadlock.
+	 *	The same problem happens if it's called on different @xtbl's
+	 *	that share the same lock table.
+	 */
+	struct fib_xid *(*fxid_find_lock)(void *parg,
+					  struct fib_xid_table *xtbl,
+					  const u8 *xid);
+
+	/** iterate_xids - Visit all XIDs in @xtbl.
+	 * NOTE
+	 *	The lock is held when @locked_callback is called.
+	 *	@locked_callback may remove the received @fxid it received.
+	 *
+	 *	If @locked_callback returns non-zero, the iterator is aborted.
+	 *
+	 * RETURN
+	 *	Zero if all xids were visited, or the value that
+	 *	@locked_callback returned when it aborted.
+	 */
+	int (*iterate_xids)(struct fib_xid_table *xtbl,
+		int (*locked_callback)(struct fib_xid_table *xtbl,
+				       struct fib_xid *fxid,
+				       const void *arg),
+		const void *arg);
+
+	/** iterate_xids_rcu - Visit all XIDs in @xtbl.
+	 *
+	 * NOTE
+	 *	The caller must hold an RCU read lock.
+	 *
+	 *	If @rcu_callback returns non-zero, the iterator is aborted.
+	 *
+	 * RETURN
+	 *	Zero if all xids were visited, or the value that
+	 *	@locked_callback returned when it aborted.
+	 */
+	int (*iterate_xids_rcu)(struct fib_xid_table *xtbl,
+		int (*rcu_callback)(struct fib_xid_table *xtbl,
+				    struct fib_xid *fxid,
+				    const void *arg),
+		const void *arg);
+
+	/** fxid_add - Add @fxid to @xtbl.
+	 *
+	 * RETURN
+	 *	-EEXIST in case an fxid with same XID is already in @xtbl.
+	 *	0 on success.
+	 */
+	int (*fxid_add)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
+	/** fxid_add_locked - Same as fxid_add, that is, it adds @fxid
+	 *	to @xtbl. However, fxid_add_locked assumes that the lock
+	 *	is already held.
+	 * NOTE
+	 *	BE VERY CAREFUL when calling this function because if the
+	 *	needed lock is not held, it may corrupt @xtbl!
+	 */
+	int (*fxid_add_locked)(void *parg, struct fib_xid_table *xtbl,
+		struct fib_xid *fxid);
+
+	/** fxid_rm - Remove @fxid from @xtbl. */
+	void (*fxid_rm)(struct fib_xid_table *xtbl, struct fib_xid *fxid);
+
+	/** fxid_rm_locked - Same as fxid_rm, but it assumes that
+	 *	the lock is already held.
+	 *
+	 * NOTE
+	 *	BE VERY CAREFUL when calling this function because if the
+	 *	needed lock is not held, it may corrupt @xtbl!
+	 */
+	void (*fxid_rm_locked)(void *parg, struct fib_xid_table *xtbl,
+		struct fib_xid *fxid);
+
+	/** xid_rm - Remove @xid from @xtbl.
+	 *
+	 * RETURN
+	 *	It returns the fxid with same @xid on success, otherwise NULL.
+	 */
+	struct fib_xid *(*xid_rm)(struct fib_xid_table *xtbl, const u8 *xid);
+
+	/** fxid_replace_locked - Replace @old_fxid with @new_fxid.
+	 *
+	 * NOTE
+	 *	@old_fxid MUST be in @xtbl.
+	 *
+	 *	@new_fxid MUST not be in any table.
+	 *
+	 *	@old_fix MUST be released by caller.
+	 *
+	 *	BE VERY CAREFUL when calling this function because if the
+	 *	needed lock is not held, it may corrupt @xtbl!
+	 */
+	void (*fxid_replace_locked)(struct fib_xid_table *xtbl,
+		struct fib_xid *old_fxid, struct fib_xid *new_fxid);
+
+	/** fib_unlock - Unlock some FIB-specific data.
+	 *
+	 * NOTE
+	 *	Callers of fxid_find_lock must call this function
+	 *	with an appropriate parameter when done with
+	 *	the FIB entry.
+	 */
+	void (*fib_unlock)(struct fib_xid_table *xtbl, void *parg);
+
+	/** fib_newroute - build a new FIB entry.
+	 *
+	 * NOTE
+	 *	This function is meant to help writing functions for field
+	 *	newroute of struct xia_ppal_rt_eops. It deals with NLM_F_*
+	 *	flags and flushes negative anchors when a new entry is added.
+	 *
+	 * IMPORTANT
+	 *	This function may sleep.
+	 */
+	int (*fib_newroute)(struct fib_xid *new_fxid,
+		struct fib_xid_table *xtbl, struct xia_fib_config *cfg,
+		int *padded);
+
+	/** fib_delroute - delete a FIB entry.
+	 *
+	 * NOTE
+	 *	If it returns ZERO, that is, success, the entry was deleted.
+	 */
+	int (*fib_delroute)(struct xip_ppal_ctx *ctx,
+		struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
+
+	/** xtbl_dump_rcu - dump all entries in the given @xtbl.
+	 *
+	 * NOTE
+	 *	This function may use the dumproute field of
+	 *	struct xia_ppal_rt_eops to dump each entry.
+	 *
+	 * RETURN
+	 *	Zero if all entries were dumped, or a negative
+	 *	value on error.
+	 */
+	int (*xtbl_dump_rcu)(struct fib_xid_table *xtbl,
+		struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+		struct netlink_callback *cb);
+
+};
+
 /* In case newroute and/or delroute are not supported, use these functions. */
 int fib_no_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);
@@ -177,13 +377,18 @@ static inline struct fib_xid_redirect_main *fxid_mrd(struct fib_xid *fxid)
 		: NULL;
 }
 
-/* Do not call these functions, use macro XIP_FIB_REDIRECT_MAIN instead. */
+/* Do not call these functions, use a macro of
+ * the form XIP_*_FIB_REDIRECT_MAIN instead.
+ */
+int fib_mrd_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg);
+
 int fib_mrd_dump(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 	struct netlink_callback *cb);
 void fib_mrd_free(struct fib_xid_table *xtbl, struct fib_xid *fxid);
 
-/* If the macro XIP_FIB_REDIRECT_MAIN is being used, call this function
+/* If a macro XIP_*_FIB_REDIRECT_MAIN is being used, call this function
  * to redirect to @fxid.
  */
 void fib_mrd_redirect(struct fib_xid *fxid, struct xia_xid *next_xid);
@@ -333,13 +538,12 @@ static inline struct xip_ppal_ctx *xip_find_my_ppal_ctx_vxt(struct net *net,
 	return net->xia.fib_ctx[vxt];
 }
 
-/* Don't call this function directly, call xtbl_put() instead. */
-void list_xtbl_destroy(struct fib_xid_table *xtbl);
+void xtbl_destroy(struct fib_xid_table *xtbl);
 
 static inline void xtbl_put(struct fib_xid_table *xtbl)
 {
 	if (atomic_dec_and_test(&xtbl->refcnt))
-		list_xtbl_destroy(xtbl);
+		xtbl_destroy(xtbl);
 }
 
 static inline void xtbl_hold(struct fib_xid_table *xtbl)
@@ -350,6 +554,13 @@ static inline void xtbl_hold(struct fib_xid_table *xtbl)
 static inline int xia_get_fxid_count(struct fib_xid_table *xtbl)
 {
 	return atomic_read(&xtbl->fxt_count);
+}
+
+static inline void fxid_init(struct fib_xid_table *xtbl,
+	struct fib_xid *fxid, const u8 *xid, int table_id, int entry_type)
+{
+	memmove(fxid->fx_xid, xid, XIA_XID_MAX);
+	xtbl->all_iops->fxid_init(fxid, table_id, entry_type);
 }
 
 /* NOTE

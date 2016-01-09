@@ -3,6 +3,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/netlink.h>
+#include <net/xia_list_fib.h>
 
 /* Host Principal */
 #define XIDTYPE_HID (__cpu_to_be32(0x11))
@@ -59,6 +60,7 @@ static inline struct xip_hid_ctx *ctx_hid(struct xip_ppal_ctx *ctx)
 }
 
 extern int hid_vxt;
+extern const struct xia_ppal_rt_iops *hid_rt_iops;
 
 /*
  *	Neighborhood Watch Protocol (NWP)

@@ -38,6 +38,9 @@ static inline struct xip_u4id_ctx *ctx_u4id(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
+/* Use a list FIB. */
+static const struct xia_ppal_rt_iops *u4id_rt_iops = &xia_ppal_list_rt_iops;
+
 /* Local U4IDs */
 
 struct u4id_xid {
@@ -191,11 +194,11 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (lu4id_info->tunnel && u4id_ctx->tunnel_sock)
 		return -EEXIST;
 
-	lu4id = list_fxid_ppal_alloc(sizeof(*lu4id), GFP_KERNEL);
+	lu4id = u4id_rt_iops->fxid_ppal_alloc(sizeof(*lu4id), GFP_KERNEL);
 	if (!lu4id)
 		return -ENOMEM;
-	list_fxid_init(&lu4id->common, cfg->xfc_dst->xid_id,
-		       XRTABLE_LOCAL_INDEX, 0);
+	fxid_init(xtbl, &lu4id->common, cfg->xfc_dst->xid_id,
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lu4id->anchor);
 	lu4id->sock = NULL;
 	INIT_WORK(&lu4id->del_work, u4id_local_del_work);
@@ -206,7 +209,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (rc)
 		goto lu4id;
 
-	rc = list_fib_newroute(&lu4id->common, xtbl, cfg, NULL);
+	rc = u4id_rt_iops->fib_newroute(&lu4id->common, xtbl, cfg, NULL);
 	if (rc)
 		goto lu4id;
 
@@ -244,7 +247,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid *fxid;
 	struct fib_xid_u4id_local *lu4id;
 
-	fxid = list_xid_rm(xtbl, cfg->xfc_dst->xid_id);
+	fxid = u4id_rt_iops->xid_rm(xtbl, cfg->xfc_dst->xid_id);
 	if (!fxid)
 		return -ENOENT;
 	lu4id = fxid_lu4id(fxid);
@@ -408,8 +411,9 @@ static int __net_init u4id_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_xtbl_init(&u4id_ctx->ctx, net, &xia_main_lock_table,
-			    u4id_all_rt_eops);
+	rc = u4id_rt_iops->xtbl_init(&u4id_ctx->ctx, net,
+				     &xia_main_lock_table, u4id_all_rt_eops,
+				     u4id_rt_iops);
 	if (rc)
 		goto u4id_ctx;
 
@@ -597,7 +601,7 @@ static int u4id_deliver(struct xip_route_proc *rproc, struct net *net,
 		return XRP_ACT_FORWARD;
 	}
 
-	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
+	fxid = u4id_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (fxid) {
 		/* Reached tunnel destination; advance last node. */
 		struct fib_xid_u4id_local *lu4id = fxid_lu4id(fxid);

@@ -1,12 +1,14 @@
 #include <linux/module.h>
 #include <net/xia_dag.h>
-#include <net/xia_list_fib.h>
 #include <net/xia_output.h>
 #include <net/xia_vxidty.h>
 #include <net/xia_hid.h>
 
 /* HID's virtal XID type. */
 int hid_vxt __read_mostly = -1;
+
+/* Use a list FIB. */
+const struct xia_ppal_rt_iops *hid_rt_iops = &xia_ppal_list_rt_iops;
 
 /* Local HIDs */
 
@@ -38,14 +40,14 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_hid_local *lhid;
 	int rc, added;
 
-	lhid = list_fxid_ppal_alloc(sizeof(*lhid), GFP_KERNEL);
+	lhid = hid_rt_iops->fxid_ppal_alloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		return -ENOMEM;
-	list_fxid_init(&lhid->xhl_common, cfg->xfc_dst->xid_id,
-		       XRTABLE_LOCAL_INDEX, 0);
+	fxid_init(xtbl, &lhid->xhl_common, cfg->xfc_dst->xid_id,
+		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lhid->xhl_anchor);
 
-	rc = list_fib_newroute(&lhid->xhl_common, xtbl, cfg, &added);
+	rc = hid_rt_iops->fib_newroute(&lhid->xhl_common, xtbl, cfg, &added);
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
 
@@ -62,7 +64,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 			  struct fib_xid_table *xtbl,
 			  struct xia_fib_config *cfg)
 {
-	int rc = list_fib_delroute(ctx, xtbl, cfg);
+	int rc = hid_rt_iops->fib_delroute(ctx, xtbl, cfg);
 
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
@@ -273,8 +275,8 @@ static int __net_init hid_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = list_xtbl_init(&hid_ctx->ctx, net, &xia_main_lock_table,
-			    hid_all_rt_eops);
+	rc = hid_rt_iops->xtbl_init(&hid_ctx->ctx, net, &xia_main_lock_table,
+				    hid_all_rt_eops, hid_rt_iops);
 	if (rc)
 		goto hid_ctx;
 
@@ -437,7 +439,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, hid_vxt);
 
-	fxid = list_fxid_find_rcu(ctx->xpc_xtbl, xid);
+	fxid = hid_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid)
 		goto out;
 

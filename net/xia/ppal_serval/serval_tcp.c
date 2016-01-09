@@ -2,7 +2,6 @@
 #include <linux/sockios.h>
 #include <linux/swap.h>
 #include <linux/export.h>
-#include <net/xia_list_fib.h>
 #include "serval_tcp_sock.h"
 #include "serval_tcp_request_sock.h"
 #include "serval_sal.h"

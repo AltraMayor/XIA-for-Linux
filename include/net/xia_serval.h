@@ -2,6 +2,7 @@
 #define _NET_XIA_SERVAL_H
 
 #include <net/xia.h>
+#include <net/xia_list_fib.h>
 
 /* Serval's principal types */
 #define XIDTYPE_SRVCID (__cpu_to_be32(0x18))
@@ -307,6 +308,8 @@ static inline struct xip_serval_ctx *flow_serval(struct xip_ppal_ctx *flow)
 
 extern int srvc_vxt;
 extern int flow_vxt;
+
+extern const struct xia_ppal_rt_iops *flow_rt_iops;
 
 /*
  *	Serval headers
