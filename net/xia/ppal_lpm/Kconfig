@@ -1,0 +1,10 @@
+config XIA_PPAL_LPM
+	tristate "Longest Prefix Matching Principal (EXPERIMENTAL)"
+	default m
+	help
+	  Longest Prefix Matching (LPM) Principal provides the ability to
+	  lookup identifiers according to the longest matching prefix in the
+	  routing table.
+	  You should only add this principal if you have added XIA and wish to
+	  utilize longest prefix matching.
+	  If you are unsure how to answer this question, answer M.

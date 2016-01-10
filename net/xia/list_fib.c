@@ -162,7 +162,7 @@ static void list_fxid_init(struct fib_xid *fxid, int table_id, int entry_type)
 	INIT_HLIST_NODE(&lfxid->fx_branch_list[0]);
 	INIT_HLIST_NODE(&lfxid->fx_branch_list[1]);
 
-	BUILD_BUG_ON(XRTABLE_MAX_INDEX > 0x100);
+	BUILD_BUG_ON(XRTABLE_MAX_INDEX >= 0x100);
 	BUG_ON(table_id >= XRTABLE_MAX_INDEX);
 	fxid->fx_table_id = table_id;
 

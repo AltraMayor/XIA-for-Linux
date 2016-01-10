@@ -188,6 +188,9 @@ struct xia_ppal_rt_iops {
 	 * NOTE
 	 *	Don't call this function directly,
 	 *	call the general purpose fxid_init().
+	 *
+	 *	This function assumes that the XID in @fxid, @table_id, and
+	 *	@entry_type have already been error-checked.
 	 */
 	void (*fxid_init)(struct fib_xid *fxid, int table_id, int entry_type);
 
