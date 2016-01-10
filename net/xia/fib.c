@@ -110,6 +110,104 @@ void fxid_free(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 EXPORT_SYMBOL_GPL(fxid_free);
 
+int all_fib_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
+		     struct xia_fib_config *cfg, int *padded, void *plock)
+{
+	struct xip_deferred_negdep_flush *dnf;
+	struct fib_xid *cur_fxid;
+	const u8 *id;
+	int rc;
+
+	if (padded)
+		*padded = 0;
+
+	/* Allocate memory before acquiring lock because we can sleep now. */
+	dnf = fib_alloc_dnf(GFP_KERNEL);
+	if (!dnf)
+		return -ENOMEM;
+
+	/* Acquire lock. */
+	id = cfg->xfc_dst->xid_id;
+	cur_fxid = xtbl->all_iops->fxid_find_lock(plock, xtbl, id);
+
+	if (cur_fxid) {
+		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
+		    !(cfg->xfc_nlflags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock;
+		}
+
+		if (cur_fxid->fx_table_id != new_fxid->fx_table_id) {
+			rc = -EINVAL;
+			goto unlock;
+		}
+
+		/* Replace entry.
+		 * Notice that @cur_fxid and @new_fxid may be of different
+		 * types
+		 */
+		rc = 0;
+		xtbl->all_iops->fxid_replace_locked(xtbl, cur_fxid, new_fxid);
+		xtbl->all_iops->fib_unlock(xtbl, plock);
+		fxid_free(xtbl, cur_fxid);
+		goto def_upd;
+	}
+
+	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock;
+	}
+
+	/* Add new entry. */
+	BUG_ON(xtbl->all_iops->fxid_add_locked(plock, xtbl, new_fxid));
+	xtbl->all_iops->fib_unlock(xtbl, plock);
+
+	/* Before invalidating old anchors to force dependencies to
+	 * migrate to @new_fxid, wait an RCU synchronization to make sure that
+	 * every thread see @new_fxid.
+	 */
+	fib_defer_dnf(dnf, xtbl_net(xtbl), xtbl_ppalty(xtbl));
+
+	if (padded)
+		*padded = 1;
+	return 0;
+
+unlock:
+	xtbl->all_iops->fib_unlock(xtbl, plock);
+def_upd:
+	fib_free_dnf(dnf);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(all_fib_newroute);
+
+int all_fib_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+		     struct xia_fib_config *cfg, void *plock)
+{
+	struct fib_xid *fxid;
+	int rc;
+
+	fxid = xtbl->all_iops->fxid_find_lock(plock, xtbl,
+					      cfg->xfc_dst->xid_id);
+	if (!fxid) {
+		rc = -ENOENT;
+		goto unlock;
+	}
+	if (fxid->fx_table_id != cfg->xfc_table) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+
+	xtbl->all_iops->fxid_rm_locked(plock, xtbl, fxid);
+	xtbl->all_iops->fib_unlock(xtbl, plock);
+	fxid_free(xtbl, fxid);
+	return 0;
+
+unlock:
+	xtbl->all_iops->fib_unlock(xtbl, plock);
+	return rc;
+}
+EXPORT_SYMBOL_GPL(all_fib_delroute);
+
 void release_fib_ppal_ctx(struct net *net)
 {
 	int i;

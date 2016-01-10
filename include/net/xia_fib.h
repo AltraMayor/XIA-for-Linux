@@ -354,6 +354,12 @@ struct xia_ppal_rt_iops {
 
 };
 
+int all_fib_newroute(struct fib_xid *new_fxid, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg, int *padded, void *plock);
+
+int all_fib_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+	struct xia_fib_config *cfg, void *plock);
+
 /* In case newroute and/or delroute are not supported, use these functions. */
 int fib_no_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_table *xtbl, struct xia_fib_config *cfg);

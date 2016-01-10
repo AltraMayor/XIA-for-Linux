@@ -566,28 +566,8 @@ static void list_fxid_replace_locked(struct fib_xid_table *xtbl,
 int list_fib_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		      struct xia_fib_config *cfg)
 {
-	struct fib_xid *fxid;
 	u32 bucket;
-	int rc;
-
-	fxid = list_fxid_find_lock(&bucket, xtbl, cfg->xfc_dst->xid_id);
-	if (!fxid) {
-		rc = -ENOENT;
-		goto unlock_bucket;
-	}
-	if (fxid->fx_table_id != cfg->xfc_table) {
-		rc = -EINVAL;
-		goto unlock_bucket;
-	}
-
-	list_fxid_rm_locked(&bucket, xtbl, fxid);
-	list_fib_unlock(xtbl, &bucket);
-	fxid_free(xtbl, fxid);
-	return 0;
-
-unlock_bucket:
-	list_fib_unlock(xtbl, &bucket);
-	return rc;
+	return all_fib_delroute(ctx, xtbl, cfg, &bucket);
 }
 EXPORT_SYMBOL_GPL(list_fib_delroute);
 
@@ -595,71 +575,8 @@ static int list_fib_newroute(struct fib_xid *new_fxid,
 			     struct fib_xid_table *xtbl,
 			     struct xia_fib_config *cfg, int *padded)
 {
-	struct xip_deferred_negdep_flush *dnf;
-	struct fib_xid *cur_fxid;
-	const u8 *id;
 	u32 bucket;
-	int rc;
-
-	if (padded)
-		*padded = 0;
-
-	/* Allocate memory before acquiring lock because we can sleep now. */
-	dnf = fib_alloc_dnf(GFP_KERNEL);
-	if (!dnf)
-		return -ENOMEM;
-
-	/* Acquire lock. */
-	id = cfg->xfc_dst->xid_id;
-	cur_fxid = list_fxid_find_lock(&bucket, xtbl, id);
-
-	if (cur_fxid) {
-		if ((cfg->xfc_nlflags & NLM_F_EXCL) ||
-		    !(cfg->xfc_nlflags & NLM_F_REPLACE)) {
-			rc = -EEXIST;
-			goto unlock_bucket;
-		}
-
-		if (cur_fxid->fx_table_id != new_fxid->fx_table_id) {
-			rc = -EINVAL;
-			goto unlock_bucket;
-		}
-
-		/* Replace entry.
-		 * Notice that @cur_fxid and @new_fxid may be of different
-		 * types
-		 */
-		rc = 0;
-		list_fxid_replace_locked(xtbl, cur_fxid, new_fxid);
-		list_fib_unlock(xtbl, &bucket);
-		fxid_free(xtbl, cur_fxid);
-		goto def_upd;
-	}
-
-	if (!(cfg->xfc_nlflags & NLM_F_CREATE)) {
-		rc = -ENOENT;
-		goto unlock_bucket;
-	}
-
-	/* Add new entry. */
-	BUG_ON(list_fxid_add_locked(&bucket, xtbl, new_fxid));
-	list_fib_unlock(xtbl, &bucket);
-
-	/* Before invalidating old anchors to force dependencies to
-	 * migrate to @new_fxid, wait an RCU synchronization to make sure that
-	 * every thread see @new_fxid.
-	 */
-	fib_defer_dnf(dnf, xtbl_net(xtbl), xtbl_ppalty(xtbl));
-
-	if (padded)
-		*padded = 1;
-	return 0;
-
-unlock_bucket:
-	list_fib_unlock(xtbl, &bucket);
-def_upd:
-	fib_free_dnf(dnf);
-	return rc;
+	return all_fib_newroute(new_fxid, xtbl, cfg, padded, &bucket);
 }
 
 static int list_xtbl_dump_rcu(struct fib_xid_table *xtbl,
