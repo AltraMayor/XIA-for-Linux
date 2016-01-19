@@ -2,6 +2,7 @@
 #define _NET_XIA_SERVAL_H
 
 #include <net/xia.h>
+#include <net/xia_list_fib.h>
 
 /* Serval's principal types */
 #define XIDTYPE_SRVCID (__cpu_to_be32(0x18))
@@ -73,9 +74,13 @@ enum {
 #include <net/xia_fib.h>
 
 struct serval_rt_id {
-	struct fib_xid			fxid;
 	struct xip_dst_anchor		anchor;
 	struct serval_sock __rcu	*ssk;
+
+	/* WARNING: @fxid is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid			fxid;
 };
 
 #define SOCK_TYPE		0
@@ -229,13 +234,6 @@ struct serval_request_sock {
 	 */
 	atomic_t		refcnt;
 
-	/* Fields for local FlowID.
-	 *
-	 * The local FlowID is in field @srsk->flow_fxid.fx_xid
-	 */
-	struct fib_xid		flow_fxid;
-	struct xip_dst_anchor   flow_anchor;
-
 	/* XXX We should have the whole peer's address whose sink is a ServiceID
 	 * because this address is the one that one would know that can be
 	 * reached given that it's used in the SYN+ACK packet.
@@ -249,6 +247,16 @@ struct serval_request_sock {
 
 	struct serval_sock	*parent_ssk;
 	struct list_head lh;
+
+	/* Fields for local FlowID.
+	 *
+	 * The local FlowID is in field @srsk->flow_fxid.fx_xid
+	 *
+	 * WARNING: @flow_fxid is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct xip_dst_anchor   flow_anchor;
+	struct fib_xid		flow_fxid;
 };
 
 static inline struct serval_request_sock *serval_rsk(struct request_sock *rsk)
@@ -300,6 +308,8 @@ static inline struct xip_serval_ctx *flow_serval(struct xip_ppal_ctx *flow)
 
 extern int srvc_vxt;
 extern int flow_vxt;
+
+extern const struct xia_ppal_rt_iops *flow_rt_iops;
 
 /*
  *	Serval headers

@@ -2,7 +2,7 @@
 #include <linux/swap.h>
 #include <asm/ioctls.h>
 #include <net/tcp_states.h>
-#include <net/xia_fib.h>
+#include <net/xia_list_fib.h>
 #include <net/xia_route.h>
 #include <net/xia_dag.h>
 #include <net/xia_socket.h>
@@ -27,6 +27,14 @@ static inline struct xip_xdp_ctx *ctx_xdp(struct xip_ppal_ctx *ctx)
 
 static int my_vxt __read_mostly = -1;
 
+/* Use a list FIB.
+ *
+ * NOTE
+ *	To fully change the list FIB, you must
+ *	change member obj_size of @xdp_prot.
+ */
+static const struct xia_ppal_rt_iops *xdp_rt_iops = &xia_ppal_list_rt_iops;
+
 /* Local XDPs */
 
 struct fib_xid_xdp_local {
@@ -44,8 +52,11 @@ struct fib_xid_xdp_local {
 	/* Two free bytes. */
 
 	/* FIB XID related fields. */
-	struct fib_xid		fxid;
 	struct xip_dst_anchor   anchor;
+	/* WARNING: @fxid is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		fxid;
 };
 
 static inline struct fib_xid_xdp_local *fxid_lxdp(struct fib_xid *fxid)
@@ -149,7 +160,7 @@ static const xia_ppal_all_rt_eops_t xdp_all_rt_eops = {
 		.free_fxid = local_free_xdp,
 	},
 
-	XIP_FIB_REDIRECT_MAIN,
+	XIP_LIST_FIB_REDIRECT_MAIN,
 };
 
 /* Network namespace */
@@ -182,8 +193,8 @@ static int __net_init xdp_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = init_xid_table(&xdp_ctx->ctx, net, &xia_main_lock_table,
-			    xdp_all_rt_eops);
+	rc = xdp_rt_iops->xtbl_init(&xdp_ctx->ctx, net, &xia_main_lock_table,
+				    xdp_all_rt_eops, xdp_rt_iops);
 	if (rc)
 		goto xdp_ctx;
 
@@ -278,7 +289,7 @@ static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
 
-	fxid = xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = xdp_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid) {
 		xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
 		rcu_read_unlock();
@@ -774,18 +785,17 @@ static int xdp_bind(struct sock *sk, struct sockaddr *uaddr, int node_n)
 
 	lxdp = sk_lxdp(sk);
 	id = ssink->s_xid.xid_id;
-	init_fxid(&lxdp->fxid, id, XRTABLE_LOCAL_INDEX, 0);
-
 	net = sock_net(sk);
 	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
 	xtbl = ctx->xpc_xtbl;
+	fxid_init(xtbl, &lxdp->fxid, id, XRTABLE_LOCAL_INDEX, 0);
 
-	rc = fib_add_fxid(xtbl, &lxdp->fxid);
+	rc = xdp_rt_iops->fxid_add(xtbl, &lxdp->fxid);
 	/* We don't sock_hold(sk) because @lxdp->fxid is always released
 	 * before @lxdp is freed.
 	 */
 	if (rc) {
-		free_fxid_norcu(xtbl, &lxdp->fxid);
+		fxid_free_norcu(xtbl, &lxdp->fxid);
 		fib_free_dnf(dnf);
 		return rc == -EEXIST ? -EADDRINUSE : rc;
 	}
@@ -836,13 +846,13 @@ static void xdp_unhash(struct sock *sk)
 	ctx = xip_find_my_ppal_ctx_vxt(net, my_vxt);
 	xtbl = ctx->xpc_xtbl;
 	lxdp = xiask_lxdp(xia);
-	fib_rm_fxid(xtbl, &lxdp->fxid);
+	xdp_rt_iops->fxid_rm(xtbl, &lxdp->fxid);
 
 	/* Free DST entries. */
 
 	/* We must wait here because, @lxdp may be reused before RCU synchs.*/
 	synchronize_rcu();
-	free_fxid_norcu(xtbl, &lxdp->fxid);
+	fxid_free_norcu(xtbl, &lxdp->fxid);
 }
 
 static long sysctl_xdp_mem[3] __read_mostly;
@@ -873,7 +883,8 @@ static struct proto xdp_prot __read_mostly = {
 	.sysctl_mem		= sysctl_xdp_mem,
 	.sysctl_wmem		= &sysctl_xdp_wmem_min,
 	.sysctl_rmem		= &sysctl_xdp_rmem_min,
-	.obj_size		= sizeof(struct fib_xid_xdp_local),
+	.obj_size		= sizeof(struct fib_xid_xdp_local) +
+				  sizeof(struct list_fib_xid),
 	.slab_flags		= 0,
 };
 

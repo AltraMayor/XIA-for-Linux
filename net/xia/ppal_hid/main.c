@@ -7,17 +7,23 @@
 /* HID's virtal XID type. */
 int hid_vxt __read_mostly = -1;
 
+/* Use a list FIB. */
+const struct xia_ppal_rt_iops *hid_rt_iops = &xia_ppal_list_rt_iops;
+
 /* Local HIDs */
 
 struct fib_xid_hid_local {
-	struct fib_xid	xhl_common;
-
 	/* XXX Adding a list of devs in which the HID is valid, would allow
 	 * a network administrator to enforce physical network isolations;
 	 * support dev == NULL as a wildcard.
 	 */
 
 	struct xip_dst_anchor	xhl_anchor;
+
+	/* WARNING: @xhl_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		xhl_common;
 };
 
 static inline struct fib_xid_hid_local *fxid_lhid(struct fib_xid *fxid)
@@ -34,14 +40,14 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_hid_local *lhid;
 	int rc, added;
 
-	lhid = kmalloc(sizeof(*lhid), GFP_KERNEL);
+	lhid = hid_rt_iops->fxid_ppal_alloc(sizeof(*lhid), GFP_KERNEL);
 	if (!lhid)
 		return -ENOMEM;
-	init_fxid(&lhid->xhl_common, cfg->xfc_dst->xid_id,
+	fxid_init(xtbl, &lhid->xhl_common, cfg->xfc_dst->xid_id,
 		  XRTABLE_LOCAL_INDEX, 0);
 	xdst_init_anchor(&lhid->xhl_anchor);
 
-	rc = fib_build_newroute(&lhid->xhl_common, xtbl, cfg, &added);
+	rc = hid_rt_iops->fib_newroute(&lhid->xhl_common, xtbl, cfg, &added);
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
 
@@ -49,7 +55,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 			atomic_inc(&hid_ctx->me);
 		atomic_inc(&hid_ctx->to_announce);
 	} else {
-		free_fxid_norcu(xtbl, &lhid->xhl_common);
+		fxid_free_norcu(xtbl, &lhid->xhl_common);
 	}
 	return rc;
 }
@@ -58,7 +64,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 			  struct fib_xid_table *xtbl,
 			  struct xia_fib_config *cfg)
 {
-	int rc = fib_build_delroute(XRTABLE_LOCAL_INDEX, xtbl, cfg);
+	int rc = hid_rt_iops->fib_delroute(ctx, xtbl, cfg);
 
 	if (!rc) {
 		struct xip_hid_ctx *hid_ctx = ctx_hid(ctx);
@@ -269,8 +275,8 @@ static int __net_init hid_net_init(struct net *net)
 		goto out;
 	}
 
-	rc = init_xid_table(&hid_ctx->ctx, net, &xia_main_lock_table,
-			    hid_all_rt_eops);
+	rc = hid_rt_iops->xtbl_init(&hid_ctx->ctx, net, &xia_main_lock_table,
+				    hid_all_rt_eops, hid_rt_iops);
 	if (rc)
 		goto hid_ctx;
 
@@ -433,7 +439,7 @@ static int hid_deliver(struct xip_route_proc *rproc, struct net *net,
 	rcu_read_lock();
 	ctx = xip_find_ppal_ctx_vxt_rcu(net, hid_vxt);
 
-	fxid = xia_find_xid_rcu(ctx->xpc_xtbl, xid);
+	fxid = hid_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
 	if (!fxid)
 		goto out;
 

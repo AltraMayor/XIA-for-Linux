@@ -3,6 +3,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/netlink.h>
+#include <net/xia_list_fib.h>
 
 /* Host Principal */
 #define XIDTYPE_HID (__cpu_to_be32(0x11))
@@ -59,6 +60,7 @@ static inline struct xip_hid_ctx *ctx_hid(struct xip_ppal_ctx *ctx)
 }
 
 extern int hid_vxt;
+extern const struct xia_ppal_rt_iops *hid_rt_iops;
 
 /*
  *	Neighborhood Watch Protocol (NWP)
@@ -87,10 +89,14 @@ struct hrdw_addr {
 };
 
 struct fib_xid_hid_main {
-	struct fib_xid		xhm_common;
 	struct list_head	xhm_haddrs;
 	atomic_t		xhm_refcnt;
 	bool			xhm_dead;
+
+	/* WARNING: @xhm_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		xhm_common;
 };
 
 static inline struct fib_xid_hid_main *fxid_mhid(struct fib_xid *fxid)

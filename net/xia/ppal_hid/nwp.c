@@ -5,6 +5,7 @@
 #include <linux/cache.h>
 #include <net/xia_dag.h>
 #include <net/xia_hid.h>
+#include <net/xia_list_fib.h>
 
 /* Neighbor Table */
 
@@ -222,7 +223,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 		rcu_read_unlock();
 
 		/* We don't lock hdev->neigh_lock to avoid deadlock. */
-		fxid = xia_find_xid_lock(&bucket, xtbl, xid);
+		fxid = hid_rt_iops->fxid_find_lock(&bucket, xtbl, xid);
 		if (fxid && fxid->fx_table_id == XRTABLE_MAIN_INDEX) {
 			struct fib_xid_hid_main *mhid = fxid_mhid(fxid);
 			/* We must test mhid != NULL because
@@ -230,11 +231,12 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 			 */
 			del_has_by_dev(&mhid->xhm_haddrs, dev);
 			if (list_empty(&mhid->xhm_haddrs)) {
-				fib_rm_fxid_locked(bucket, xtbl, fxid);
-				free_fxid(xtbl, fxid);
+				hid_rt_iops->fxid_rm_locked(&bucket, xtbl,
+							    fxid);
+				fxid_free(xtbl, fxid);
 			}
 		}
-		fib_unlock_bucket(xtbl, bucket);
+		hid_rt_iops->fib_unlock(xtbl, &bucket);
 	}
 }
 
@@ -261,7 +263,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 
 	/* Acquire lock. */
 	xtbl = hid_ctx->ctx.xpc_xtbl;
-	cur_fxid = xia_find_xid_lock(&bucket, xtbl, id);
+	cur_fxid = hid_rt_iops->fxid_find_lock(&bucket, xtbl, id);
 
 	if (cur_fxid) {
 		/* We don't issue a warning about trying to insert a neighbor
@@ -293,7 +295,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 
 		/* Add new hardware address. */
 		rc = add_ha(new_mhid, ha);
-		fib_unlock_bucket(xtbl, bucket);
+		hid_rt_iops->fib_unlock(xtbl, &bucket);
 		if (rc)
 			goto ha;
 		return 0;
@@ -316,20 +318,21 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		goto unlock_bucket;
 	}
 
-	new_mhid = kmalloc(sizeof(*new_mhid), GFP_ATOMIC);
+	new_mhid = hid_rt_iops->fxid_ppal_alloc(sizeof(*new_mhid), GFP_ATOMIC);
 	if (!new_mhid) {
 		rc = -ENOMEM;
 		goto def_upd;
 	}
-	init_fxid(&new_mhid->xhm_common, id, XRTABLE_MAIN_INDEX, 0);
+	fxid_init(xtbl, &new_mhid->xhm_common, id, XRTABLE_MAIN_INDEX, 0);
 	INIT_LIST_HEAD(&new_mhid->xhm_haddrs);
 	atomic_set(&new_mhid->xhm_refcnt, 1);
 	new_mhid->xhm_dead = false;
 	rc = add_ha(new_mhid, ha);
 	BUG_ON(rc);
 
-	BUG_ON(fib_add_fxid_locked(bucket, xtbl, &new_mhid->xhm_common));
-	fib_unlock_bucket(xtbl, bucket);
+	BUG_ON(hid_rt_iops->fxid_add_locked(&bucket, xtbl,
+					    &new_mhid->xhm_common));
+	hid_rt_iops->fib_unlock(xtbl, &bucket);
 
 	/* Before invalidating old anchors to force dependencies to
 	 * migrate to @new_mhid, wait an RCU synchronization to make sure that
@@ -341,7 +344,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 def_upd:
 	fib_free_dnf(dnf);
 unlock_bucket:
-	fib_unlock_bucket(xtbl, bucket);
+	hid_rt_iops->fib_unlock(xtbl, &bucket);
 ha:
 	free_ha_norcu(ha);
 	return rc;
@@ -355,7 +358,7 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	struct fib_xid_hid_main *mhid;
 	int rc;
 
-	fxid = xia_find_xid_lock(&bucket, xtbl, id);
+	fxid = hid_rt_iops->fxid_find_lock(&bucket, xtbl, id);
 	if (!fxid) {
 		rc = -ENOENT;
 		goto unlock_bucket;
@@ -370,12 +373,12 @@ int remove_neigh(struct fib_xid_table *xtbl, const char *id,
 	if (rc)
 		goto unlock_bucket;
 	if (list_empty(&mhid->xhm_haddrs)) {
-		fib_rm_fxid_locked(bucket, xtbl, fxid);
-		free_fxid(xtbl, fxid);
+		hid_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
+		fxid_free(xtbl, fxid);
 	}
 
 unlock_bucket:
-	fib_unlock_bucket(xtbl, bucket);
+	hid_rt_iops->fib_unlock(xtbl, &bucket);
 	return rc;
 }
 
@@ -545,7 +548,7 @@ static void announce_on_dev(struct fib_xid_table *xtbl, struct hid_dev *hdev)
 	state.data_len	= mtu - ll_space;
 	state.mtu	= mtu;
 	/* XXX Implement a read only version of xia_iterate_xids. */
-	xia_iterate_xids(xtbl, __announce_on_dev, &state);
+	hid_rt_iops->iterate_xids(xtbl, __announce_on_dev, &state);
 	if (likely(nwp->hid_count))
 		send_nwp_frame(skb, dev->dev_addr, dev->broadcast);
 }
