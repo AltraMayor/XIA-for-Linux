@@ -30,8 +30,8 @@ static int my_vxt __read_mostly = -1;
 /* Use a list FIB.
  *
  * NOTE
- *	To fully change the list FIB, you must
- *	change member obj_size of @xdp_prot.
+ *	To fully change the list FIB, you must change @xdp_all_rt_eops and
+ *	member obj_size of @xdp_prot.
  */
 static const struct xia_ppal_rt_iops *xdp_rt_iops = &xia_ppal_list_rt_iops;
 

@@ -27,8 +27,7 @@ static int my_vxt __read_mostly = -1;
 /* Use a list FIB.
  *
  * NOTE
- *	To fully change the list FIB, you must
- *	change member delroute of @ad_all_rt_eops.
+ *	To fully change the list FIB, you must change @ad_all_rt_eops.
  */
 static const struct xia_ppal_rt_iops *ad_rt_iops = &xia_ppal_list_rt_iops;
 

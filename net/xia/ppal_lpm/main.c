@@ -41,8 +41,8 @@ static inline struct fib_xid_lpm_local *fxid_llpm(struct fib_xid *fxid)
 /* Use a tree FIB.
  *
  * NOTE
- *      To fully change the tree FIB, you must change member delroute of
- *	@lpm_all_rt_eops as well as the tree FIB calls in local_newroute().
+ *      To fully change the tree FIB, you must change @lpm_all_rt_eops
+ *	as well as the tree FIB calls in local_newroute().
  */
 const struct xia_ppal_rt_iops *lpm_rt_iops = &xia_ppal_tree_rt_iops;
 
