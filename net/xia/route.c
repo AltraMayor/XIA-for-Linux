@@ -202,7 +202,7 @@ static inline void xdst_free_begin(struct xip_dst *xdst)
 
 	/* Clear references to a principal that may be unloading. */
 	xdst->dst.input = dst_discard;
-	xdst->dst.output = dst_discard_sk;
+	xdst->dst.output = dst_discard_out;
 }
 
 /* DO NOT call this function! Call xdst_free() or xdst_rcu_free() instead. */
