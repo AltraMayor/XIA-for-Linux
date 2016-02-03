@@ -80,7 +80,6 @@ static int xip_dst_gc(struct dst_ops *ops);
 
 struct dst_ops xip_dst_ops_template __read_mostly = {
 	.family =		AF_XIA,
-	.protocol =		cpu_to_be16(ETH_P_XIP),
 	/* XXX This value should be reconsidered once struct xip_dst_table
 	 * is redesigned. Using the same value of
 	 * net/ipv6/route.c:ip6_dst_ops_template.gc_thresh for now.
