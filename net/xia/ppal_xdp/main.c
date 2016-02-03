@@ -257,14 +257,14 @@ drop:
 	return -1;
 }
 
-static int local_input_output(struct sock *sk, struct sk_buff *skb)
+static int local_input_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	BUG();
 }
 
 #define local_output_input local_input_input
 
-static int local_output_output(struct sock *sk, struct sk_buff *skb)
+static int local_output_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct net_device *dev = skb_dst(skb)->dev;
 
@@ -276,7 +276,7 @@ static int local_output_output(struct sock *sk, struct sk_buff *skb)
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 
 	/* Deliver @skb to its socket. */
-	return dev_loopback_xmit(skb);
+	return dev_loopback_xmit(net, sk, skb);
 }
 
 static int xdp_deliver(struct xip_route_proc *rproc, struct net *net,
@@ -456,9 +456,9 @@ static void xdp_destroy_sock(struct sock *sk)
 /* Since XDP is headerless, this function is just a wrapper for
  * xip_send_skb().
  */
-static inline int xdp_send_skb(struct sk_buff *skb)
+static inline int xdp_send_skb(struct net *net, struct sk_buff *skb)
 {
-	return xip_send_skb(skb);
+	return xip_send_skb(net, skb);
 }
 
 /* Push out all pending data as a single XDP datagram. Socket must be locked. */
@@ -466,7 +466,7 @@ static int xdp_push_pending_frames(struct sock *sk)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct sk_buff *skb = xip_finish_skb(sk);
-	int rc = !IS_ERR_OR_NULL(skb) ? xdp_send_skb(skb) : PTR_ERR(skb);
+	int rc = !IS_ERR_OR_NULL(skb) ? xdp_send_skb(sock_net(sk), skb) : PTR_ERR(skb);
 
 	lxdp->pending = false;
 	return rc;
@@ -659,7 +659,7 @@ static int xdp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		else if (!skb)
 			rc = -SOCK_NOSPACE;
 		else
-			rc = xdp_send_skb(skb);
+			rc = xdp_send_skb(sock_net(sk), skb);
 		goto xdst;
 	}
 

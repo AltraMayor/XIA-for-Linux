@@ -533,7 +533,7 @@ static int handle_skb_to_ipv4(struct sock *tunnel_sk, struct sk_buff *skb,
 	return ip_queue_xmit(tunnel_sk, skb, flowi4_to_flowi(&fl4));
 }
 
-static int u4id_output(struct sock *sk, struct sk_buff *skb)
+static int u4id_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct sock *tunnel_sk;
 	struct u4id_tunnel_dest *tunnel;

@@ -358,7 +358,7 @@ static int xip_dst_unreachable_in(struct sk_buff *skb)
 	return xip_dst_unreachable("in", skb);
 }
 
-static int xip_dst_unreachable_out(struct sock *sk, struct sk_buff *skb)
+static int xip_dst_unreachable_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	return xip_dst_unreachable("out", skb);
 }
@@ -783,7 +783,7 @@ int xdst_def_hop_limit_input_method(struct sk_buff *skb)
 		xiph->hop_limit--;
 	}
 
-	return dst_output(skb);
+	return dst_output(sock_net(skb->sk), skb->sk, skb);
 
 drop:
 	kfree_skb(skb);
@@ -1038,7 +1038,7 @@ static int xip_dst_not_supported_in(struct sk_buff *skb)
 	return xip_dst_not_supported("in", skb);
 }
 
-static int xip_dst_not_supported_out(struct sock *sk, struct sk_buff *skb)
+static int xip_dst_not_supported_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	return xip_dst_not_supported("out", skb);
 }

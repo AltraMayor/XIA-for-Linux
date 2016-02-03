@@ -3,7 +3,7 @@
 #include <net/xia_socket.h>
 #include <net/xia_output.h>
 
-int __xip_local_out(struct sk_buff *skb)
+int __xip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct xiphdr *xiph = xip_hdr(skb);
 	int len = skb->len - xip_hdr_len(xiph);
@@ -14,16 +14,16 @@ int __xip_local_out(struct sk_buff *skb)
 	return 1;
 }
 
-int xip_local_out(struct sk_buff *skb)
+int xip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
-	int rc = __xip_local_out(skb);
-	return likely(rc == 1) ? dst_output(skb) : rc;
+	int rc = __xip_local_out(net, sk, skb);
+	return likely(rc == 1) ? dst_output(net, sk, skb) : rc;
 }
 EXPORT_SYMBOL_GPL(xip_local_out);
 
-int xip_send_skb(struct sk_buff *skb)
+int xip_send_skb(struct net *net, struct sk_buff *skb)
 {
-	int rc = xip_local_out(skb);
+	int rc = xip_local_out(net, skb->sk, skb);
 	return rc > 0 ? net_xmit_errno(rc) : rc;
 }
 EXPORT_SYMBOL_GPL(xip_send_skb);

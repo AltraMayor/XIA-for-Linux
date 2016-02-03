@@ -399,7 +399,7 @@ static int forward_local(struct iterate_arg *iarg,
 		 */
 		goto failed_to_forward;
 	}
-	rc = dst_output(cpy_skb);
+	rc = dst_output(sock_net(cpy_skb->sk), cpy_skb->sk, cpy_skb);
 	if (rc)
 		net_warn_ratelimited("XIA/ZF: can't forward a packet after digging the local ZF edge: %i\n",
 				     rc);
@@ -437,7 +437,7 @@ static int forward_main(struct iterate_arg *iarg, struct fib_xid_zf_main *mzf)
 		kfree_skb(cpy_skb);
 		return 0;
 	}
-	rc = dst_output(cpy_skb);
+	rc = dst_output(sock_net(cpy_skb->sk), cpy_skb->sk, cpy_skb);
 	if (rc)
 		net_warn_ratelimited("XIA/ZF: can't forward a packet after routing the main ZF edge: %i\n",
 				     rc);
@@ -463,11 +463,10 @@ static int match_xids_rcu(struct fib_xid_table *xtbl, struct fib_xid *fxid,
 	BUG();
 }
 
-static int zf_output(struct sock *sk, struct sk_buff *skb)
+static int zf_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct xip_dst *xdst = skb_xdst(skb);
 	struct zf_dst_info *info = (struct zf_dst_info *)xdst->info;
-	struct net *net = xdst_net(xdst);
 	struct iterate_arg arg =
 		{.xid = info->xid, .matched = false, .forwarded_local = false,
 		.skb = skb, .xdst = xdst, .net = net};

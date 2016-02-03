@@ -352,7 +352,7 @@ static int main_input_input(struct sk_buff *skb)
 	/* Decrease ttl after skb cow done. */
 	xiph->hop_limit--;
 
-	return dst_output(skb);
+	return dst_output(sock_net(skb->sk), skb->sk, skb);
 
 drop:
 	kfree_skb(skb);
@@ -369,7 +369,7 @@ static inline int xip_skb_dst_mtu(struct sk_buff *skb)
 	return dst_mtu(skb_dst(skb));
 }
 
-static int main_input_output(struct sock *sk, struct sk_buff *skb)
+static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct hrdw_addr *ha = skb_ha(skb);
 	struct net_device *dev;

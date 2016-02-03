@@ -5,11 +5,11 @@
 #include <net/sock.h>
 
 /* Don't call this function, prefer xip_local_out(). */
-int __xip_local_out(struct sk_buff *skb);
+int __xip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb);
 
-int xip_local_out(struct sk_buff *skb);
+int xip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb);
 
-int xip_send_skb(struct sk_buff *skb);
+int xip_send_skb(struct net *net, struct sk_buff *skb);
 
 /* @skb must already have XIP header, and not have link layer header. */
 struct sk_buff *xip_trim_packet_if_needed(struct sk_buff *skb, u32 mtu);
