@@ -129,7 +129,6 @@ static int list_xtbl_init(struct xip_ppal_ctx *ctx, struct net *net,
 
 	new_xtbl->fxt_ppal_type = ctx->xpc_ppal_type;
 	new_xtbl->fxt_net = net;
-	hold_net(net);
 	lxtbl->fxt_locktbl = locktbl;
 	atomic_set(&new_xtbl->fxt_count, 0);
 	get_random_bytes(&lxtbl->fxt_seed, sizeof(lxtbl->fxt_seed));
@@ -214,7 +213,6 @@ static void list_xtbl_death_work(struct work_struct *work)
 		dump_stack();
 	}
 
-	release_net(xtbl->fxt_net);
 	free_buckets(abranch);
 	lxtbl->fxt_locktbl = NULL; /* Being redundant. */
 	kfree(xtbl);

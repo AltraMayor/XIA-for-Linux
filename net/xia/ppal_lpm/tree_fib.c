@@ -76,7 +76,6 @@ static int tree_xtbl_init(struct xip_ppal_ctx *ctx, struct net *net,
 
 	new_xtbl->fxt_ppal_type = ctx->xpc_ppal_type;
 	new_xtbl->fxt_net = net;
-	hold_net(net);
 	rwlock_init(&txtbl->writers_lock);
 	new_xtbl->all_eops = all_eops;
 	new_xtbl->all_iops = all_iops;
@@ -168,7 +167,6 @@ static void tree_xtbl_death_work(struct work_struct *work)
 		       dump_stack();
 	}
 
-	release_net(xtbl->fxt_net);
 	kfree(xtbl);
 }
 

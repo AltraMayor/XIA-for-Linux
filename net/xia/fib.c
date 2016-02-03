@@ -258,7 +258,6 @@ static void __fib_defer_dnf(struct rcu_head *head)
 	}
 	rcu_read_unlock();
 
-	release_net(dnf->net);
 	fib_free_dnf(dnf);
 }
 
@@ -266,7 +265,6 @@ void fib_defer_dnf(struct xip_deferred_negdep_flush *dnf,
 		   struct net *net, xid_type_t ty)
 {
 	dnf->net = net;
-	hold_net(net);
 	dnf->ty = ty;
 	call_rcu(&dnf->rcu_head, __fib_defer_dnf);
 }

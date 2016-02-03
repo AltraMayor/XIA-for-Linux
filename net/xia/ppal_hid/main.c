@@ -251,14 +251,12 @@ static struct xip_hid_ctx *create_hid_ctx(struct net *net)
 		return NULL;
 	xip_init_ppal_ctx(&hid_ctx->ctx, XIDTYPE_HID);
 	hid_ctx->net = net;
-	hold_net(net);
 	return hid_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function. */
 static void free_hid_ctx(struct xip_hid_ctx *hid_ctx)
 {
-	release_net(hid_ctx->net);
 	hid_ctx->net = NULL;
 	xip_release_ppal_ctx(&hid_ctx->ctx);
 	kfree(hid_ctx);
