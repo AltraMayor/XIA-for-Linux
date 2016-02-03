@@ -319,8 +319,7 @@ int xia_shutdown(struct socket *sock, int how)
 }
 EXPORT_SYMBOL_GPL(xia_shutdown);
 
-int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
-		struct msghdr *msg, size_t size)
+int xia_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
 
@@ -330,7 +329,7 @@ int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
 	if (!xia_sk_bound(xia_sk(sk)))
 		return -ESNOTBOUND;
 
-	return sk->sk_prot->sendmsg(iocb, sk, msg, size);
+	return sk->sk_prot->sendmsg(sk, msg, size);
 }
 EXPORT_SYMBOL_GPL(xia_sendmsg);
 
@@ -341,8 +340,7 @@ int xip_recv_error(struct sock *sk, struct msghdr *msg, int len)
 }
 EXPORT_SYMBOL_GPL(xip_recv_error);
 
-int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
-		struct msghdr *msg, size_t size, int flags)
+int xia_recvmsg(struct socket *sock, struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 	int addr_len = 0;
@@ -351,8 +349,8 @@ int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
 	/* XXX Review RPS calls. */
 	sock_rps_record_flow(sk);
 
-	rc = sk->sk_prot->recvmsg(iocb, sk, msg, size, flags & MSG_DONTWAIT,
-				   flags & ~MSG_DONTWAIT, &addr_len);
+	rc = sk->sk_prot->recvmsg(sk, msg, size, flags & MSG_DONTWAIT,
+				  flags & ~MSG_DONTWAIT, &addr_len);
 	if (rc >= 0)
 		msg->msg_namelen = addr_len;
 	return rc;

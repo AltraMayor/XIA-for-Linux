@@ -71,12 +71,10 @@ int xia_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
 int xia_shutdown(struct socket *sock, int how);
 
 /* This function makes (struct proto).sendmsg() required. */
-int xia_sendmsg(struct kiocb *iocb, struct socket *sock,
-	struct msghdr *msg, size_t size);
+int xia_sendmsg(struct socket *sock, struct msghdr *msg, size_t size);
 
 /* This function makes (struct proto).recvmsg() required. */
-int xia_recvmsg(struct kiocb *iocb, struct socket *sock,
-	struct msghdr *msg, size_t size, int flags);
+int xia_recvmsg(struct socket *sock, struct msghdr *msg, size_t size, int flags);
 
 ssize_t xia_sendpage(struct socket *sock, struct page *page,
 	int offset, size_t size, int flags);

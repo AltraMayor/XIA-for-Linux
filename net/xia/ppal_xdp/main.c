@@ -545,8 +545,7 @@ static int xdp_getfrag(void *from, char *to, int  offset, int len,
 	return copy_from_iter(to, len, &msg->msg_iter) != len ? -EFAULT : 0;
 }
 
-static int xdp_sendmsg(struct kiocb *iocb, struct sock *sk,
-		       struct msghdr *msg, size_t len)
+static int xdp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
 	struct fib_xid_xdp_local *lxdp = sk_lxdp(sk);
 	struct xia_sock *xia = &lxdp->xia_sk;
@@ -704,7 +703,7 @@ out:
 }
 
 /* If there is a packet there, return it, otherwise block. */
-static int xdp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
+static int xdp_recvmsg(struct sock *sk, struct msghdr *msg,
 		       size_t len, int noblock, int flags, int *addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_xia *, sxia, msg->msg_name);
