@@ -165,7 +165,7 @@ static void u4id_local_del_work(struct work_struct *work)
 		container_of(work, struct fib_xid_u4id_local, del_work);
 	if (lu4id->sock) {
 		kernel_sock_shutdown(lu4id->sock, SHUT_RDWR);
-		sk_release_kernel(lu4id->sock->sk);
+		sock_release(lu4id->sock);
 		lu4id->sock = NULL;
 	}
 	xdst_free_anchor(&lu4id->anchor);
