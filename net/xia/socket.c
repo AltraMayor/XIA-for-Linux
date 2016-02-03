@@ -548,7 +548,7 @@ static int xia_create(struct net *net, struct socket *sock,
 	WARN_ON(chosen_prot->slab == NULL);
 
 	rc = -ENOBUFS;
-	sk = sk_alloc(net, PF_XIA, GFP_KERNEL, chosen_prot);
+	sk = sk_alloc(net, PF_XIA, GFP_KERNEL, chosen_prot, kern);
 	if (!sk)
 		goto out;
 	percpu_counter_inc(chosen_prot->sockets_allocated);
