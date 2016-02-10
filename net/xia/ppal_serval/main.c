@@ -17,13 +17,17 @@ struct netns_serval net_serval = {
 int srvc_vxt __read_mostly = -1;
 int flow_vxt __read_mostly = -1;
 
-/* Use a list FIB. */
+/* Use a list FIB.
+ *
+ * NOTE
+ *	To fully change the list FIB, you must change @srcv_all_rt_eops.
+ */
 static const struct xia_ppal_rt_iops *srvc_rt_iops = &xia_ppal_list_rt_iops;
 /* Use a list FIB.
  *
  * NOTE
- *	To fully change the list FIB, you must
- *	change member obj_size of @serval_tcp_request_sock_ops
+ *	To fully change the list FIB, you must change @flow_all_rt_eops
+ *	and member obj_size of @serval_tcp_request_sock_ops
  *	in file net/xia/ppal_serval/serval_tcp.c.
  */
 const struct xia_ppal_rt_iops *flow_rt_iops = &xia_ppal_list_rt_iops;
