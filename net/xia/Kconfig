@@ -13,6 +13,7 @@ config XIA
 if XIA
 source "net/xia/ppal_ad/Kconfig"
 source "net/xia/ppal_hid/Kconfig"
+source "net/xia/ppal_lpm/Kconfig"
 source "net/xia/ppal_uni4id/Kconfig"
 source "net/xia/ppal_u4id/Kconfig"
 source "net/xia/ppal_xdp/Kconfig"
