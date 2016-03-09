@@ -1,0 +1,9 @@
+config XIA_PPAL_XDP
+	tristate "XDP Principal (EXPERIMENTAL)"
+	default m
+	help
+	  XDP (eXpressive Datagram Protocol) principal provides
+	  a UDP-like protocol through Socket API.
+	  If you have added XIA, you likely want to add this principal
+	  as well.
+	  If you are unsure how to answer this question, answer M.
