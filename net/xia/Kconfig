@@ -9,3 +9,7 @@ config XIA
 
 	  For information about XIA, please refer to
 	  <http://www.cs.cmu.edu/~xia/>
+
+if XIA
+source "net/xia/ppal_ad/Kconfig"
+endif # if XIA

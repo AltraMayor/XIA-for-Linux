@@ -1,0 +1,8 @@
+config XIA_PPAL_AD
+	tristate "Autonomous Domain Principal (EXPERIMENTAL)"
+	default m
+	help
+	  Autonomous Domain (AD) Principal is essential to route in XIA.
+	  If you have added XIA, you likely want to add this principal
+	  as well.
+	  If you are unsure how to answer this question, answer M.
