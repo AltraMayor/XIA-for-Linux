@@ -12,4 +12,5 @@ config XIA
 
 if XIA
 source "net/xia/ppal_ad/Kconfig"
+source "net/xia/ppal_hid/Kconfig"
 endif # if XIA
