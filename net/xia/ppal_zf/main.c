@@ -399,7 +399,7 @@ static int forward_local(struct iterate_arg *iarg,
 		 */
 		goto failed_to_forward;
 	}
-	rc = dst_output(sock_net(cpy_skb->sk), cpy_skb->sk, cpy_skb);
+	rc = dst_output(iarg->net, cpy_skb->sk, cpy_skb);
 	if (rc)
 		net_warn_ratelimited("XIA/ZF: can't forward a packet after digging the local ZF edge: %i\n",
 				     rc);
@@ -437,7 +437,7 @@ static int forward_main(struct iterate_arg *iarg, struct fib_xid_zf_main *mzf)
 		kfree_skb(cpy_skb);
 		return 0;
 	}
-	rc = dst_output(sock_net(cpy_skb->sk), cpy_skb->sk, cpy_skb);
+	rc = dst_output(iarg->net, cpy_skb->sk, cpy_skb);
 	if (rc)
 		net_warn_ratelimited("XIA/ZF: can't forward a packet after routing the main ZF edge: %i\n",
 				     rc);
