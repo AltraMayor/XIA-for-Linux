@@ -763,6 +763,8 @@ EXPORT_SYMBOL_GPL(xdst_invalidate_redirect);
 
 int xdst_def_hop_limit_input_method(struct sk_buff *skb)
 {
+	struct xip_dst *xdst;
+
 	/* XXX We should test that forwarding is enable per struct net.
 	 * See example in net/ipv6/ip6_output.c:ip6_forward.
 	 */
@@ -783,7 +785,9 @@ int xdst_def_hop_limit_input_method(struct sk_buff *skb)
 		xiph->hop_limit--;
 	}
 
-	return dst_output(sock_net(skb->sk), skb->sk, skb);
+	xdst = skb_xdst(skb);
+	BUG_ON(!xdst);
+	return dst_output(xdst_net(xdst), skb->sk, skb);
 
 drop:
 	kfree_skb(skb);

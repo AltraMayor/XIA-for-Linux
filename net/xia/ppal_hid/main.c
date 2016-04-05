@@ -352,7 +352,7 @@ static int main_input_input(struct sk_buff *skb)
 	/* Decrease ttl after skb cow done. */
 	xiph->hop_limit--;
 
-	return dst_output(sock_net(skb->sk), skb->sk, skb);
+	return dst_output(xdst_net(xdst), skb->sk, skb);
 
 drop:
 	kfree_skb(skb);
