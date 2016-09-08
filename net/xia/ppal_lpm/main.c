@@ -105,6 +105,7 @@ static int newroute_flush_anchor_unlock(struct fib_xid_table *xtbl,
 		 * node with the new one in the tree.
 		 */
 		xdst_init_anchor(&dup_llpm->anchor);
+		lpm_rt_iops->fxid_copy(&dup_llpm->common, pred_fxid);
 		lpm_rt_iops->fxid_replace_locked(xtbl, pred_fxid,
 						 &dup_llpm->common);
 
@@ -136,6 +137,7 @@ static int newroute_flush_anchor_unlock(struct fib_xid_table *xtbl,
 		}
 
 		dup_mrd->gw = fxid_mrd(pred_fxid)->gw;
+		lpm_rt_iops->fxid_copy(&dup_mrd->common, pred_fxid);
 		lpm_rt_iops->fxid_replace_locked(xtbl, pred_fxid,
 						 &dup_mrd->common);
 
