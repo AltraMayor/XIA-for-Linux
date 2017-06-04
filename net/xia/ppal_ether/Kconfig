@@ -1,0 +1,8 @@
+config XIA_PPAL_ETHER
+        tristate "Ethernet Principal (EXPERIMENTAL)"
+        default m
+        help
+          Ethernet (ETHER) Principal is essential to route in XIA.
+          If you have added XIA, you likely want to add this principal
+          as well.
+          If you are unsure how to answer this question, answer M.
