@@ -16,6 +16,13 @@ struct fib_xid_ether_local {
 	struct fib_xid		xhl_common;
 };
 
+static inline struct fib_xid_ether_local *fxid_lether(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_ether_local, xhl_common)
+		: NULL;
+}
+
 /* Main ETHERs */
 
 struct fib_xid_ether_main {
@@ -25,5 +32,12 @@ struct fib_xid_ether_main {
 	 */
 	struct fib_xid		xhl_common;
 };
+
+static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_ether_main, xhm_common)
+		: NULL;
+}
 
 #endif		/* _NET_XIA_ETHER_H */
