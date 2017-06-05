@@ -1,15 +1,19 @@
 #ifndef _NET_XIA_ETHER_H
 #define _NET_XIA_ETHER_H
 /* prevents double declarations */
-#ifdef __KERNEL__
-/* only for kernel use */
 
 #include <linux/netdevice.h>
 #include <net/xia_list_fib.h>
+#include <linux/netlink.h>
 
 /* Ethernet Principal */
 #define XIDTYPE_ETHER (__cpu_to_be32(0x12))
 
+#ifdef __KERNEL__
+/* only for kernel use */
+
+/* ETHER's virtal XID type. */
+int ether_vxt __read_mostly = -1;
 
 /* Local ETHERs */
 
@@ -51,6 +55,15 @@ struct xip_ether_ctx
 {
 	struct xip_ppal_ctx ctx;
 };
+
+static inline struct xip_ether_ctx *ctx_ether(struct xip_ppal_ctx *ctx)
+{
+	return likely(ctx)
+		? container_of(ctx, struct xip_ether_ctx, ctx)
+		: NULL;
+}
+
+extern int ether_vxt;
 
 #endif /* __KERNEL__ */
 #endif		/* _NET_XIA_ETHER_H */
