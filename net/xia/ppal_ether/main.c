@@ -6,6 +6,23 @@
 
 /* Network namespace subsystem registration*/
 
+static struct xip_ether_ctx *create_ether_ctx(void)
+{
+	struct xip_ether_ctx *ether_ctx = kmalloc(sizeof(*ether_ctx), GFP_KERNEL);
+
+	if (!ether_ctx)
+		return NULL;
+	xip_init_ppal_ctx(&ether_ctx->ctx, XIDTYPE_ether);
+	return ether_ctx;
+}
+
+/* IMPORTANT! Caller must RCU synch before calling this function,i.e., wait till all readers before have finished */
+static void free_ether_ctx(struct xip_ether_ctx *ether_ctx)
+{
+	xip_release_ppal_ctx(&ether_ctx->ctx);
+	kfree(ether_ctx);
+}
+
 static int __net_init ether_net_init(struct net *net)
 {
 	struct xip_ether_ctx *ether_ctx;
