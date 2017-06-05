@@ -4,6 +4,40 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_ether.h>
 
+/* Network namespace subsystem registration*/
+
+static int __net_init ether_net_init(struct net *net)
+{
+	struct xip_ether_ctx *ether_ctx;
+	int rc;
+
+	ether_ctx = create_ether_ctx();
+	if (!ether_ctx) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	rc = ether_rt_iops->xtbl_init(&ether_ctx->ctx, net, &xia_main_lock_table,
+				    ether_all_rt_eops, ether_rt_iops);
+	if (rc)
+		goto ether_ctx;
+
+	rc = xip_add_ppal_ctx(net, &ether_ctx->ctx);
+	if (rc)
+		goto ether_ctx;
+	goto out;
+
+ether_ctx:
+	free_ether_ctx(ether_ctx);
+out:
+	return rc;
+}
+
+static struct pernet_operations ether_net_ops __read_mostly = {
+	.init = ether_net_init,
+	.exit = ether_net_exit,
+};
+
 /* xia_ether_init - this function is called when the module is loaded.
  * Returns zero if successfully loaded, nonzero otherwise.
  */
