@@ -24,6 +24,13 @@ const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
 	},
 };
 
+/* routing process per principal struct */
+
+static struct xip_route_proc ether_rt_proc __read_mostly = {
+	.xrp_ppal_type = XIDTYPE_ETHER,
+	.deliver = ether_deliver,
+};
+
 /* Network namespace subsystem registration*/
 
 static struct xip_ether_ctx *create_ether_ctx(void)
