@@ -63,7 +63,7 @@ static inline struct xip_ether_ctx *ctx_ether(struct xip_ppal_ctx *ctx)
 		: NULL;
 }
 
-extern int ether_vxt;
+extern int ether_vxt;	//TODO:might not be necessary later
 
 #endif /* __KERNEL__ */
 #endif		/* _NET_XIA_ETHER_H */

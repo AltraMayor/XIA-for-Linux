@@ -4,6 +4,26 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_ether.h>
 
+/* ETHER_FIB table internal operations */
+const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
+
+/* ETHER_FIB all table external operations */
+const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
+	[XRTABLE_LOCAL_INDEX] = {
+		.newroute = local_newroute,
+		.delroute = local_delroute,
+		.dump_fxid = local_dump_hid,
+		.free_fxid = local_free_hid,
+	},
+
+	[XRTABLE_MAIN_INDEX] = {
+		.newroute = main_newroute,
+		.delroute = main_delroute,
+		.dump_fxid = main_dump_hid,
+		.free_fxid = main_free_hid,
+	},
+};
+
 /* Network namespace subsystem registration*/
 
 static struct xip_ether_ctx *create_ether_ctx(void)
