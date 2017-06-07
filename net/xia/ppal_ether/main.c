@@ -39,7 +39,7 @@ static struct xip_ether_ctx *create_ether_ctx(void)
 
 	if (!ether_ctx)
 		return NULL;
-	xip_init_ppal_ctx(&ether_ctx->ctx, XIDTYPE_ether);
+	xip_init_ppal_ctx(&ether_ctx->ctx, XIDTYPE_ETHER);
 	return ether_ctx;
 }
 
