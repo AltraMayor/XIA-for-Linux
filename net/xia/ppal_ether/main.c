@@ -38,6 +38,14 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 	return rc;
 }
 
+static void local_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_ether_local *leid = fxid_leid(fxid);
+
+	xdst_free_anchor(&leid->xel_anchor);
+	kfree(leid);
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
