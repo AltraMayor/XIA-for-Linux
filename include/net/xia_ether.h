@@ -18,18 +18,18 @@ int ether_vxt __read_mostly = -1;
 /* Local ETHERs */
 
 struct fib_xid_ether_local {
-	struct xip_dst_anchor	xhl_anchor;
+	struct xip_dst_anchor	xel_anchor;
 
-	/* WARNING: @xhl_common is of variable size, and
+	/* WARNING: @xel_common is of variable size, and
 	 * MUST be the last member of the struct.
 	 */
-	struct fib_xid		xhl_common;
+	struct fib_xid		xel_common;
 };
 
 static inline struct fib_xid_ether_local *fxid_lether(struct fib_xid *fxid)
 {
 	return likely(fxid)
-		? container_of(fxid, struct fib_xid_ether_local, xhl_common)
+		? container_of(fxid, struct fib_xid_ether_local, xel_common)
 		: NULL;
 }
 
@@ -40,13 +40,13 @@ struct fib_xid_ether_main {
 	/* WARNING: @xhl_common is of variable size, and
 	 * MUST be the last member of the struct.
 	 */
-	struct fib_xid		xhl_common;
+	struct fib_xid		xel_common;
 };
 
 static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
 {
 	return likely(fxid)
-		? container_of(fxid, struct fib_xid_ether_main, xhm_common)
+		? container_of(fxid, struct fib_xid_ether_main, xem_common)
 		: NULL;
 }
 

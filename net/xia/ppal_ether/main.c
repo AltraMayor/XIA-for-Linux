@@ -4,6 +4,32 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_ether.h>
 
+/* ETHER local table operations */
+static int local_newroute(struct xip_ppal_ctx *ctx,
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
+{
+	struct fib_xid_ether_local *leid;
+	int rc;
+
+	/* Intialization of a new fib_xid */
+	leid = hid_rt_iops->fxid_ppal_alloc(sizeof(*leid), GFP_KERNEL);
+	if (!leid)
+		return -ENOMEM;
+	fxid_init(xtbl, &leid->xhl_common, cfg->xfc_dst->xid_id,
+		  XRTABLE_LOCAL_INDEX, 0);
+	xdst_init_anchor(&leid->xel_anchor);
+
+	/* Call to form a new entry in the ppal table in the current ctx */
+	rc = hid_rt_iops->fib_newroute(&leid->xel_common, xtbl, cfg, NULL);
+
+	/* If not formed succesfully */
+	if (rc) {
+		fxid_free_norcu(xtbl, &leid->xel_common);
+	}
+	return rc;
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
