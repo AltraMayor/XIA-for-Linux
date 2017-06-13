@@ -30,6 +30,14 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	return rc;
 }
 
+static int local_delroute(struct xip_ppal_ctx *ctx,
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
+{
+	int rc = ether_rt_iops->fib_delroute(ctx, xtbl, cfg);
+	return rc;
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
@@ -38,15 +46,15 @@ const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
 		.delroute = local_delroute,
-		.dump_fxid = local_dump_hid,
-		.free_fxid = local_free_hid,
+		.dump_fxid = local_dump_ether,
+		.free_fxid = local_free_ether,
 	},
 
 	[XRTABLE_MAIN_INDEX] = {
 		.newroute = main_newroute,
 		.delroute = main_delroute,
-		.dump_fxid = main_dump_hid,
-		.free_fxid = main_free_hid,
+		.dump_fxid = main_dump_ether,
+		.free_fxid = main_free_ether,
 	},
 };
 
