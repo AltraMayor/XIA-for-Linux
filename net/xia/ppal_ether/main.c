@@ -46,6 +46,48 @@ static void local_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(leid);
 }
 
+static int local_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+			  struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			  struct netlink_callback *cb)
+{
+	struct nlmsghdr *nlh;
+	u32 portid = NETLINK_CB(cb->skb).portid;
+	u32 seq = cb->nlh->nlmsg_seq;
+	struct rtmsg *rtm;
+	struct xia_xid dst;
+
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+			NLM_F_MULTI);
+	if (nlh == NULL)
+		return -EMSGSIZE;
+
+	rtm = nlmsg_data(nlh);
+	rtm->rtm_family = AF_XIA;
+	rtm->rtm_dst_len = sizeof(struct xia_xid);
+	rtm->rtm_src_len = 0;
+	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
+	rtm->rtm_table = XRTABLE_LOCAL_INDEX;
+	/* XXX One may want to vary here. */
+	rtm->rtm_protocol = RTPROT_UNSPEC;
+	/* XXX One may want to vary here. */
+	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+	rtm->rtm_type = RTN_LOCAL;
+	/* XXX One may want to put something here, like RTM_F_CLONED. */
+	rtm->rtm_flags = 0;
+
+	dst.xid_type = xtbl->fxt_ppal_type;
+	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+		goto nla_put_failure;
+
+	nlmsg_end(skb, nlh);
+	return 0;
+
+nla_put_failure:
+	nlmsg_cancel(skb, nlh);
+	return -EMSGSIZE;
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
