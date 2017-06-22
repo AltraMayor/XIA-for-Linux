@@ -34,6 +34,16 @@ static inline struct fib_xid_ether_local *fxid_lether(struct fib_xid *fxid)
 }
 
 /* Main ETHERs */
+struct ether_interface{
+	struct net_device			*dev;
+	atomic_t					refcnt;
+	int 						dead;
+	struct rcu_head				rcu_head;
+
+	atomic_t					neigh_cnt;
+	spinlock_t					neigh_lock;
+	struct list_head			list_interface_common_addr;		
+};
 struct interface_addr{
 	struct fib_xid_ether_main 	mfxid;
 	struct list_head 			interface_common_addr;
