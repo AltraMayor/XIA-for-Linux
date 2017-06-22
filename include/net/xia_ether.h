@@ -55,8 +55,11 @@ struct interface_addr{
 };
 
 struct fib_xid_ether_main {
+	struct xip_dst_anchor	xem_anchor;
+	struct interface_addr 	neigh_addr;
+	struct ether_interface 	host_interface;
 
-	/* WARNING: @xhl_common is of variable size, and
+	/* WARNING: @xhm_common is of variable size, and
 	 * MUST be the last member of the struct.
 	 */
 	struct fib_xid		xem_common;
