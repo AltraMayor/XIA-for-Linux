@@ -12,16 +12,19 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	struct fib_xid_ether_local *leid;
 	int rc;
 
-	/* Intialization of a new fib_xid */
-	leid = hid_rt_iops->fxid_ppal_alloc(sizeof(*leid), GFP_KERNEL);
+	/* Allocate memory to new local ether xid*/
+	leid = ether_rt_iops->fxid_ppal_alloc(sizeof(*leid), GFP_KERNEL);
+	// If not enough space
 	if (!leid)
 		return -ENOMEM;
+	// Initialize the fib_xid inside the local ether xid
 	fxid_init(xtbl, &leid->xhl_common, cfg->xfc_dst->xid_id,
 		  XRTABLE_LOCAL_INDEX, 0);
+	// Initialize the anchor inside the local ether xid
 	xdst_init_anchor(&leid->xel_anchor);
 
 	/* Call to form a new entry in the ppal table in the current ctx */
-	rc = hid_rt_iops->fib_newroute(&leid->xel_common, xtbl, cfg, NULL);
+	rc = ether_rt_iops->fib_newroute(&leid->xel_common, xtbl, cfg, NULL);
 
 	/* If not formed succesfully */
 	if (rc) {
@@ -34,15 +37,19 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 			  struct fib_xid_table *xtbl,
 			  struct xia_fib_config *cfg)
 {
+	//call fib route deleting function
 	int rc = ether_rt_iops->fib_delroute(ctx, xtbl, cfg);
 	return rc;
 }
 
 static void local_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
+	//fetch the local ether object containing the fib_xid object
 	struct fib_xid_ether_local *leid = fxid_leid(fxid);
 
+	//free the anchors starting from the anchor of this local ether
 	xdst_free_anchor(&leid->xel_anchor);
+	//free kernel memory
 	kfree(leid);
 }
 
@@ -50,40 +57,53 @@ static int local_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 			  struct xip_ppal_ctx *ctx, struct sk_buff *skb,
 			  struct netlink_callback *cb)
 {
+	//used for communication b/w userspace and kernel
 	struct nlmsghdr *nlh;
+	//get process-id
+	//NETLINK_CB:typecast sk_buff in cb to netlink_skb_parms
 	u32 portid = NETLINK_CB(cb->skb).portid;
+	//get sequence number of message
 	u32 seq = cb->nlh->nlmsg_seq;
 	struct rtmsg *rtm;
 	struct xia_xid dst;
 
+	//add a new netlink msg header with the following info
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
 			NLM_F_MULTI);
+	//if not allocated
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
+	//fetch the pointer to start of router-related payload associated with this header
 	rtm = nlmsg_data(nlh);
+	//start setting the fields one by one
 	rtm->rtm_family = AF_XIA;
 	rtm->rtm_dst_len = sizeof(struct xia_xid);
 	rtm->rtm_src_len = 0;
 	rtm->rtm_tos = 0; /* XIA doesn't have a tos. */
 	rtm->rtm_table = XRTABLE_LOCAL_INDEX;
-	/* XXX One may want to vary here. */
+	/* COULD GIVE OVER HERE RTPROT_XIA*/
+	/* Values higher than RTPROT_STATIC not interpreted by kernel and define inside rtnetlink.h */
 	rtm->rtm_protocol = RTPROT_UNSPEC;
-	/* XXX One may want to vary here. */
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
 	rtm->rtm_type = RTN_LOCAL;
 	/* XXX One may want to put something here, like RTM_F_CLONED. */
 	rtm->rtm_flags = 0;
 
+	//set the principal type
 	dst.xid_type = xtbl->fxt_ppal_type;
+	//set the xia-xid
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
+	//add the netlink attribute "destination address" to the nl_msg contained inside the skb
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
 		goto nla_put_failure;
 
+	//update message payload length
 	nlmsg_end(skb, nlh);
 	return 0;
 
 nla_put_failure:
+	//remove the netlink message from the skb completely
 	nlmsg_cancel(skb, nlh);
 	return -EMSGSIZE;
 }
