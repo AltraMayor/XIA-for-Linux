@@ -34,13 +34,22 @@ static inline struct fib_xid_ether_local *fxid_lether(struct fib_xid *fxid)
 }
 
 /* Main ETHERs */
+struct interface_addr{
+	struct fib_xid_ether_main 	mfxid;
+	struct list_head 			interface_common_addr;
+	struct ether_interface 		*outgress_interface;
+	struct rcu_head				rcu_head;
+
+	//TODO:check size
+	u8 		ha[MAX_ADDR_LEN];
+};
 
 struct fib_xid_ether_main {
 
 	/* WARNING: @xhl_common is of variable size, and
 	 * MUST be the last member of the struct.
 	 */
-	struct fib_xid		xel_common;
+	struct fib_xid		xem_common;
 };
 
 static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
