@@ -251,19 +251,21 @@ static struct xip_route_proc ether_rt_proc __read_mostly = {
 
 /* Network namespace subsystem registration*/
 
-static struct xip_ether_ctx *create_ether_ctx(void)
+static struct xip_ether_ctx *create_ether_ctx(struct net *net)
 {
 	struct xip_ether_ctx *ether_ctx = kmalloc(sizeof(*ether_ctx), GFP_KERNEL);
 
 	if (!ether_ctx)
 		return NULL;
 	xip_init_ppal_ctx(&ether_ctx->ctx, XIDTYPE_ETHER);
+	ether_ctx->net = net;
 	return ether_ctx;
 }
 
 /* IMPORTANT! Caller must RCU synch before calling this function,i.e., wait till all readers before have finished */
 static void free_ether_ctx(struct xip_ether_ctx *ether_ctx)
 {
+	ether_ctx->net = NULL;
 	xip_release_ppal_ctx(&ether_ctx->ctx);
 	kfree(ether_ctx);
 }
@@ -273,7 +275,7 @@ static int __net_init ether_net_init(struct net *net)
 	struct xip_ether_ctx *ether_ctx;
 	int rc;
 
-	ether_ctx = create_ether_ctx();
+	ether_ctx = create_ether_ctx(net);
 	if (!ether_ctx) {
 		rc = -ENOMEM;
 		goto out;

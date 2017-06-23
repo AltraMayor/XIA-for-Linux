@@ -76,6 +76,7 @@ static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
 /* ETHER context */
 struct xip_ether_ctx
 {
+	struct net		*net;
 	struct xip_ppal_ctx ctx;
 };
 
