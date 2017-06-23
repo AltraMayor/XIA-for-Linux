@@ -50,7 +50,7 @@ struct interface_addr{
 	struct ether_interface 		*outgress_interface;
 	struct rcu_head				rcu_head;
 
-	//TODO:check size
+	//TODO:check size and alignment
 	u8 		ha[MAX_ADDR_LEN];
 };
 
@@ -65,6 +65,23 @@ struct fib_xid_ether_main {
 	 */
 	struct fib_xid		xem_common;
 };
+
+static struct interface_addr *allocate_interface_addr(struct ether_interface *interface, 
+						const u8 *lladdr, gfp_t flags)
+{
+	struct interface_addr *ia = kzalloc(sizeof(*ia), flags);
+	if (!ia)
+		return NULL;
+
+	INIT_LIST_HEAD(&ia->interface_common_addr);
+
+	ia->outgress_interface = interface;
+	dev_hold(interface->dev);
+	interface_hold(interface);
+	
+	memmove(ia->ha, lladdr, interface->dev->addr_len);
+	return ha;
+}
 
 static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
 {

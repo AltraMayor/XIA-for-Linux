@@ -137,6 +137,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	id 				= cfg->xfc_dst->xid_id;
 
 	//allocate a new neighbour interface address structure
+	//TODO: add the mhid to this neigh_addr
 	neigh_addr 		= allocate_interface_addr(out_interface , lladdr , GFP_ATOMIC);
 	// Not enough memory
 	if(!neigh_addr)
@@ -195,6 +196,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		goto unlock_bucket;
 	}
 
+	//TODO: intialize the anchors
 	mether = ether_rt_iops->fxid_ppal_alloc(sizeof(*mether),GFP_ATOMIC);
 	if(!mether){
 		rc = -ENOMEM;
