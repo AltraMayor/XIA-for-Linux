@@ -108,6 +108,120 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+/* ETHER main table operations */
+static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+			 struct xia_fib_config *cfg)
+{
+	//check for errors in cfg
+	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
+		return -EINVAL;
+
+	struct net_device 		*out_interface;
+	struct interface_addr 	*neigh_addr;
+	struct fib_xid_table 	*xtbl;
+	struct fib_xid 			*cur_fxid;
+	const u8 				*lladdr;
+	u32						bucket;
+	struct fib_xid_ether_main *mether;
+	u32						nl_flags;
+	const char 				*id;
+
+	//check if device is down or is loopback
+	if (!(dev->flags & IFF_UP) || (dev->flags & IFF_LOOPBACK))
+		return -EINVAL;
+	
+	//assign values to corresponding variables
+	out_interface 	= cfg->xfc_odev;
+	lladdr 			= cfg->xfc_lladdr;
+	nl_flags 		= cfg->xfc_nlflags;
+	id 				= cfg->xfc_dst->xid_id;
+
+	//allocate a new neighbour interface address structure
+	neigh_addr 		= allocate_interface_addr(out_interface , lladdr , GFP_ATOMIC);
+	// Not enough memory
+	if(!neigh_addr)
+		return -ENOMEM;
+
+	xtbl = ctx->xpc_tbl;
+	cur_fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, id);
+
+	if(cur_fxid)
+	{
+		//found an xid with the same xia-xid
+		if (cur_fxid->fx_table_id != XRTABLE_MAIN_INDEX) {
+			//found the xid not in main table
+			rc = -EINVAL;
+			goto unlock_bucket;
+		}
+		//fetch the container main ether xid
+		mether = fxid_mether(cur_fxid);
+
+		if(cmp_addr(mether->neigh_addr,neigh_addr))
+		{
+			//found the new addr and old addr same
+
+			//don't touch if exist or not allowed to replace
+			if ( (nl_flags & NLM_F_EXCL) || !(nl_flags & NLM_F_REPLACE) ) 
+			{
+				rc = -EEXIST;
+				goto unlock_bucket;
+			}
+			//can be replaced but already same
+			rc = 0;
+			goto unlock_bucket;
+		}
+		//if not allowed to create
+		if (!(nl_flags & NLM_F_CREATE)) {
+			rc = -ENOENT;
+			goto unlock_bucket;
+		}
+
+		//attach to this main table entry
+		rc = attach_neigh_addr_to_fib_entry(mether , neigh_addr);
+		ether_rt_iops->fib_unlock(xtbl, &bucket);
+		if (rc)
+			goto free_addr;
+		return 0;
+	}
+
+	if (!(nl_flags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+
+	dnf = fib_alloc_dnf(GFP_ATOMIC);
+	if (!dnf) {
+		rc = -ENOMEM;
+		goto unlock_bucket;
+	}
+
+	mether = ether_rt_iops->fxid_ppal_alloc(sizeof(*mether),GFP_ATOMIC);
+	if(!mether){
+		rc = -ENOMEM;
+		goto def_upd;
+	}
+	fxid_init(xtbl, &mether->xem_common, id, XRTABLE_MAIN_INDEX, 0);
+	mether->xem_dead = false;
+	
+	rc = attach_neigh_addr_to_fib_entry(mether , neigh_addr);
+	BUG_ON(rc);
+
+	BUG_ON(ether_rt_iops->fxid_add_locked(&bucket, xtbl, &mether->xem_common));
+
+	ether_rt_iops->fib_unlock(xtbl, &bucket);
+	//TODO:add the net to principal ctx
+	fib_defer_dnf(dnf, ether_ctx(ctx)->net, XIDTYPE_ETHER);
+	return 0;
+
+def_upd:
+	fib_free_dnf(dnf);
+unlock_bucket:
+	ether_rt_iops->fib_unlock(xtbl, &bucket);
+free_addr:
+	free_addr_norcu(neigh_addr);
+	return rc;
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
