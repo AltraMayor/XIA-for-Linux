@@ -239,6 +239,50 @@ free_addr:
 	return rc;
 }
 
+static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
+{
+	//check for errors in cfg
+	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
+		return -EINVAL;
+
+	u32 bucket;
+	struct fib_xid *fxid;
+	struct fib_xid_ether_main *mether;
+	struct fib_xid_table *xtbl;
+	struct interface_addr 	*neigh_addr;
+	int rc;
+	const char *id;
+
+	xtbl = ctx->xpc_tbl;
+	id 	= cfg->xfc_dst->xid_id;
+
+	fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, id);
+	if (!fxid) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+	if (fxid->fx_table_id != XRTABLE_MAIN_INDEX) {
+		rc = -EINVAL;
+		goto unlock_bucket;
+	}
+	mether = fxid_mether(fxid);
+
+	if(!cmp_addr(methr->neigh_addr,lladdr,dev)){
+		rc = -EINVAL;
+		goto unlock_bucket;
+	}
+
+	neigh_addr = mether->neigh_addr;
+	del_interface_addr(neigh_addr);
+	free_interface_addr(neigh_addr);
+
+	//TODO:remove main ether entry
+
+unlock_bucket:
+	ether_rt_iops->fib_unlock(xtbl, &bucket);
+	return rc;
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
