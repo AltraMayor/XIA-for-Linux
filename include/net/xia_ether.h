@@ -79,6 +79,12 @@ static inline struct ether_interface *ether_interface_get(const struct net_devic
 	return interface;
 }
 
+static inline void ether_interface_put(struct ether_interface *interface)
+{
+	if(atomic_dec_and_test(&interface->refcnt))
+		interface_finish_destroy(interface);
+}
+
 static struct interface_addr *allocate_interface_addr(struct net_device *interface, 
 						const u8 *lladdr, gfp_t flags)
 {
