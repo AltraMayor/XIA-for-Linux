@@ -66,6 +66,18 @@ struct fib_xid_ether_main {
 	struct fib_xid		xem_common;
 };
 
+static inline int cmp_addr(struct interface_addr *addr, const u8 *str_ha, struct net_device *dev)
+{
+	int c1 = memcmp(addr->ha, str_ha, dev->addr_len);
+	int c2 = addr->dev == dev;
+
+	if (likely(!c1 && c2)) {
+		return 1;
+	}
+
+	return 0;
+}
+
 static void interface_finish_destroy(struct ether_interface *interface)
 {
 	struct net_device *dev = interface->dev;

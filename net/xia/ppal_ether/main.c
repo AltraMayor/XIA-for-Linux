@@ -155,7 +155,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		mether = fxid_mether(cur_fxid);
 
 		//if found the new addr and old addr same
-		if(cmp_addr(mether->neigh_addr,neigh_addr))
+		if(cmp_addr(mether->neigh_addr, neigh_addr->ha, neigh_addr->outgress_interface))
 		{
 			//if don't touch existing or not allowed to replace
 			if ( (nl_flags & NLM_F_EXCL) || !(nl_flags & NLM_F_REPLACE) ) 
