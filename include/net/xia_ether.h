@@ -66,6 +66,20 @@ struct fib_xid_ether_main {
 	struct fib_xid		xem_common;
 };
 
+static void interface_finish_destroy(struct ether_interface *interface)
+{
+	struct net_device *dev = interface->dev;
+#ifdef NET_REFCNT_DEBUG
+	pr_debug("%s: %p=%s\n", __func__, interface, dev->name);
+#endif
+	if (!interface->dead) {
+		pr_err("%s: freeing alive hid_dev %p=%s\n",__func__, interface, dev->name);
+		dump_stack();
+	}
+	dev_put(dev);
+	kfree(interface);
+}
+
 static inline struct ether_interface *ether_interface_get(const struct net_device *dev)
 {
 	struct ether_interface *interface;
