@@ -133,6 +133,24 @@ static void del_interface_addr(struct interface_addr *to_del)
 	ether_interface_put(einterface);
 }
 
+static inline void free_ia_norcu(struct interface_addr *addr)
+{
+	dev_put(addr->outgress_interface);
+	if(addr->mfxid->dead)
+		mether_finish_destroy(addr->fxid);
+	kfree(addr);
+}
+
+static void __free_ia(struct rcu_head *head)
+{
+	free_ia_norcu(container_of(head, struct interface_addr, rcu_head));
+}
+
+static inline void free_interface_addr(struct interface_addr *addr)
+{
+	call_rcu(&addr->rcu_head, __free_ia);
+}
+
 static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
 {
 	return likely(fxid)
