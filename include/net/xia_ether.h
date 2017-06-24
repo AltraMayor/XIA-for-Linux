@@ -45,7 +45,7 @@ struct ether_interface{
 	struct list_head			list_interface_common_addr;
 };
 struct interface_addr{
-	struct fib_xid_ether_main 	mfxid;
+	struct fib_xid_ether_main 	*mfxid;
 	struct list_head 			interface_common_addr;
 	struct ether_interface 		*outgress_interface;
 	struct rcu_head				rcu_head;
@@ -81,6 +81,24 @@ static struct interface_addr *allocate_interface_addr(struct ether_interface *in
 	
 	memmove(ia->ha, lladdr, interface->dev->addr_len);
 	return ha;
+}
+
+static void del_interface_addr(struct interface_addr *to_del)
+{
+	struct ether_interface *einterface;
+	struct fib_xid_ether_main *mfib_xid;
+
+	mfib_xid = to_del->mfxid;
+	mfib_xid->neigh_addr = NULL;
+
+	einterface = ether_interface_get(to_del->outgress_interface);
+
+	spin_lock(&einterface->interface_lock);
+	list_del_rcu(&to_del->interface_common_addr);
+	spin_unlock(&einterface->interface_lock);
+	atomic_dec(&einterface->neigh_cnt);
+
+	ether_interface_put(einterface);
 }
 
 static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
