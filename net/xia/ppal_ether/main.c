@@ -117,10 +117,9 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		return -EINVAL;
 
 	struct ether_interface	*out_interface;
-	struct interface_addr 	*neigh_addr;
+	struct interface_addr 	*neigh_addr,*exist_addr;
 	struct fib_xid_table 	*xtbl;
 	struct fib_xid 			*cur_fxid;
-	const u8 				*lladdr;
 	u32						bucket;
 	struct fib_xid_ether_main *mether;
 	u32						nl_flags;
@@ -132,13 +131,11 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	
 	//assign values to corresponding variables
 	out_interface 	= cfg->xfc_odev->eth_ptr;
-	lladdr 			= cfg->xfc_lladdr;
 	nl_flags 		= cfg->xfc_nlflags;
 	id 				= cfg->xfc_dst->xid_id;
 
 	//allocate a new neighbour interface address structure
-	//TODO: add the mhid to this neigh_addr
-	neigh_addr 		= allocate_interface_addr(out_interface , lladdr , GFP_ATOMIC);
+	neigh_addr 		= allocate_interface_addr(out_interface , cfg->xfc_lladdr , GFP_ATOMIC);
 	// Not enough memory
 	if(!neigh_addr)
 		return -ENOMEM;
@@ -157,11 +154,10 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		//fetch the container main ether xid
 		mether = fxid_mether(cur_fxid);
 
+		//if found the new addr and old addr same
 		if(cmp_addr(mether->neigh_addr,neigh_addr))
 		{
-			//found the new addr and old addr same
-
-			//don't touch if exist or not allowed to replace
+			//if don't touch existing or not allowed to replace
 			if ( (nl_flags & NLM_F_EXCL) || !(nl_flags & NLM_F_REPLACE) ) 
 			{
 				rc = -EEXIST;
@@ -171,12 +167,32 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 			rc = 0;
 			goto unlock_bucket;
 		}
-		//if not allowed to create
-		if (!(nl_flags & NLM_F_CREATE)) {
-			rc = -ENOENT;
-			goto unlock_bucket;
-		}
 
+		//TODO:check if really need to do the below as interface_addr forms fib_xid,
+		//		only MAC address can be changed externally,which trigers change in interface_addr and fib_xid.
+		//		if same fib_xid but not same address then error=-EINVAL
+
+		//if interface_addr field is not NULL
+		if(mether->neigh_addr)
+		{
+			//if not allowed to replace
+			if(!(nl_flags & NLM_F_REPLACE)){
+				rc = -EEXIST;
+				goto unlock_bucket;
+			}
+
+			//Remove the current allocated addr
+			exist_addr = mether->neigh_addr;
+			del_interface_addr(exist_addr);
+			free_interface_addr(exist_addr);
+		}
+		else
+		{
+			if (!(nl_flags & NLM_F_CREATE)) {
+				rc = -ENOENT;
+				goto unlock_bucket;
+			}
+		}
 		//attach to this main table entry
 		rc = attach_neigh_addr_to_fib_entry(mether , neigh_addr);
 		ether_rt_iops->fib_unlock(xtbl, &bucket);
@@ -211,7 +227,6 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	BUG_ON(ether_rt_iops->fxid_add_locked(&bucket, xtbl, &mether->xem_common));
 
 	ether_rt_iops->fib_unlock(xtbl, &bucket);
-	//TODO:add the net to principal ctx
 	fib_defer_dnf(dnf, ether_ctx(ctx)->net, XIDTYPE_ETHER);
 	return 0;
 

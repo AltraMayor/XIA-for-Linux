@@ -41,8 +41,8 @@ struct ether_interface{
 	struct rcu_head				rcu_head;
 
 	atomic_t					neigh_cnt;
-	spinlock_t					neigh_lock;
-	struct list_head			list_interface_common_addr;		
+	spinlock_t					interface_lock;
+	struct list_head			list_interface_common_addr;
 };
 struct interface_addr{
 	struct fib_xid_ether_main 	mfxid;
