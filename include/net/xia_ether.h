@@ -47,7 +47,7 @@ struct ether_interface{
 struct interface_addr{
 	struct fib_xid_ether_main 	*mfxid;
 	struct list_head 			interface_common_addr;
-	struct ether_interface 		*outgress_interface;
+	struct net_device	 		*outgress_interface;
 	struct rcu_head				rcu_head;
 
 	//TODO:check size and alignment
@@ -57,7 +57,7 @@ struct interface_addr{
 struct fib_xid_ether_main {
 	struct xip_dst_anchor	xem_anchor;
 	struct interface_addr 	*neigh_addr;
-	struct ether_interface 	*host_interface;
+	struct net_device	 	*host_interface;
 	int 					xem_dead;
 
 	/* WARNING: @xhm_common is of variable size, and
@@ -66,7 +66,7 @@ struct fib_xid_ether_main {
 	struct fib_xid		xem_common;
 };
 
-static struct interface_addr *allocate_interface_addr(struct ether_interface *interface, 
+static struct interface_addr *allocate_interface_addr(struct net_device *interface, 
 						const u8 *lladdr, gfp_t flags)
 {
 	struct interface_addr *ia = kzalloc(sizeof(*ia), flags);
@@ -76,8 +76,7 @@ static struct interface_addr *allocate_interface_addr(struct ether_interface *in
 	INIT_LIST_HEAD(&ia->interface_common_addr);
 
 	ia->outgress_interface = interface;
-	dev_hold(interface->dev);
-	interface_hold(interface);
+	dev_hold(interface);
 	
 	memmove(ia->ha, lladdr, interface->dev->addr_len);
 	return ha;

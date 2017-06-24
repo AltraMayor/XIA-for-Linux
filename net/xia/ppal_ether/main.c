@@ -116,7 +116,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
 		return -EINVAL;
 
-	struct ether_interface	*out_interface;
+	struct net_device		*out_interface;
 	struct interface_addr 	*neigh_addr,*exist_addr;
 	struct fib_xid_table 	*xtbl;
 	struct fib_xid 			*cur_fxid;
@@ -130,7 +130,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		return -EINVAL;
 	
 	//assign values to corresponding variables
-	out_interface 	= cfg->xfc_odev->eth_ptr;
+	out_interface 	= cfg->xfc_odev;
 	nl_flags 		= cfg->xfc_nlflags;
 	id 				= cfg->xfc_dst->xid_id;
 
