@@ -73,11 +73,17 @@ static void interface_finish_destroy(struct ether_interface *interface)
 	pr_debug("%s: %p=%s\n", __func__, interface, dev->name);
 #endif
 	if (!interface->dead) {
-		pr_err("%s: freeing alive hid_dev %p=%s\n",__func__, interface, dev->name);
+		pr_err("%s: freeing alive ether_interface %p=%s\n",__func__, interface, dev->name);
 		dump_stack();
 	}
 	dev_put(dev);
 	kfree(interface);
+}
+
+static void mether_finish_destroy(struct fib_xid_ether_main *ether_main)
+{
+	BUG_ON(!ether_main->xem_dead);
+	kfree(ether_main);
 }
 
 static inline struct ether_interface *ether_interface_get(const struct net_device *dev)
