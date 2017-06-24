@@ -66,6 +66,19 @@ struct fib_xid_ether_main {
 	struct fib_xid		xem_common;
 };
 
+static inline struct ether_interface *ether_interface_get(const struct net_device *dev)
+{
+	struct ether_interface *interface;
+
+	rcu_read_lock();
+	interface = rcu_dereference(dev->eth_ptr);
+	if(interface)
+		atomic_inc(interface->refcnt);
+	rcu_read_unlock();
+
+	return interface;
+}
+
 static struct interface_addr *allocate_interface_addr(struct net_device *interface, 
 						const u8 *lladdr, gfp_t flags)
 {
