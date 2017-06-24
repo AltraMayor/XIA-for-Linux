@@ -147,6 +147,23 @@ static inline void free_ia_norcu(struct interface_addr *addr)
 	kfree(addr);
 }
 
+static int attach_neigh_addr_to_fib_entry(struct fib_xid_ether_main *mether,struct interface_addr *addr)
+{
+	addr->mfxid = mether;
+	mether->dead = false;
+	mether->neigh_addr = addr;
+
+	struct ether_interface *einterface;
+	einterface = ether_interface_get(addr->dev);
+
+	spin_lock(&einterface->interface_lock);
+	list_add_tail_rcu(&einterface->list_interface_common_addr,&addr->interface_common_addr);
+	spin_unlock(&einterface->interface_lock);
+	atomic_inc(&einterface->neigh_cnt);
+
+	ether_interface_put(einterface);
+}
+
 static void __free_ia(struct rcu_head *head)
 {
 	free_ia_norcu(container_of(head, struct interface_addr, rcu_head));
