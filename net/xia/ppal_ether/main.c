@@ -283,6 +283,21 @@ unlock_bucket:
 	return rc;
 }
 
+void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_ether_main *mether = fxid_ether(fxid);
+	struct interface_addr *pos_ia;
+
+	pos_ia = mether->neigh_addr;
+
+	/* Free hardware address. */
+	del_interface_addr(pos_ia);
+	free_interface_addr(pos_ha);
+
+	mether->xem_dead = true;
+	mether_finish_destroy(mether);
+}
+
 /* ETHER_FIB table internal operations */
 const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
