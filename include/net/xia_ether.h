@@ -9,6 +9,13 @@
 /* Ethernet Principal */
 #define XIDTYPE_ETHER (__cpu_to_be32(0x12))
 
+struct rtnl_xia_ether_addrs {
+	__u16		attr_len;
+	__u8		interface_addr_len;
+	__u8		interface_addr[MAX_ADDR_LEN];
+	int		interface_index;
+};
+
 #ifdef __KERNEL__
 /* only for kernel use */
 
