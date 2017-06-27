@@ -294,7 +294,7 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct fib_xid_ether_main *mether = fxid_mether(fxid);
 	struct xia_xid dst;
 	struct nlattr *ha_attr;
-	struct interface_addr *pos_ia;
+	struct interface_addr *pos_ia = mether->neigh_addr;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
 			NLM_F_MULTI);
@@ -319,6 +319,26 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
 	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
 		goto nla_put_failure;
+
+	/* Hardware addresses. */
+	ha_attr = nla_nest_start(skb, RTA_MULTIPATH);
+	if (!ha_attr)
+		goto nla_put_failure;
+
+	struct rtnl_xia_ether_addrs *rtha = nla_reserve_nohdr(skb, sizeof(*rtha));
+	if (!rtha)
+		goto nla_put_failure;
+
+	rtha->interface_addr_len = pos_ia->dev->addr_len;
+	memmove(rtha->interface_addr, pos_ia->ha, rtha->interface_addr_len);
+	rtha->interface_index = pos_ia->dev->ifindex;
+	
+	/* No attributes. */
+
+	/* length of rtnetlink header + attributes */
+	rtha->attr_len = nlmsg_get_pos(skb) - (void *)rtha;
+
+	nla_nest_end(skb, ha_attr);
 
 	nlmsg_end(skb, nlh);
 	return 0;
