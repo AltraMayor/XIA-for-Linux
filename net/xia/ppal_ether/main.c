@@ -4,6 +4,9 @@
 #include <net/xia_vxidty.h>
 #include <net/xia_ether.h>
 
+/* ETHER_FIB table internal operations */
+const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
+
 /* ETHER local table operations */
 static int local_newroute(struct xip_ppal_ctx *ctx,
 			  struct fib_xid_table *xtbl,
@@ -363,9 +366,6 @@ void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	mether_finish_destroy(mether);
 }
 
-/* ETHER_FIB table internal operations */
-const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
-
 /* ETHER_FIB all table external operations */
 const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
@@ -384,6 +384,44 @@ const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
 };
 
 /* routing process per principal struct */
+
+static int ether_deliver(struct xip_route_proc *rproc, struct net *net,
+		       const u8 *xid, struct xia_xid *next_xid,
+		       int anchor_index, struct xip_dst *xdst)
+{
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid *fxid;
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, ether_vxt);
+
+	fxid = ether_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
+	if (!fxid)
+		goto out;
+
+	switch (fxid->fx_table_id) 
+	{
+		case XRTABLE_LOCAL_INDEX: {
+			struct fib_xid_ether_local *lether = fxid_lether(fxid);
+
+			xdst->passthrough_action = XDA_DIG;
+			xdst->sink_action = XDA_ERROR; /* An HID cannot be a sink. */
+			xdst_attach_to_anchor(xdst, anchor_index, &lether->xel_anchor);
+			rcu_read_unlock();
+			return XRP_ACT_FORWARD;
+		}
+
+		case XRTABLE_MAIN_INDEX: {
+		}
+	}
+	rcu_read_unlock();
+	BUG();
+
+out:
+	xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
+	rcu_read_unlock();
+	return XRP_ACT_NEXT_EDGE;
+}
 
 static struct xip_route_proc ether_rt_proc __read_mostly = {
 	.xrp_ppal_type = XIDTYPE_ETHER,
