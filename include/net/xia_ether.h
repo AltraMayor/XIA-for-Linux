@@ -51,6 +51,12 @@ struct ether_interface{
 	spinlock_t					interface_lock;
 	struct list_head			list_interface_common_addr;
 };
+
+static inline void einterface_hold(struct ether_interface *eint)
+{
+	atomic_inc(&eint->refcnt);
+}
+
 struct interface_addr{
 	struct fib_xid_ether_main 	*mfxid;
 	struct list_head 			interface_common_addr;
@@ -212,6 +218,11 @@ static inline struct xip_ether_ctx *ctx_ether(struct xip_ppal_ctx *ctx)
 	return likely(ctx)
 		? container_of(ctx, struct xip_ether_ctx, ctx)
 		: NULL;
+}
+
+static inline struct ether_interface *__ether_get_rtnl(const struct net_device *dev)
+{
+	return rtnl_dereference(dev->ether_ptr);
 }
 
 extern int ether_vxt;	//TODO:might not be necessary later

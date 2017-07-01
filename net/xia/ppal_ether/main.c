@@ -428,6 +428,154 @@ static struct xip_route_proc ether_rt_proc __read_mostly = {
 	.deliver = ether_deliver,
 };
 
+/* Interface intialization and exit functions */
+static struct ether_interface *eint_init(struct net_device *dev)
+{
+	struct ether_interface *eint;
+
+	ASSERT_RTNL();
+
+	eint = kzalloc(sizeof(*eint), GFP_KERNEL);
+	if (!eint)
+		return NULL;
+
+	eint->dead = 0;
+	eint->dev = dev;
+	dev_hold(dev);
+
+	spin_lock_init(&eint->interface_lock);
+	INIT_LIST_HEAD(&eint->list_interface_common_addr);
+
+	einterface_hold(eint);
+	RCU_INIT_POINTER(dev->ether_ptr, eint);
+	return eint;
+}
+
+static void del_neighs_by_common_interface(struct list_head *head)
+{
+	struct interface_addr *pos_ia, *nxt;
+
+	list_for_each_entry_safe(pos_ia, nxt, head, interface_common_addr)
+	{
+		del_interface_addr(pos_ia);
+		free_interface_addr(pos_ia);
+	}
+}
+
+/* Caller must hold RTNL lock, and makes sure that nobody adds entries
+ * in hdev->neighs while it's running.
+ */
+static void free_neighs_by_interface(struct ether_interface *eint)
+{
+	struct net_device *dev;
+	struct net *net;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *xtbl;
+
+	ASSERT_RTNL();
+
+	dev = eint->dev;
+	net = dev_net(dev);
+	ctx = xip_find_my_ppal_ctx_vxt(net, ether_vxt);
+	xtbl = ctx->xpc_xtbl;
+
+	while (1) {
+		struct interface_addr *ha;
+		u8 xid[XIA_XID_MAX];
+		struct fib_xid *fxid;
+		u32 bucket;
+
+		/* Obtain xid of the first entry in @hdev->neighs.
+		 *
+		 * We use rcu_read_lock() here to allow one to remove
+		 * entries in parallel.
+		 */
+		rcu_read_lock();
+		ha = list_first_or_null_rcu(&eint->neighs, struct interface_addr,
+					    interface_common_addr);
+		if (!ha) {
+			rcu_read_unlock();
+			break;
+		}
+		memmove(xid, ha->mfxid->xem_common.fx_xid, XIA_XID_MAX);
+		rcu_read_unlock();
+
+		/* We don't lock eint->interface_lock to avoid deadlock. */
+		fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, xid);
+		if (fxid && fxid->fx_table_id == XRTABLE_MAIN_INDEX) 
+		{
+			struct fib_xid_ether_main *mether = fxid_mether(fxid);
+
+			del_neighs_by_common_interface(&mhid->xhm_haddrs, dev);
+			//TODO:add what to do with main entry when interface addr deleted.
+			//     suggestion to remove the fxid entry.
+		}
+		ether_rt_iops->fib_unlock(xtbl, &bucket);
+	}
+}
+
+static void ether_interface_rcu_put(struct rcu_head *head)
+{
+	struct ether_interface *eint = container_of(head, struct ether_interface, rcu_head);
+	ether_interface_put(eint);
+}
+
+static void eint_destroy(struct ether_interface *eint)
+{
+	ASSERT_RTNL();
+	eint->dead = 1;
+
+	//TODO:check
+	free_neighs_by_interface(eint);
+
+	RCU_INIT_POINTER(eint->dev->ether_ptr, NULL);
+	call_rcu(&eint->rcu_head, ether_interface_rcu_put);
+}
+
+static int ether_interface_event(struct notifier_block *nb,
+			    unsigned long event, void *ptr)
+{
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+	struct ether_interface *eif;
+
+	ASSERT_RTNL();
+	eint = __ether_get_rtnl(dev);
+
+	switch (event) {
+	case NETDEV_REGISTER:
+		BUG_ON(eint);
+		eint = eint_init(dev);
+		if (!eint)
+			return notifier_from_errno(-ENOMEM);
+		break;
+	case NETDEV_UNREGISTER:
+		eint_destroy(eint);
+		break;
+	case NETDEV_DOWN:
+		free_neighs_by_interface(eint);
+		break;
+	case NETDEV_CHANGEADDR:
+		//TODO:if needed to locate the local entry and change its fxid
+		//TODO:add part to modify the cached header part
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block hid_netdev_notifier __read_mostly = {
+	.notifier_call = ether_interface_event,
+};
+
+int register_dev(void)
+{
+	return register_netdevice_notifier(&interface_notifier);
+}
+
+void unregister_dev(void)
+{
+	unregister_netdevice_notifier(&interface_notifier);
+}
+
 /* Network namespace subsystem registration*/
 
 static struct xip_ether_ctx *create_ether_ctx(struct net *net)
@@ -499,6 +647,10 @@ static int __init xia_ether_init(void)
 	if (rc)
 		goto vxt;
 
+	rc = register_dev();
+	if (rc)
+		goto devicereg;
+
 	rc = xip_add_router(&ether_rt_proc);
 	if (rc)
 		goto net;
@@ -512,6 +664,8 @@ static int __init xia_ether_init(void)
 
 route:
 	xip_del_router(&ether_rt_proc);
+devicereg:
+	unregister_dev();
 net:
 	xia_unregister_pernet_subsys(&ether_net_ops);
 vxt:
