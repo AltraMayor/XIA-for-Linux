@@ -412,6 +412,29 @@ static int ether_deliver(struct xip_route_proc *rproc, struct net *net,
 		}
 
 		case XRTABLE_MAIN_INDEX: {
+			struct fib_xid_ether_main *mether = fxid_mether(fxid);
+			struct interface_addr *naddr = rcu_dereference(mether->neigh_addr);
+
+			if (unlikely(!naddr)) {
+				goto out;
+			}
+
+			xdst->passthrough_action = XDA_METHOD;
+			xdst->sink_action = XDA_METHOD;
+			xdst->info = naddr;
+			BUG_ON(xdst->dst.dev);
+			xdst->dst.dev = naddr->outgress_interface;
+			dev_hold(xdst->dst.dev);
+			if (xdst->input) {
+				xdst->dst.input = main_input_input;
+				xdst->dst.output = main_input_output;
+			} else {
+				xdst->dst.input = main_output_input;
+				xdst->dst.output = main_output_output;
+			}
+			xdst_attach_to_anchor(xdst, anchor_index, &mether->xem_anchor);
+			rcu_read_unlock();
+			return XRP_ACT_FORWARD;
 		}
 	}
 	rcu_read_unlock();

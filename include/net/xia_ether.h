@@ -156,6 +156,12 @@ static void del_interface_addr(struct interface_addr *to_del)
 
 	einterface = ether_interface_get(to_del->outgress_interface);
 
+	/*
+	* When using list_del_rcu the caller must take whatever precautions are necessary
+ 	* (such as holding appropriate locks) to avoid racing
+ 	* with another list-mutation primitive, such as list_add_tail_rcu()
+ 	* or list_del_rcu(), running on this same list.
+ 	*/
 	spin_lock(&einterface->interface_lock);
 	list_del_rcu(&to_del->interface_common_addr);
 	spin_unlock(&einterface->interface_lock);
@@ -181,6 +187,12 @@ static int attach_neigh_addr_to_fib_entry(struct fib_xid_ether_main *mether,stru
 	struct ether_interface *einterface;
 	einterface = ether_interface_get(addr->dev);
 
+	/*
+	* When using list_add_tail_rcu the caller must take whatever precautions are necessary
+ 	* (such as holding appropriate locks) to avoid racing
+ 	* with another list-mutation primitive, such as list_add_tail_rcu()
+ 	* or list_del_rcu(), running on this same list.
+ 	*/
 	spin_lock(&einterface->interface_lock);
 	list_add_tail_rcu(&einterface->list_interface_common_addr,&addr->interface_common_addr);
 	spin_unlock(&einterface->interface_lock);
