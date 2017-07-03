@@ -385,6 +385,58 @@ const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
 
 /* routing process per principal struct */
 
+static inline struct interface_addr *xdst_naddr(struct xip_dst *xdst)
+{
+	return xdst->info;
+}
+
+static int main_input_input(struct sk_buff *skb)
+{
+	struct xiphdr *xiph;
+	struct xip_dst *xdst;
+	struct interface_addr *naddr;
+
+	/* XXX We should test that forwarding is enable per struct net.
+	 * See example in net/ipv6/ip6_output.c:ip6_forward.
+	 * TODO:ask why needed to test coz already path has been decided
+	 *      and we are filling in the header over here.
+	 */
+
+	if (skb->pkt_type != PACKET_HOST)
+		goto drop;
+
+	xiph = xip_hdr(skb);
+	if (!xiph->hop_limit) {
+		/* XXX Is this warning necessary? If so,
+		 * shouldn't it report more?
+		 */
+		//TODO:ask if send a packet back to the source and update the dest as unreachable?
+		net_warn_ratelimited("%s: hop limit reached\n", __func__);
+		goto drop;
+	}
+
+	xdst = skb_xdst(skb);
+
+	skb = xip_trim_packet_if_needed(skb, dst_mtu(&xdst->dst));
+	if (unlikely(!skb))
+		return NET_RX_DROP;
+
+	/* We are about to mangle packet. Copy it! */
+	naddr = xdst_naddr(xdst);
+	if (skb_cow(skb, LL_RESERVED_SPACE(naddr->dev) + xdst->dst.header_len))
+		goto drop;
+	xiph = xip_hdr(skb);
+
+	/* Decrease ttl after skb cow done. */
+	xiph->hop_limit--;
+
+	return dst_output(xdst_net(xdst), skb->sk, skb);
+
+drop:
+	kfree_skb(skb);
+	return NET_RX_DROP;
+}
+
 static int ether_deliver(struct xip_route_proc *rproc, struct net *net,
 		       const u8 *xid, struct xia_xid *next_xid,
 		       int anchor_index, struct xip_dst *xdst)

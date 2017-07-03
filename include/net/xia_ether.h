@@ -237,7 +237,7 @@ static inline struct ether_interface *__ether_get_rtnl(const struct net_device *
 	return rtnl_dereference(dev->ether_ptr);
 }
 
-extern int ether_vxt;	//TODO:might not be necessary later
+extern int ether_vxt;
 
 #endif /* __KERNEL__ */
 #endif		/* _NET_XIA_ETHER_H */
