@@ -63,7 +63,6 @@ struct interface_addr{
 	struct net_device	 		*outgress_interface;
 	struct rcu_head				rcu_head;
 
-	//TODO:check size and alignment
 	u8 		ha[MAX_ADDR_LEN];
 };
 

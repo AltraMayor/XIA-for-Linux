@@ -526,17 +526,6 @@ static struct ether_interface *eint_init(struct net_device *dev)
 	RCU_INIT_POINTER(dev->ether_ptr, eint);
 	return eint;
 }
-//TODO:change to a single deletion of a interface_addr
-static void del_neighs_by_common_interface(struct list_head *head)
-{
-	struct interface_addr *pos_ia, *nxt;
-
-	list_for_each_entry_safe(pos_ia, nxt, head, interface_common_addr)
-	{
-		del_interface_addr(pos_ia);
-		free_interface_addr(pos_ia);
-	}
-}
 
 /* Caller must hold RTNL lock, and makes sure that nobody adds entries
  * in hdev->neighs while it's running.
@@ -580,9 +569,8 @@ static void free_neighs_by_interface(struct ether_interface *eint)
 		fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, xid);
 		if (fxid && fxid->fx_table_id == XRTABLE_MAIN_INDEX) 
 		{
-			struct fib_xid_ether_main *mether = fxid_mether(fxid);
-
-			del_neighs_by_common_interface(&mhid->xhm_haddrs, dev);
+			del_interface_addr(ha);
+			free_interface_addr(ha);
 			//TODO:add what to do with main entry when interface addr deleted.
 			//     suggestion to remove the fxid entry.
 		}
@@ -601,7 +589,6 @@ static void eint_destroy(struct ether_interface *eint)
 	ASSERT_RTNL();
 	eint->dead = 1;
 
-	//TODO:check
 	free_neighs_by_interface(eint);
 
 	RCU_INIT_POINTER(eint->dev->ether_ptr, NULL);
@@ -755,10 +742,11 @@ static void __exit xia_ether_exit(void)
 {
 	ppal_del_map(XIDTYPE_ETHER);
 	xip_del_router(&ether_rt_proc);
+	unregister_dev();
 	xia_unregister_pernet_subsys(&ether_net_ops);
 
 	rcu_barrier();
-	/* flush_scheduled_work(); */
+	flush_scheduled_work();
 
 	BUG_ON(vxt_unregister_xidty(XIDTYPE_ETHER));
 	pr_alert("XIA Principal ETHER UNloaded\n");
