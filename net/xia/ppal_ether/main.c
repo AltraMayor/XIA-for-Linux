@@ -353,6 +353,7 @@ nla_put_failure:
 
 void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
+	//TODO:add if fxid belongs to main table in main_free_ether
 	struct fib_xid_ether_main *mether = fxid_ether(fxid);
 	struct interface_addr *pos_ia;
 
@@ -525,7 +526,7 @@ static struct ether_interface *eint_init(struct net_device *dev)
 	RCU_INIT_POINTER(dev->ether_ptr, eint);
 	return eint;
 }
-
+//TODO:change to a single deletion of a interface_addr
 static void del_neighs_by_common_interface(struct list_head *head)
 {
 	struct interface_addr *pos_ia, *nxt;
