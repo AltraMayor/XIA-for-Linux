@@ -353,7 +353,6 @@ nla_put_failure:
 
 void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	//TODO:add if fxid belongs to main table in main_free_ether
 	struct fib_xid_ether_main *mether = fxid_ether(fxid);
 	struct interface_addr *pos_ia;
 
