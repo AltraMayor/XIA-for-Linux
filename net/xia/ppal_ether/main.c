@@ -433,6 +433,42 @@ drop:
 	return NET_RX_DROP;
 }
 
+static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+	struct hrdw_addr *ha = skb_ha(skb);
+	struct net_device *dev;
+	unsigned int hh_len;
+	int rc;
+
+	skb = xip_trim_packet_if_needed(skb, xip_skb_dst_mtu(skb));
+	if (!skb)
+		return NET_RX_DROP;
+
+	dev = ha->dev;
+	skb->dev = dev;
+	skb->protocol = __cpu_to_be16(ETH_P_XIP);
+
+	/* Be paranoid, rather than too clever. */
+	hh_len = LL_RESERVED_SPACE(dev);
+	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) {
+		struct sk_buff *skb2;
+
+		skb2 = skb_realloc_headroom(skb, hh_len);
+		if (!skb2) {
+			rc = -ENOMEM;
+			goto drop;
+		}
+		if (skb->sk)
+			skb_set_owner_w(skb2, skb->sk);
+		kfree_skb(skb);
+		skb = skb2;
+	}
+
+drop:
+	kfree_skb(skb);
+	return rc;
+}
+
 static int ether_deliver(struct xip_route_proc *rproc, struct net *net,
 		       const u8 *xid, struct xia_xid *next_xid,
 		       int anchor_index, struct xip_dst *xdst)
