@@ -433,9 +433,19 @@ drop:
 	return NET_RX_DROP;
 }
 
+static inline struct interface_addr *skb_naddr(struct sk_buff *skb)
+{
+	return xdst_naddr(skb_xdst(skb));
+}
+
+static inline int xip_skb_dst_mtu(struct sk_buff *skb)
+{
+	return dst_mtu(skb_dst(skb));
+}
+
 static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
-	struct hrdw_addr *ha = skb_ha(skb);
+	struct interface_addr *naddr = skb_naddr(skb);
 	struct net_device *dev;
 	unsigned int hh_len;
 	int rc;
