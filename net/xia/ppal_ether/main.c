@@ -215,7 +215,6 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		goto unlock_bucket;
 	}
 
-	//TODO: intialize the anchors
 	mether = ether_rt_iops->fxid_ppal_alloc(sizeof(*mether),GFP_ATOMIC);
 	if(!mether){
 		rc = -ENOMEM;
@@ -280,7 +279,6 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 	del_interface_addr(neigh_addr);
 	free_interface_addr(neigh_addr);
 
-	//TODO:remove main ether entry
 	ether_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
 	fxid_free(xtbl, fxid);
 
