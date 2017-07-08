@@ -281,7 +281,9 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 	free_interface_addr(neigh_addr);
 
 	//TODO:remove main ether entry
-	
+	ether_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
+	fxid_free(xtbl, fxid);
+
 unlock_bucket:
 	ether_rt_iops->fib_unlock(xtbl, &bucket);
 	return rc;
@@ -352,18 +354,12 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+/* call using fxid_free only */
 void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	struct fib_xid_ether_main *mether = fxid_ether(fxid);
-	struct interface_addr *pos_ia;
 
-	pos_ia = mether->neigh_addr;
-
-	/* Free hardware address. */
-	del_interface_addr(pos_ia);
-	free_interface_addr(pos_ha);
-
-	xdst_free_anchor(&ha->anchor);
+	xdst_free_anchor(&mether->xem_anchor);
 	mether->xem_dead = true;
 	mether_finish_destroy(mether);
 }
