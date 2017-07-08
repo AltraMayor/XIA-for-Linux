@@ -443,6 +443,16 @@ static inline int xip_skb_dst_mtu(struct sk_buff *skb)
 	return dst_mtu(skb_dst(skb));
 }
 
+static inline int interface_neigh_output(struct fib_xid_ether_main *mfxid, struct sk_buff *skb)
+{
+	const struct hh_cache *hh = &mfxid->cached_hdr;
+
+	if (hh->hh_len)
+		return neighinterface_hh_output(hh, skb);
+	else
+		return mfxid->output(mfxid, skb);
+}
+
 static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct interface_addr *naddr = skb_naddr(skb);
@@ -454,7 +464,7 @@ static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *s
 	if (!skb)
 		return NET_RX_DROP;
 
-	dev = ha->dev;
+	dev = naddr->dev;
 	skb->dev = dev;
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 
@@ -474,6 +484,7 @@ static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *s
 		skb = skb2;
 	}
 
+	return interface_neigh_output(naddr->mfxid, skb);
 drop:
 	kfree_skb(skb);
 	return rc;

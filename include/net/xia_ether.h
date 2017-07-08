@@ -72,7 +72,7 @@ struct fib_xid_ether_main {
 	struct interface_addr 	*neigh_addr;
 	struct net_device	 	*host_interface;
 	int 					xem_dead;
-	struct hh_cache			*cached_hdr;
+	struct hh_cache			cached_hdr;
 
 	/* WARNING: @xhm_common is of variable size, and
 	 * MUST be the last member of the struct.
