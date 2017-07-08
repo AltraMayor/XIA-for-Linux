@@ -223,6 +223,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	}
 	fxid_init(xtbl, &mether->xem_common, id, XRTABLE_MAIN_INDEX, 0);
 	mether->xem_dead = false;
+	xdst_init_anchor(&mether->xem_anchor);
 	
 	rc = attach_neigh_addr_to_fib_entry(mether , neigh_addr);
 	BUG_ON(rc);
@@ -280,7 +281,7 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 	free_interface_addr(neigh_addr);
 
 	//TODO:remove main ether entry
-
+	
 unlock_bucket:
 	ether_rt_iops->fib_unlock(xtbl, &bucket);
 	return rc;
@@ -362,6 +363,7 @@ void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	del_interface_addr(pos_ia);
 	free_interface_addr(pos_ha);
 
+	xdst_free_anchor(&ha->anchor);
 	mether->xem_dead = true;
 	mether_finish_destroy(mether);
 }
