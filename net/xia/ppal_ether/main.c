@@ -443,6 +443,29 @@ static inline int xip_skb_dst_mtu(struct sk_buff *skb)
 	return dst_mtu(skb_dst(skb));
 }
 
+static inline int neighinterface_hh_output(const struct hh_cache *hh, struct sk_buff *skb)
+{
+	unsigned int seq;
+	int hh_len;
+
+	do {
+		seq = read_seqbegin(&hh->hh_lock);
+		hh_len = hh->hh_len;
+		if (likely(hh_len <= HH_DATA_MOD)) 
+		{
+			memcpy(skb->data - HH_DATA_MOD, hh->hh_data, HH_DATA_MOD);
+		} 
+		else 
+		{
+			int hh_alen = HH_DATA_ALIGN(hh_len);
+			memcpy(skb->data - hh_alen, hh->hh_data, hh_alen);
+		}
+	} while (read_seqretry(&hh->hh_lock, seq));
+
+	skb_push(skb, hh_len);
+	return dev_queue_xmit(skb);
+}
+
 static inline int interface_neigh_output(struct fib_xid_ether_main *mfxid, struct sk_buff *skb)
 {
 	const struct hh_cache *hh = &mfxid->cached_hdr;
