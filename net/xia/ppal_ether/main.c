@@ -594,7 +594,7 @@ static int ether_interface_event(struct notifier_block *nb,
 			    unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
-	struct ether_interface *eif;
+	struct ether_interface *eint;
 
 	ASSERT_RTNL();
 	eint = __ether_get_rtnl(dev);
