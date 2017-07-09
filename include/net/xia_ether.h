@@ -80,6 +80,18 @@ const struct header_ops xia_ether_hdr_ops ____cacheline_aligned = {
 	.cache_update	= eth_header_cache_update,
 };
 
+static void mfxid_update_hhs(struct fib_xid_ether_main *mfxid)
+{
+	struct hh_cache *hh;
+	hh = &mfxid->cached_hdr;
+
+	if (hh->hh_len) {
+		write_seqlock_bh(&hh->hh_lock);
+		update(hh, mfxid->host_interface, mfxid->neigh_addr->ha);
+		write_sequnlock_bh(&hh->hh_lock);
+	}
+}
+
 static inline void einterface_hold(struct ether_interface *eint)
 {
 	atomic_inc(&eint->refcnt);
