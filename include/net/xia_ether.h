@@ -54,6 +54,25 @@ struct ether_interface{
 	struct list_head			list_interface_common_addr;
 };
 
+int xia_ether_header_cache(const struct fib_xid_ether_main *mfxid, struct hh_cache *hh, __be16 type)
+{
+	struct ethhdr *eth;
+	const struct net_device *dev = mfxid->host_interface;
+
+	eth = (struct ethhdr *)
+	    (((u8 *) hh->hh_data) + (HH_DATA_OFF(sizeof(*eth))));
+
+	//TODO:check
+	if (type != htons(ETH_P_XIP))
+		return -1;
+
+	eth->h_proto = type;
+	memcpy(eth->h_source, dev->dev_addr, ETH_ALEN);
+	memcpy(eth->h_dest, mfxid->neigh_addr->ha, ETH_ALEN);
+	hh->hh_len = ETH_HLEN;
+	return 0;
+}
+
 const struct header_ops xia_ether_hdr_ops ____cacheline_aligned = {
 	.create		= eth_header,
 	.parse		= eth_header_parse,
