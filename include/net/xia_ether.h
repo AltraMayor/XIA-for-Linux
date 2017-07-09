@@ -3,6 +3,7 @@
 /* prevents double declarations */
 
 #include <linux/netdevice.h>
+#include <linux/etherdevice.h>
 #include <net/xia_list_fib.h>
 #include <linux/netlink.h>
 
@@ -51,6 +52,13 @@ struct ether_interface{
 	spinlock_t					interface_lock;
 	struct hh_cache				*base_template;
 	struct list_head			list_interface_common_addr;
+};
+
+const struct header_ops xia_ether_hdr_ops ____cacheline_aligned = {
+	.create		= eth_header,
+	.parse		= eth_header_parse,
+	.cache		= xia_ether_header_cache,
+	.cache_update	= eth_header_cache_update,
 };
 
 static inline void einterface_hold(struct ether_interface *eint)
