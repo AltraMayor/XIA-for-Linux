@@ -227,6 +227,8 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	rc = attach_neigh_addr_to_fib_entry(mether , neigh_addr);
 	BUG_ON(rc);
 
+	mether->output = mfxid_blackhole;
+
 	rwlock_init(&mether->chdr_lock);
 	seqlock_init(&mether->cached_hdr.hh_lock);
 
