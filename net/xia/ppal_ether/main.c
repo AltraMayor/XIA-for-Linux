@@ -282,6 +282,9 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 		goto unlock_bucket;
 	}
 
+	mether->cached_hdr.hh_len = 0;
+	mether->output = mfxid_blackhole;
+
 	neigh_addr = mether->neigh_addr;
 	del_interface_addr(neigh_addr);
 	free_interface_addr(neigh_addr);

@@ -4,6 +4,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/err.h>
 #include <net/xia_list_fib.h>
 #include <linux/netlink.h>
 //TODO:add header file for read/write lock
