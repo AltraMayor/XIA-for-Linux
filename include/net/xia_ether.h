@@ -112,6 +112,7 @@ struct fib_xid_ether_main {
 	struct net_device	 	*host_interface;
 	int 					xem_dead;
 	struct hh_cache			cached_hdr;
+	rwlock_t				chdr_lock;
 
 	/* WARNING: @xhm_common is of variable size, and
 	 * MUST be the last member of the struct.
