@@ -98,6 +98,12 @@ static inline void einterface_hold(struct ether_interface *eint)
 	atomic_inc(&eint->refcnt);
 }
 
+static int mfxid_blackhole(struct fib_xid_ether_main *mfxid, struct sk_buff *skb)
+{
+	kfree_skb(skb);
+	return -ENETDOWN;
+}
+
 struct interface_addr{
 	struct fib_xid_ether_main 	*mfxid;
 	struct list_head 			interface_common_addr;
@@ -114,6 +120,7 @@ struct fib_xid_ether_main {
 	int 					xem_dead;
 	struct hh_cache			cached_hdr;
 	rwlock_t				chdr_lock;
+	int						(*output)(struct fib_xid_ether_main *, struct sk_buff *);
 
 	/* WARNING: @xhm_common is of variable size, and
 	 * MUST be the last member of the struct.
