@@ -120,6 +120,23 @@ struct fib_xid_ether_main {
 	struct fib_xid		xem_common;
 };
 
+static void mfxid_hh_init(struct fib_xid_ether_main *mfxid)
+{
+	struct net_device *dev = mfxid->host_interface;
+	__be16 prot = htons(ETH_P_XIP);
+	struct hh_cache	*hh = &mfxid->cached_hdr;
+
+	write_lock_bh(&mfxid->chdr_lock);
+	/* Only one thread can come in here and initialize the
+	 * hh_cache entry and must prevent all the others from
+	 * accessing the same untill it is initialized.
+	 */
+	if (!hh->hh_len)
+		xia_ether_hdr_ops->cache(mfxid, hh, prot);
+
+	write_unlock_bh(&mfxid->chdr_lock);
+}
+
 static inline int cmp_addr(struct interface_addr *addr, const u8 *str_ha, struct net_device *dev)
 {
 	int c1 = memcmp(addr->ha, str_ha, dev->addr_len);
