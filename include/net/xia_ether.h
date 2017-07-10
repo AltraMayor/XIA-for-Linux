@@ -52,7 +52,7 @@ struct ether_interface{
 
 	atomic_t					neigh_cnt;
 	spinlock_t					interface_lock;
-	struct hh_cache				*base_template;
+	struct hh_cache				*chdr_head;
 	struct list_head			list_interface_common_addr;
 };
 
