@@ -665,6 +665,18 @@ static void free_neighs_by_interface(struct ether_interface *eint)
 	}
 }
 
+static void update_neighs_by_interface(struct ether_interface *eint)
+{
+	struct interface_addr *ha;
+	ASSERT_RTNL();
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ha, eint->list_interface_common_addr, interface_common_addr) {
+		mfxid_update_hhs(ha->mfxid,0);
+	}
+	rcu_read_unlock();
+}
+
 static void ether_interface_rcu_put(struct rcu_head *head)
 {
 	struct ether_interface *eint = container_of(head, struct ether_interface, rcu_head);
@@ -709,7 +721,7 @@ static int ether_interface_event(struct notifier_block *nb,
 		break;
 	case NETDEV_CHANGEADDR:
 		//TODO:if needed to locate the local entry and change its fxid
-		//TODO:add part to modify the cached header part
+		update_neighs_by_interface(eint);
 		break;
 	}
 	return NOTIFY_DONE;
