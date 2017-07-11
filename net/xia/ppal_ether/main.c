@@ -705,22 +705,18 @@ static int ether_interface_event(struct notifier_block *nb,
 
 	switch (event) {
 	case NETDEV_REGISTER:
-		//TODO:add part to add a lfxid
 		BUG_ON(eint);
 		eint = eint_init(dev);
 		if (!eint)
 			return notifier_from_errno(-ENOMEM);
 		break;
 	case NETDEV_UNREGISTER:
-		//TODO:del lfxid
 		eint_destroy(eint);
 		break;
 	case NETDEV_DOWN:
-		//TODO:del lfxid
 		free_neighs_by_interface(eint);
 		break;
 	case NETDEV_CHANGEADDR:
-		//TODO:if needed to locate the local entry and change its fxid
 		update_neighs_by_interface(eint);
 		break;
 	}
