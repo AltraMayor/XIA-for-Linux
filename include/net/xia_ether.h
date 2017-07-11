@@ -75,21 +75,34 @@ int xia_ether_header_cache(const struct fib_xid_ether_main *mfxid, struct hh_cac
 	return 0;
 }
 
+void eth_header_cache_update(struct hh_cache *hh,
+			     const struct net_device *dev,
+			     const unsigned char *haddr,
+			     const int type)
+{
+	if(type)
+		memcpy(((u8 *) hh->hh_data) + HH_DATA_OFF(sizeof(struct ethhdr)),
+			haddr, ETH_ALEN);
+	else
+		memcpy(((u8 *) hh->hh_data) + HH_DATA_OFF(sizeof(struct ethhdr) + ETH_ALEN),
+			dev->dev_addr, ETH_ALEN);
+}
+
 const struct header_ops xia_ether_hdr_ops ____cacheline_aligned = {
 	.create		= eth_header,
 	.parse		= eth_header_parse,
 	.cache		= xia_ether_header_cache,
-	.cache_update	= eth_header_cache_update,
+	.cache_update	= xia_ether_header_cache_update,
 };
 
-static void mfxid_update_hhs(struct fib_xid_ether_main *mfxid)
+static void mfxid_update_hhs(struct fib_xid_ether_main *mfxid, const int type)
 {
 	struct hh_cache *hh;
 	hh = &mfxid->cached_hdr;
 
 	if (hh->hh_len) {
 		write_seqlock_bh(&hh->hh_lock);
-		update(hh, mfxid->host_interface, mfxid->neigh_addr->ha);
+		xia_ether_hdr_ops->cache_update(hh, mfxid->host_interface, mfxid->neigh_addr->ha, type);
 		write_sequnlock_bh(&hh->hh_lock);
 	}
 }
