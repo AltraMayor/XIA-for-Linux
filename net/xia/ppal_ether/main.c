@@ -781,6 +781,14 @@ out:
 	return rc;
 }
 
+static void __net_exit ether_net_exit(struct net *net)
+{
+	/* synchronize_rcu() called inside xip_del_ppal_ctx */
+	struct xip_ether_ctx *ether_ctx =
+		ctx_ether(xip_del_ppal_ctx(net, XIDTYPE_ETHER));
+	free_ether_ctx(ether_ctx);
+}
+
 static struct pernet_operations ether_net_ops __read_mostly = {
 	.init = ether_net_init,
 	.exit = ether_net_exit,
