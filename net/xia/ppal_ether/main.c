@@ -658,8 +658,9 @@ static void free_neighs_by_interface(struct ether_interface *eint)
 		{
 			del_interface_addr(ha);
 			free_interface_addr(ha);
-			//TODO:add what to do with main entry when interface addr deleted.
-			//     suggestion to remove the fxid entry.
+			
+			ether_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
+			fxid_free(xtbl, fxid);
 		}
 		ether_rt_iops->fib_unlock(xtbl, &bucket);
 	}
