@@ -171,10 +171,6 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 			goto unlock_bucket;
 		}
 
-		//TODO:check if really need to do the below as interface_addr forms fib_xid,
-		//		only MAC address can be changed externally,which trigers change in interface_addr and fib_xid.
-		//		if same fib_xid but not same address then error=-EINVAL
-
 		//if interface_addr field is not NULL
 		if(mether->neigh_addr)
 		{
@@ -418,7 +414,6 @@ static int main_input_input(struct sk_buff *skb)
 		/* XXX Is this warning necessary? If so,
 		 * shouldn't it report more?
 		 */
-		//TODO:ask if send a packet back to the source and update the dest as unreachable?
 		net_warn_ratelimited("%s: hop limit reached\n", __func__);
 		goto drop;
 	}
@@ -658,7 +653,7 @@ static void free_neighs_by_interface(struct ether_interface *eint)
 		{
 			del_interface_addr(ha);
 			free_interface_addr(ha);
-			
+
 			ether_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
 			fxid_free(xtbl, fxid);
 		}
