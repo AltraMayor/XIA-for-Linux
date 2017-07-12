@@ -600,6 +600,7 @@ static struct ether_interface *eint_init(struct net_device *dev)
 	eint->dead = 0;
 	eint->dev = dev;
 	dev_hold(dev);
+	atomic_set(&eint->refcnt, 0);
 
 	spin_lock_init(&eint->interface_lock);
 	INIT_LIST_HEAD(&eint->list_interface_common_addr);
