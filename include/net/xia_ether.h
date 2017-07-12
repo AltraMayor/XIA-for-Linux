@@ -254,8 +254,6 @@ static void del_interface_addr(struct interface_addr *to_del)
 static inline void free_ia_norcu(struct interface_addr *addr)
 {
 	dev_put(addr->outgress_interface);
-	if(addr->mfxid->dead)
-		mether_finish_destroy(addr->fxid);
 	kfree(addr);
 }
 
