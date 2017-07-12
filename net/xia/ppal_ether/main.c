@@ -670,7 +670,8 @@ static void update_neighs_by_interface(struct ether_interface *eint)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(ha, eint->list_interface_common_addr, interface_common_addr) {
-		mfxid_update_hhs(ha->mfxid,0);
+		if(ha->mfxid)
+			mfxid_update_hhs(ha->mfxid,0);
 	}
 	rcu_read_unlock();
 }

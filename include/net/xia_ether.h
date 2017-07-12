@@ -232,6 +232,7 @@ static void del_interface_addr(struct interface_addr *to_del)
 	struct fib_xid_ether_main *mfib_xid;
 
 	mfib_xid = to_del->mfxid;
+	to_del->mfxid = NULL;
 	mfib_xid->neigh_addr = NULL;
 
 	einterface = ether_interface_get(to_del->outgress_interface);
