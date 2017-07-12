@@ -306,7 +306,6 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct fib_xid_ether_main *mether = fxid_mether(fxid);
 	struct xia_xid dst;
 	struct nlattr *ha_attr;
-	struct interface_addr *pos_ia = mether->neigh_addr;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
 			NLM_F_MULTI);
@@ -341,9 +340,14 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	if (!rtha)
 		goto nla_put_failure;
 
+	rcu_read_lock();
+	struct interface_addr *pos_ia = rcu_dereference(mether->neigh_addr);
+
 	rtha->interface_addr_len = pos_ia->dev->addr_len;
 	memmove(rtha->interface_addr, pos_ia->ha, rtha->interface_addr_len);
 	rtha->interface_index = pos_ia->dev->ifindex;
+	
+	rcu_read_unlock();
 	
 	/* No attributes. */
 
