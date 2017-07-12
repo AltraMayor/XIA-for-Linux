@@ -222,7 +222,7 @@ static struct interface_addr *allocate_interface_addr(struct net_device *interfa
 	ia->outgress_interface = interface;
 	dev_hold(interface);
 	
-	memmove(ia->ha, lladdr, interface->dev->addr_len);
+	memmove(ia->ha, lladdr, interface->addr_len);
 	return ha;
 }
 
