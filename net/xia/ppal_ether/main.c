@@ -601,6 +601,7 @@ static struct ether_interface *eint_init(struct net_device *dev)
 	eint->dev = dev;
 	dev_hold(dev);
 	atomic_set(&eint->refcnt, 0);
+	atomic_set(&eint->neigh_cnt, 0);
 
 	spin_lock_init(&eint->interface_lock);
 	INIT_LIST_HEAD(&eint->list_interface_common_addr);
@@ -720,7 +721,7 @@ static int ether_interface_event(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
-static struct notifier_block hid_netdev_notifier __read_mostly = {
+static struct notifier_block interface_notifier __read_mostly = {
 	.notifier_call = ether_interface_event,
 };
 
