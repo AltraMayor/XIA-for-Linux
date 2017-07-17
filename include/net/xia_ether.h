@@ -10,7 +10,7 @@
 //TODO:add header file for read/write lock
 
 /* Ethernet Principal */
-#define XIDTYPE_ETHER (__cpu_to_be32(0x12))
+#define XIDTYPE_ETHER (__cpu_to_be32(0x22))
 
 struct rtnl_xia_ether_addrs {
 	__u16		attr_len;
