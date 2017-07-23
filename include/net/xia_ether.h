@@ -80,6 +80,18 @@ struct fib_xid_ether_main {
 	struct fib_xid		xem_common;
 };
 
+struct xia_header_ops {
+	int	(*create) (struct sk_buff *skb, struct net_device *dev,
+			   unsigned short type, const void *daddr,
+			   const void *saddr, unsigned int len);
+	int	(*parse)(const struct sk_buff *skb, unsigned char *haddr);
+	int	(*cache)(const struct fib_xid_ether_main *mfxid, struct hh_cache *hh, __be16 type);
+	void	(*cache_update)(struct hh_cache *hh,
+				const struct net_device *dev,
+				const unsigned char *haddr,
+			    const int type);
+};
+
 int xia_ether_header_cache(const struct fib_xid_ether_main *mfxid, struct hh_cache *hh, __be16 type)
 {
 	struct ethhdr *eth;
