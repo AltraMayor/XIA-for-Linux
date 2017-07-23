@@ -56,6 +56,30 @@ struct ether_interface{
 	struct list_head			list_interface_common_addr;
 };
 
+struct interface_addr{
+	struct fib_xid_ether_main 	*mfxid;
+	struct list_head 			interface_common_addr;
+	struct net_device	 		*outgress_interface;
+	struct rcu_head				rcu_head;
+
+	u8 		ha[MAX_ADDR_LEN];
+};
+
+struct fib_xid_ether_main {
+	struct xip_dst_anchor	xem_anchor;
+	struct interface_addr 	*neigh_addr;
+	struct net_device	 	*host_interface;
+	int 					xem_dead;
+	struct hh_cache			cached_hdr;
+	rwlock_t				chdr_lock;
+	int						(*output)(struct fib_xid_ether_main *, struct sk_buff *);
+
+	/* WARNING: @xhm_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid		xem_common;
+};
+
 int xia_ether_header_cache(const struct fib_xid_ether_main *mfxid, struct hh_cache *hh, __be16 type)
 {
 	struct ethhdr *eth;
@@ -75,7 +99,7 @@ int xia_ether_header_cache(const struct fib_xid_ether_main *mfxid, struct hh_cac
 	return 0;
 }
 
-void eth_header_cache_update(struct hh_cache *hh,
+void xia_ether_header_cache_update(struct hh_cache *hh,
 			     const struct net_device *dev,
 			     const unsigned char *haddr,
 			     const int type)
@@ -117,30 +141,6 @@ static int mfxid_blackhole(struct fib_xid_ether_main *mfxid, struct sk_buff *skb
 	kfree_skb(skb);
 	return -ENETDOWN;
 }
-
-struct interface_addr{
-	struct fib_xid_ether_main 	*mfxid;
-	struct list_head 			interface_common_addr;
-	struct net_device	 		*outgress_interface;
-	struct rcu_head				rcu_head;
-
-	u8 		ha[MAX_ADDR_LEN];
-};
-
-struct fib_xid_ether_main {
-	struct xip_dst_anchor	xem_anchor;
-	struct interface_addr 	*neigh_addr;
-	struct net_device	 	*host_interface;
-	int 					xem_dead;
-	struct hh_cache			cached_hdr;
-	rwlock_t				chdr_lock;
-	int						(*output)(struct fib_xid_ether_main *, struct sk_buff *);
-
-	/* WARNING: @xhm_common is of variable size, and
-	 * MUST be the last member of the struct.
-	 */
-	struct fib_xid		xem_common;
-};
 
 static void mfxid_hh_init(struct fib_xid_ether_main *mfxid)
 {
