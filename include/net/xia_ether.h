@@ -138,7 +138,7 @@ static void mfxid_update_hhs(struct fib_xid_ether_main *mfxid, const int type)
 
 	if (hh->hh_len) {
 		write_seqlock_bh(&hh->hh_lock);
-		xia_ether_hdr_ops->cache_update(hh, mfxid->host_interface, mfxid->neigh_addr->ha, type);
+		xia_ether_hdr_ops.cache_update(hh, mfxid->host_interface, mfxid->neigh_addr->ha, type);
 		write_sequnlock_bh(&hh->hh_lock);
 	}
 }
@@ -156,7 +156,6 @@ static int mfxid_blackhole(struct fib_xid_ether_main *mfxid, struct sk_buff *skb
 
 static void mfxid_hh_init(struct fib_xid_ether_main *mfxid)
 {
-	struct net_device *dev = mfxid->host_interface;
 	__be16 prot = htons(ETH_P_XIP);
 	struct hh_cache	*hh = &mfxid->cached_hdr;
 
@@ -166,7 +165,7 @@ static void mfxid_hh_init(struct fib_xid_ether_main *mfxid)
 	 * accessing the same untill it is initialized.
 	 */
 	if (!hh->hh_len)
-		xia_ether_hdr_ops->cache(mfxid, hh, prot);
+		xia_ether_hdr_ops.cache(mfxid, hh, prot);
 
 	write_unlock_bh(&mfxid->chdr_lock);
 }
@@ -174,7 +173,7 @@ static void mfxid_hh_init(struct fib_xid_ether_main *mfxid)
 static inline int cmp_addr(struct interface_addr *addr, const u8 *str_ha, struct net_device *dev)
 {
 	int c1 = memcmp(addr->ha, str_ha, dev->addr_len);
-	int c2 = addr->dev == dev;
+	int c2 = addr->outgress_interface == dev;
 
 	if (likely(!c1 && c2)) {
 		return 1;
@@ -210,7 +209,7 @@ static inline struct ether_interface *ether_interface_get(const struct net_devic
 	rcu_read_lock();
 	interface = rcu_dereference(dev->eth_ptr);
 	if(interface)
-		atomic_inc(interface->refcnt);
+		atomic_inc(&interface->refcnt);
 	rcu_read_unlock();
 
 	return interface;
@@ -235,7 +234,7 @@ static struct interface_addr *allocate_interface_addr(struct net_device *interfa
 	dev_hold(interface);
 	
 	memmove(ia->ha, lladdr, interface->addr_len);
-	return ha;
+	return ia;
 }
 
 static void del_interface_addr(struct interface_addr *to_del)
@@ -272,11 +271,11 @@ static inline void free_ia_norcu(struct interface_addr *addr)
 static int attach_neigh_addr_to_fib_entry(struct fib_xid_ether_main *mether,struct interface_addr *addr)
 {
 	addr->mfxid = mether;
-	mether->dead = false;
+	mether->xem_dead = false;
 	mether->neigh_addr = addr;
 
 	struct ether_interface *einterface;
-	einterface = ether_interface_get(addr->dev);
+	einterface = ether_interface_get(addr->outgress_interface);
 
 	/*
 	* When using list_add_tail_rcu the caller must take whatever precautions are necessary
@@ -325,7 +324,7 @@ static inline struct xip_ether_ctx *ctx_ether(struct xip_ppal_ctx *ctx)
 
 static inline struct ether_interface *__ether_get_rtnl(const struct net_device *dev)
 {
-	return rtnl_dereference(dev->ether_ptr);
+	return rtnl_dereference(dev->eth_ptr);
 }
 
 extern int ether_vxt;

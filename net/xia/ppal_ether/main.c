@@ -21,7 +21,7 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	if (!leid)
 		return -ENOMEM;
 	// Initialize the fib_xid inside the local ether xid
-	fxid_init(xtbl, &leid->xhl_common, cfg->xfc_dst->xid_id,
+	fxid_init(xtbl, &leid->xel_common, cfg->xfc_dst->xid_id,
 		  XRTABLE_LOCAL_INDEX, 0);
 	// Initialize the anchor inside the local ether xid
 	xdst_init_anchor(&leid->xel_anchor);
@@ -48,7 +48,7 @@ static int local_delroute(struct xip_ppal_ctx *ctx,
 static void local_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
 	//fetch the local ether object containing the fib_xid object
-	struct fib_xid_ether_local *leid = fxid_leid(fxid);
+	struct fib_xid_ether_local *leid = fxid_lether(fxid);
 
 	//free the anchors starting from the anchor of this local ether
 	xdst_free_anchor(&leid->xel_anchor);
@@ -119,23 +119,24 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
 		return -EINVAL;
 
+	struct xip_deferred_negdep_flush *dnf;
 	struct net_device		*out_interface;
 	struct interface_addr 	*neigh_addr,*exist_addr;
-	struct fib_xid_table 	*xtbl;
 	struct fib_xid 			*cur_fxid;
 	u32						bucket;
 	struct fib_xid_ether_main *mether;
 	u32						nl_flags;
 	const char 				*id;
-
-	//check if device is down or is loopback
-	if (!(dev->flags & IFF_UP) || (dev->flags & IFF_LOOPBACK))
-		return -EINVAL;
+	int rc;
 	
 	//assign values to corresponding variables
 	out_interface 	= cfg->xfc_odev;
 	nl_flags 		= cfg->xfc_nlflags;
 	id 				= cfg->xfc_dst->xid_id;
+
+	//check if device is down or is loopback
+	if (!(out_interface->flags & IFF_UP) || (out_interface->flags & IFF_LOOPBACK))
+		return -EINVAL;
 
 	//allocate a new neighbour interface address structure
 	neigh_addr 		= allocate_interface_addr(out_interface , cfg->xfc_lladdr , GFP_ATOMIC);
@@ -143,7 +144,6 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	if(!neigh_addr)
 		return -ENOMEM;
 
-	xtbl = ctx->xpc_tbl;
 	cur_fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, id);
 
 	if(cur_fxid)
@@ -235,7 +235,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	BUG_ON(ether_rt_iops->fxid_add_locked(&bucket, xtbl, &mether->xem_common));
 
 	ether_rt_iops->fib_unlock(xtbl, &bucket);
-	fib_defer_dnf(dnf, ether_ctx(ctx)->net, XIDTYPE_ETHER);
+	fib_defer_dnf(dnf, ctx_ether(ctx)->net, XIDTYPE_ETHER);
 	return 0;
 
 def_upd:
@@ -243,7 +243,7 @@ def_upd:
 unlock_bucket:
 	ether_rt_iops->fib_unlock(xtbl, &bucket);
 free_addr:
-	free_addr_norcu(neigh_addr);
+	free_ia_norcu(neigh_addr);
 	return rc;
 }
 
@@ -256,13 +256,13 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 	u32 bucket;
 	struct fib_xid *fxid;
 	struct fib_xid_ether_main *mether;
-	struct fib_xid_table *xtbl;
 	struct interface_addr 	*neigh_addr;
+	struct net_device *dev;
 	int rc;
 	const char *id;
 
-	xtbl = ctx->xpc_tbl;
 	id 	= cfg->xfc_dst->xid_id;
+	dev = cfg->xfc_odev;
 
 	fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, id);
 	if (!fxid) {
@@ -275,7 +275,7 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 	}
 	mether = fxid_mether(fxid);
 
-	if(!cmp_addr(methr->neigh_addr,lladdr,dev)){
+	if(!cmp_addr(mether->neigh_addr,cfg->xfc_lladdr,dev)){
 		rc = -EINVAL;
 		goto unlock_bucket;
 	}
@@ -343,9 +343,9 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	rcu_read_lock();
 	struct interface_addr *pos_ia = rcu_dereference(mether->neigh_addr);
 
-	rtha->interface_addr_len = pos_ia->dev->addr_len;
+	rtha->interface_addr_len = pos_ia->outgress_interface->addr_len;
 	memmove(rtha->interface_addr, pos_ia->ha, rtha->interface_addr_len);
-	rtha->interface_index = pos_ia->dev->ifindex;
+	rtha->interface_index = pos_ia->outgress_interface->ifindex;
 	
 	rcu_read_unlock();
 	
@@ -367,7 +367,7 @@ nla_put_failure:
 /* call using fxid_free only */
 void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct fib_xid_ether_main *mether = fxid_ether(fxid);
+	struct fib_xid_ether_main *mether = fxid_mether(fxid);
 
 	xdst_free_anchor(&mether->xem_anchor);
 	mether->xem_dead = true;
@@ -375,7 +375,7 @@ void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 }
 
 /* ETHER_FIB all table external operations */
-const struct xia_ppal_all_rt_eops_t *ether_all_rt_eops = {
+static const xia_ppal_all_rt_eops_t ether_all_rt_eops = {
 	[XRTABLE_LOCAL_INDEX] = {
 		.newroute = local_newroute,
 		.delroute = local_delroute,
@@ -430,7 +430,7 @@ static int main_input_input(struct sk_buff *skb)
 
 	/* We are about to mangle packet. Copy it! */
 	naddr = xdst_naddr(xdst);
-	if (skb_cow(skb, LL_RESERVED_SPACE(naddr->dev) + xdst->dst.header_len))
+	if (skb_cow(skb, LL_RESERVED_SPACE(naddr->outgress_interface) + xdst->dst.header_len))
 		goto drop;
 	xiph = xip_hdr(skb);
 
@@ -498,7 +498,7 @@ static int main_input_output(struct net *net, struct sock *sk, struct sk_buff *s
 	if (!skb)
 		return NET_RX_DROP;
 
-	dev = naddr->dev;
+	dev = naddr->outgress_interface;
 	skb->dev = dev;
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 
@@ -611,7 +611,7 @@ static struct ether_interface *eint_init(struct net_device *dev)
 	INIT_LIST_HEAD(&eint->list_interface_common_addr);
 
 	einterface_hold(eint);
-	RCU_INIT_POINTER(dev->ether_ptr, eint);
+	RCU_INIT_POINTER(dev->eth_ptr, eint);
 	return eint;
 }
 
@@ -644,7 +644,7 @@ static void free_neighs_by_interface(struct ether_interface *eint)
 		 * entries in parallel.
 		 */
 		rcu_read_lock();
-		ha = list_first_or_null_rcu(&eint->neighs, struct interface_addr,
+		ha = list_first_or_null_rcu(&eint->list_interface_common_addr, struct interface_addr,
 					    interface_common_addr);
 		if (!ha) {
 			rcu_read_unlock();
@@ -673,7 +673,7 @@ static void update_neighs_by_interface(struct ether_interface *eint)
 	ASSERT_RTNL();
 
 	rcu_read_lock();
-	list_for_each_entry_rcu(ha, eint->list_interface_common_addr, interface_common_addr) {
+	list_for_each_entry_rcu(ha, &eint->list_interface_common_addr, interface_common_addr) {
 		if(ha->mfxid)
 			mfxid_update_hhs(ha->mfxid,0);
 	}
@@ -693,7 +693,7 @@ static void eint_destroy(struct ether_interface *eint)
 
 	free_neighs_by_interface(eint);
 
-	RCU_INIT_POINTER(eint->dev->ether_ptr, NULL);
+	RCU_INIT_POINTER(eint->dev->eth_ptr, NULL);
 	call_rcu(&eint->rcu_head, ether_interface_rcu_put);
 }
 

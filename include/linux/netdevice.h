@@ -1692,7 +1692,7 @@ struct net_device {
 	struct hid_dev __rcu	*hid_ptr;	/* XIA HID principal's data */
 #endif
 
-#ifdef CONFIG_XIA_PPAL_ETHER
+#if defined(CONFIG_XIA_PPAL_ETHER) || defined(CONFIG_XIA_PPAL_ETHER_MODULE)
 	struct ether_interface __rcu *eth_ptr;
 #endif
 
