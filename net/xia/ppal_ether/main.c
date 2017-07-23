@@ -524,6 +524,15 @@ drop:
 	return rc;
 }
 
+/* Send packets out. */
+
+static int main_output_input(struct sk_buff *skb)
+{
+	BUG();
+}
+
+#define main_output_output main_input_output
+
 static int ether_deliver(struct xip_route_proc *rproc, struct net *net,
 		       const u8 *xid, struct xia_xid *next_xid,
 		       int anchor_index, struct xip_dst *xdst)
