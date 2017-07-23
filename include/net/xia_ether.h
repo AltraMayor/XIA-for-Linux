@@ -124,7 +124,7 @@ void xia_ether_header_cache_update(struct hh_cache *hh,
 			dev->dev_addr, ETH_ALEN);
 }
 
-const struct header_ops xia_ether_hdr_ops ____cacheline_aligned = {
+const struct xia_header_ops xia_ether_hdr_ops ____cacheline_aligned = {
 	.create		= eth_header,
 	.parse		= eth_header_parse,
 	.cache		= xia_ether_header_cache,
