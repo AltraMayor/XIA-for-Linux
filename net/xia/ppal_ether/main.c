@@ -115,10 +115,6 @@ nla_put_failure:
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 			 struct xia_fib_config *cfg)
 {
-	//check for errors in cfg
-	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
-		return -EINVAL;
-
 	struct xip_deferred_negdep_flush *dnf;
 	struct net_device		*out_interface;
 	struct interface_addr 	*neigh_addr,*exist_addr;
@@ -128,6 +124,10 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	u32						nl_flags;
 	const char 				*id;
 	int rc;
+
+	//check for errors in cfg
+	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
+		return -EINVAL;
 	
 	//assign values to corresponding variables
 	out_interface 	= cfg->xfc_odev;
@@ -229,7 +229,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	seqlock_init(&mether->cached_hdr.hh_lock);
 
 	read_lock_bh(&mether->chdr_lock);
-	mfxid_hh_init(&mether);
+	mfxid_hh_init(mether);
 	read_unlock_bh(&mether->chdr_lock);
 
 	BUG_ON(ether_rt_iops->fxid_add_locked(&bucket, xtbl, &mether->xem_common));
@@ -249,10 +249,6 @@ free_addr:
 
 static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, struct xia_fib_config *cfg)
 {
-	//check for errors in cfg
-	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
-		return -EINVAL;
-
 	u32 bucket;
 	struct fib_xid *fxid;
 	struct fib_xid_ether_main *mether;
@@ -260,6 +256,10 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 	struct net_device *dev;
 	int rc;
 	const char *id;
+
+	//check for errors in cfg
+	if(!cfg->xfc_dst || !cfg->xfc_odev || !cfg->xfc_lladdr || cfg->xfc_lladdr_len != cfg->xfc_odev->addr_len)
+		return -EINVAL;
 
 	id 	= cfg->xfc_dst->xid_id;
 	dev = cfg->xfc_odev;
@@ -289,6 +289,7 @@ static int main_delroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl, s
 
 	ether_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
 	fxid_free(xtbl, fxid);
+	rc = 0;
 
 unlock_bucket:
 	ether_rt_iops->fib_unlock(xtbl, &bucket);
@@ -306,6 +307,8 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	struct fib_xid_ether_main *mether = fxid_mether(fxid);
 	struct xia_xid dst;
 	struct nlattr *ha_attr;
+	struct rtnl_xia_ether_addrs *rtha;
+	struct interface_addr *pos_ia;
 
 	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
 			NLM_F_MULTI);
@@ -336,12 +339,12 @@ static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 	if (!ha_attr)
 		goto nla_put_failure;
 
-	struct rtnl_xia_ether_addrs *rtha = nla_reserve_nohdr(skb, sizeof(*rtha));
+	rtha = nla_reserve_nohdr(skb, sizeof(*rtha));
 	if (!rtha)
 		goto nla_put_failure;
 
 	rcu_read_lock();
-	struct interface_addr *pos_ia = rcu_dereference(mether->neigh_addr);
+	pos_ia = rcu_dereference(mether->neigh_addr);
 
 	rtha->interface_addr_len = pos_ia->outgress_interface->addr_len;
 	memmove(rtha->interface_addr, pos_ia->ha, rtha->interface_addr_len);

@@ -270,11 +270,11 @@ static inline void free_ia_norcu(struct interface_addr *addr)
 
 static int attach_neigh_addr_to_fib_entry(struct fib_xid_ether_main *mether,struct interface_addr *addr)
 {
+	struct ether_interface *einterface;
+
 	addr->mfxid = mether;
 	mether->xem_dead = false;
 	mether->neigh_addr = addr;
-
-	struct ether_interface *einterface;
 	einterface = ether_interface_get(addr->outgress_interface);
 
 	/*
@@ -289,6 +289,7 @@ static int attach_neigh_addr_to_fib_entry(struct fib_xid_ether_main *mether,stru
 	atomic_inc(&einterface->neigh_cnt);
 
 	ether_interface_put(einterface);
+	return 0;
 }
 
 static void __free_ia(struct rcu_head *head)
