@@ -876,3 +876,6 @@ static void __exit xia_ether_exit(void)
 
 module_init(xia_ether_init);
 module_exit(xia_ether_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("XIA Ethernet Principal");
