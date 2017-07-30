@@ -19,6 +19,19 @@ struct rtnl_xia_ether_addrs {
 	int		interface_index;
 };
 
+static inline int RTHA_OK(struct rtnl_xia_ether_addrs *rtha, int len)
+{
+	return len >= 0 && (unsigned)len >= sizeof(*rtha) &&
+		rtha->attr_len <= (unsigned)len;
+}
+
+static inline struct rtnl_xia_ether_addrs *RTHA_NEXT(
+	struct rtnl_xia_ether_addrs *rtha)
+{
+	return	(struct rtnl_xia_ether_addrs *)
+		(((char *)rtha) + NLMSG_ALIGN(rtha->attr_len));
+}
+
 #ifdef __KERNEL__
 /* only for kernel use */
 
