@@ -2,6 +2,7 @@
 #include <net/xia_dag.h>
 #include <net/xia_output.h>
 #include <net/xia_vxidty.h>
+#include <linux/rwlock.h>
 #include <net/xia_ether.h>
 
 /* ETHER_FIB table internal operations */
@@ -219,18 +220,18 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	fxid_init(xtbl, &mether->xem_common, id, XRTABLE_MAIN_INDEX, 0);
 	mether->xem_dead = false;
 	xdst_init_anchor(&mether->xem_anchor);
+	mether->host_interface = out_interface;
 	
 	rc = attach_neigh_addr_to_fib_entry(mether , neigh_addr);
 	BUG_ON(rc);
 
+	mether->cached_hdr.hh_len = 0;
 	mether->output = mfxid_blackhole;
 
 	rwlock_init(&mether->chdr_lock);
 	seqlock_init(&mether->cached_hdr.hh_lock);
 
-	read_lock_bh(&mether->chdr_lock);
 	mfxid_hh_init(mether);
-	read_unlock_bh(&mether->chdr_lock);
 
 	BUG_ON(ether_rt_iops->fxid_add_locked(&bucket, xtbl, &mether->xem_common));
 

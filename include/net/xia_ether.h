@@ -7,7 +7,7 @@
 #include <linux/err.h>
 #include <net/xia_list_fib.h>
 #include <linux/netlink.h>
-//TODO:add header file for read/write lock
+#include <linux/spinlock.h>
 
 /* Ethernet Principal */
 #define XIDTYPE_ETHER (__cpu_to_be32(0x22))
@@ -113,7 +113,6 @@ int xia_ether_header_cache(const struct fib_xid_ether_main *mfxid, struct hh_cac
 	eth = (struct ethhdr *)
 	    (((u8 *) hh->hh_data) + (HH_DATA_OFF(sizeof(*eth))));
 
-	//TODO:check
 	if (type != htons(ETH_P_XIP))
 		return -1;
 
@@ -129,12 +128,13 @@ void xia_ether_header_cache_update(struct hh_cache *hh,
 			     const unsigned char *haddr,
 			     const int type)
 {
+	struct ethhdr *eth;
+	eth = (struct ethhdr *)
+		    (((u8 *) hh->hh_data) + (HH_DATA_OFF(sizeof(*eth))));
 	if(type)
-		memcpy(((u8 *) hh->hh_data) + HH_DATA_OFF(sizeof(struct ethhdr)),
-			haddr, ETH_ALEN);
+		memcpy(eth->h_dest , haddr, ETH_ALEN);
 	else
-		memcpy(((u8 *) hh->hh_data) + HH_DATA_OFF(sizeof(struct ethhdr) + ETH_ALEN),
-			dev->dev_addr, ETH_ALEN);
+		memcpy(eth->h_source, dev->dev_addr, ETH_ALEN);
 }
 
 const struct xia_header_ops xia_ether_hdr_ops ____cacheline_aligned = {
