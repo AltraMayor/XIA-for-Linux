@@ -174,6 +174,8 @@ struct fib_xid_ether_main {
 	struct ether_interface  *host_interface;
 	struct list_head        interface_common_addr;
 
+	struct hh_cache		cached_hdr;
+
 	/* WARNING: @xhm_common is of variable size, and
 	 * MUST be the last member of the struct.
 	 */
@@ -226,6 +228,37 @@ static void detach_neigh_to_interface(struct fib_xid_ether_main *mether)
 
 	ether_interface_put(mether->host_interface);
 	mether->host_interface = NULL;
+}
+
+/* Initialize the cached Ethernet header. */
+static void xia_ether_header_cache(struct fib_xid_ether_main *mfxid,
+				   u8 *addr)
+{
+	struct ethhdr *eth;
+	const struct net_device *dev = mfxid->host_interface->dev;
+
+	seqlock_init(&mfxid->cached_hdr.hh_lock);
+	eth = (struct ethhdr *)
+	    (((u8 *)mfxid->cached_hdr.hh_data) + (HH_DATA_OFF(sizeof(*eth))));
+
+	eth->h_proto = htons(ETH_P_XIP);
+	memcpy(eth->h_source, dev->dev_addr, ETH_ALEN);
+	memcpy(eth->h_dest, addr, ETH_ALEN);
+	mfxid->cached_hdr.hh_len = ETH_HLEN;
+}
+
+/* Update the cached header with new Ethernet address. */
+static void xia_ether_header_cache_update(struct fib_xid_ether_main *mfxid)
+{
+	struct ethhdr *eth;
+	const struct net_device *dev = mfxid->host_interface->dev;
+
+	eth = (struct ethhdr *)
+	    (((u8 *)mfxid->cached_hdr.hh_data) + (HH_DATA_OFF(sizeof(*eth))));
+
+	write_seqlock_bh(&mfxid->cached_hdr.hh_lock);
+	memcpy(eth->h_source, dev->dev_addr, ETH_ALEN);
+	write_sequnlock_bh(&mfxid->cached_hdr.hh_lock);
 }
 
 /* ETHER main table operations. */
@@ -307,6 +340,7 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 		rc = -EINVAL;
 		goto free_mem;
 	}
+	xia_ether_header_cache(mether, &id[sizeof(*p)]);
 	attach_neigh_to_interface(mether);
 	/* Releasing reference obtained with ether_interface_get() because
 	 * attach_neigh_to_interface() secures a reference as well.
@@ -454,6 +488,17 @@ static void free_neighs_by_interface(struct ether_interface *eint)
 	}
 }
 
+static void update_neighs_by_interface(struct ether_interface *eint)
+{
+	struct fib_xid_ether_main *mether;
+
+	ASSERT_RTNL();
+	list_for_each_entry(mether, &eint->list_interface_common_addr,
+			    interface_common_addr) {
+		xia_ether_header_cache_update(mether);
+	}
+}
+
 static void eint_destroy(struct ether_interface *eint)
 {
 	ASSERT_RTNL();
@@ -485,6 +530,9 @@ static int ether_interface_event(struct notifier_block *nb,
 		break;
 	case NETDEV_DOWN:
 		free_neighs_by_interface(eint);
+		break;
+	case NETDEV_CHANGEADDR:
+		update_neighs_by_interface(eint);
 		break;
 	}
 	return NOTIFY_DONE;
