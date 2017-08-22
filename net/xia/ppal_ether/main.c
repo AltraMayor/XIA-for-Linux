@@ -428,6 +428,191 @@ static const xia_ppal_all_rt_eops_t ether_all_rt_eops = {
 	},
 };
 
+/* Routing process per principal struct. */
+static inline struct fib_xid_ether_main *xdst_mfxid(struct xip_dst *xdst)
+{
+	return xdst->info;
+}
+
+static int main_input_input(struct sk_buff *skb)
+{
+	struct xiphdr *xiph;
+	struct xip_dst *xdst;
+	struct fib_xid_ether_main *mfxid;
+
+	if (skb->pkt_type != PACKET_HOST)
+		goto drop;
+
+	xiph = xip_hdr(skb);
+	if (!xiph->hop_limit) {
+		net_warn_ratelimited("%s: hop limit reached\n", __func__);
+		goto drop;
+	}
+
+	xdst = skb_xdst(skb);
+
+	skb = xip_trim_packet_if_needed(skb, dst_mtu(&xdst->dst));
+	if (unlikely(!skb))
+		return NET_RX_DROP;
+
+	/* We are about to mangle packet. Copy it! */
+	mfxid = xdst_mfxid(xdst);
+	if (skb_cow(skb, LL_RESERVED_SPACE(mfxid->host_interface->dev)
+					+ xdst->dst.header_len))
+		goto drop;
+	xiph = xip_hdr(skb);
+
+	/* Decrease ttl after skb cow done. */
+	xiph->hop_limit--;
+
+	return dst_output(xdst_net(xdst), skb->sk, skb);
+
+drop:
+	kfree_skb(skb);
+	return NET_RX_DROP;
+}
+
+static inline struct fib_xid_ether_main *skb_mfxid(struct sk_buff *skb)
+{
+	return xdst_mfxid(skb_xdst(skb));
+}
+
+static inline int xip_skb_dst_mtu(struct sk_buff *skb)
+{
+	return dst_mtu(skb_dst(skb));
+}
+
+static int neighinterface_hh_output(const struct hh_cache *hh,
+				    struct sk_buff *skb)
+{
+	unsigned int seq;
+	int hh_len;
+
+	do {
+		seq = read_seqbegin(&hh->hh_lock);
+		hh_len = hh->hh_len;
+		if (likely(hh_len <= HH_DATA_MOD)) {
+			memcpy(skb->data - HH_DATA_MOD,
+			       hh->hh_data, HH_DATA_MOD);
+		} else {
+			int hh_alen = HH_DATA_ALIGN(hh_len);
+
+			memcpy(skb->data - hh_alen, hh->hh_data, hh_alen);
+		}
+	} while (read_seqretry(&hh->hh_lock, seq));
+
+	skb_push(skb, hh_len);
+	return dev_queue_xmit(skb);
+}
+
+static int main_input_output(struct net *net, struct sock *sk,
+			     struct sk_buff *skb)
+{
+	struct fib_xid_ether_main *mfxid = skb_mfxid(skb);
+	struct net_device *dev;
+	unsigned int hh_len;
+	int rc;
+
+	skb = xip_trim_packet_if_needed(skb, xip_skb_dst_mtu(skb));
+	if (!skb)
+		return NET_RX_DROP;
+
+	dev = mfxid->host_interface->dev;
+	skb->dev = dev;
+	skb->protocol = __cpu_to_be16(ETH_P_XIP);
+
+	/* Be paranoid, rather than too clever. */
+	hh_len = LL_RESERVED_SPACE(dev);
+	if (unlikely(skb_headroom(skb) < hh_len && dev->header_ops)) {
+		struct sk_buff *skb2;
+
+		skb2 = skb_realloc_headroom(skb, hh_len);
+		if (!skb2) {
+			rc = -ENOMEM;
+			goto drop;
+		}
+		if (skb->sk)
+			skb_set_owner_w(skb2, skb->sk);
+		kfree_skb(skb);
+		skb = skb2;
+	}
+
+	return neighinterface_hh_output(&mfxid->cached_hdr, skb);
+drop:
+	kfree_skb(skb);
+	return rc;
+}
+
+/* Send packets out. */
+static int main_output_input(struct sk_buff *skb)
+{
+	BUG();
+}
+
+#define main_output_output main_input_output
+
+static int ether_deliver(struct xip_route_proc *rproc, struct net *net,
+			 const u8 *xid, struct xia_xid *next_xid,
+			 int anchor_index, struct xip_dst *xdst)
+{
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid *fxid;
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, ether_vxt);
+
+	fxid = ether_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
+	if (!fxid)
+		goto out;
+
+	switch (fxid->fx_table_id) {
+	case XRTABLE_LOCAL_INDEX: {
+		struct fib_xid_ether_local *lether = fxid_lether(fxid);
+
+		xdst->passthrough_action = XDA_DIG;
+		xdst->sink_action = XDA_ERROR;
+		xdst_attach_to_anchor(xdst, anchor_index,
+				      &lether->xel_anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+
+	case XRTABLE_MAIN_INDEX: {
+		struct fib_xid_ether_main *mether = fxid_mether(fxid);
+
+		xdst->passthrough_action = XDA_METHOD;
+		xdst->sink_action = XDA_METHOD;
+		xdst->info = mether;
+		BUG_ON(xdst->dst.dev);
+		xdst->dst.dev = mether->host_interface->dev;
+		dev_hold(xdst->dst.dev);
+		if (xdst->input) {
+			xdst->dst.input = main_input_input;
+			xdst->dst.output = main_input_output;
+		} else {
+			xdst->dst.input = main_output_input;
+			xdst->dst.output = main_output_output;
+		}
+		xdst_attach_to_anchor(xdst, anchor_index,
+				      &mether->xem_anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+	}
+	rcu_read_unlock();
+	BUG();
+
+out:
+	xdst_attach_to_anchor(xdst, anchor_index, &ctx->negdep);
+	rcu_read_unlock();
+	return XRP_ACT_NEXT_EDGE;
+}
+
+static struct xip_route_proc ether_rt_proc __read_mostly = {
+	.xrp_ppal_type = XIDTYPE_ETHER,
+	.deliver = ether_deliver,
+};
+
 /* Interface intialization and exit functions. */
 static struct ether_interface *eint_init(struct net_device *dev)
 {
@@ -635,13 +820,19 @@ static int __init xia_ether_init(void)
 	if (rc)
 		goto net;
 
-	rc = ppal_add_map("ether", XIDTYPE_ETHER);
+	rc = xip_add_router(&ether_rt_proc);
 	if (rc)
 		goto devicereg;
+
+	rc = ppal_add_map("ether", XIDTYPE_ETHER);
+	if (rc)
+		goto route;
 
 	pr_alert("XIA Principal ETHER loaded\n");
 	goto out;
 
+route:
+	xip_del_router(&ether_rt_proc);
 devicereg:
 	unregister_dev();
 net:
@@ -656,6 +847,7 @@ out:
 static void __exit xia_ether_exit(void)
 {
 	ppal_del_map(XIDTYPE_ETHER);
+	xip_del_router(&ether_rt_proc);
 	unregister_dev();
 	xia_unregister_pernet_subsys(&ether_net_ops);
 
