@@ -1,8 +1,12 @@
 #include <linux/module.h>
 #include <linux/err.h>
+#include <linux/spinlock.h>
+#include <linux/netdevice.h>
+#include <linux/netlink.h>
 #include <net/xia_vxidty.h>
 #include <net/xia_dag.h>
 #include <net/xia_list_fib.h>
+#include <net/xia_output.h>
 
 /* Ethernet Principal. */
 #define XIDTYPE_ETHER (__cpu_to_be32(0x1a))
@@ -20,11 +24,127 @@ static inline struct xip_ether_ctx *ctx_ether(struct xip_ppal_ctx *ctx)
 		: NULL;
 }
 
+/* ETHER-INTERFACE. */
+struct ether_interface {
+	struct net_device  *dev;
+	atomic_t           refcnt;
+	struct rcu_head    rcu_head;
+
+	/* Prevents racing conditions over list. */
+	spinlock_t         interface_lock;
+	struct list_head   list_interface_common_addr;
+};
+
+static inline void ether_interface_hold(struct ether_interface *eint)
+{
+	atomic_inc(&eint->refcnt);
+}
+
+static struct ether_interface *ether_interface_get(
+		const struct net_device *dev)
+{
+	struct ether_interface *eint;
+
+	rcu_read_lock();
+	eint = rcu_dereference(dev->eth_ptr);
+	if (eint)
+		ether_interface_hold(eint);
+	rcu_read_unlock();
+
+	return eint;
+}
+
+static void ether_interface_rcu_put(struct rcu_head *head)
+{
+	struct ether_interface *eint =
+			container_of(head, struct ether_interface, rcu_head);
+
+	dev_put(eint->dev);
+	eint->dev = NULL;
+	WARN_ON(spin_is_locked(&eint->interface_lock));
+	WARN_ON(!list_empty(&eint->list_interface_common_addr));
+	kfree(eint);
+}
+
+static inline void ether_interface_put(struct ether_interface *eint)
+{
+	if (atomic_dec_and_test(&eint->refcnt))
+		call_rcu(&eint->rcu_head, ether_interface_rcu_put);
+}
+
 /* ETHER's virtual XID type. */
 static int ether_vxt __read_mostly = -1;
 
 /* ETHER_FIB table internal operations. */
 static const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
+
+/* Interface intialization and exit functions. */
+static struct ether_interface *eint_init(struct net_device *dev)
+{
+	struct ether_interface *eint;
+
+	ASSERT_RTNL();
+
+	eint = kzalloc(sizeof(*eint), GFP_KERNEL);
+	if (!eint)
+		return NULL;
+
+	eint->dev = dev;
+	dev_hold(dev);
+	atomic_set(&eint->refcnt, 0);
+
+	spin_lock_init(&eint->interface_lock);
+	INIT_LIST_HEAD(&eint->list_interface_common_addr);
+
+	ether_interface_hold(eint);
+	RCU_INIT_POINTER(dev->eth_ptr, eint);
+	return eint;
+}
+
+static void eint_destroy(struct ether_interface *eint)
+{
+	ASSERT_RTNL();
+
+	RCU_INIT_POINTER(eint->dev->eth_ptr, NULL);
+	ether_interface_put(eint);
+}
+
+static int ether_interface_event(struct notifier_block *nb,
+				 unsigned long event, void *ptr)
+{
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+	struct ether_interface *eint;
+
+	ASSERT_RTNL();
+	eint = rtnl_dereference(dev->eth_ptr);
+
+	switch (event) {
+	case NETDEV_REGISTER:
+		WARN_ON(eint);
+		eint = eint_init(dev);
+		if (!eint)
+			return notifier_from_errno(-ENOMEM);
+		break;
+	case NETDEV_UNREGISTER:
+		eint_destroy(eint);
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block interface_notifier __read_mostly = {
+	.notifier_call = ether_interface_event,
+};
+
+static int register_dev(void)
+{
+	return register_netdevice_notifier(&interface_notifier);
+}
+
+static void unregister_dev(void)
+{
+	unregister_netdevice_notifier(&interface_notifier);
+}
 
 /* Network namespace subsystem registration. */
 static struct xip_ether_ctx *create_ether_ctx(struct net *net)
@@ -106,13 +226,19 @@ static int __init xia_ether_init(void)
 	if (rc)
 		goto vxt;
 
-	rc = ppal_add_map("ether", XIDTYPE_ETHER);
+	rc = register_dev();
 	if (rc)
 		goto net;
+
+	rc = ppal_add_map("ether", XIDTYPE_ETHER);
+	if (rc)
+		goto devicereg;
 
 	pr_alert("XIA Principal ETHER loaded\n");
 	goto out;
 
+devicereg:
+	unregister_dev();
 net:
 	xia_unregister_pernet_subsys(&ether_net_ops);
 vxt:
@@ -125,6 +251,7 @@ out:
 static void __exit xia_ether_exit(void)
 {
 	ppal_del_map(XIDTYPE_ETHER);
+	unregister_dev();
 	xia_unregister_pernet_subsys(&ether_net_ops);
 
 	rcu_barrier();
