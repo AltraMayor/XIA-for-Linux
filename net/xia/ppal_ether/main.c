@@ -78,6 +78,96 @@ static int ether_vxt __read_mostly = -1;
 /* ETHER_FIB table internal operations. */
 static const struct xia_ppal_rt_iops *ether_rt_iops = &xia_ppal_list_rt_iops;
 
+/* Local-FXID. */
+struct fib_xid_ether_local {
+	struct xip_dst_anchor   xel_anchor;
+
+	/* WARNING: @xel_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid          xel_common;
+};
+
+static inline struct fib_xid_ether_local *fxid_lether(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_ether_local, xel_common)
+		: NULL;
+}
+
+/* ETHER local table operations. */
+static int local_newroute(struct xip_ppal_ctx *ctx,
+			  struct fib_xid_table *xtbl,
+			  struct xia_fib_config *cfg)
+{
+	struct fib_xid_ether_local *leid;
+	int rc;
+
+	leid = ether_rt_iops->fxid_ppal_alloc(sizeof(*leid), GFP_KERNEL);
+	if (!leid)
+		return -ENOMEM;
+	fxid_init(xtbl, &leid->xel_common, cfg->xfc_dst->xid_id,
+		  XRTABLE_LOCAL_INDEX, 0);
+	xdst_init_anchor(&leid->xel_anchor);
+
+	rc = ether_rt_iops->fib_newroute(&leid->xel_common, xtbl, cfg, NULL);
+	if (rc)
+		fxid_free_norcu(xtbl, &leid->xel_common);
+
+	return rc;
+}
+
+static int local_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+			    struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			    struct netlink_callback *cb)
+{
+	struct nlmsghdr *nlh;
+	u32 portid = NETLINK_CB(cb->skb).portid;
+	u32 seq = cb->nlh->nlmsg_seq;
+	struct rtmsg *rtm;
+	struct xia_xid dst;
+
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+			NLM_F_MULTI);
+	if (!nlh)
+		return -EMSGSIZE;
+
+	rtm = nlmsg_data(nlh);
+	rtm->rtm_family = AF_XIA;
+	rtm->rtm_dst_len = sizeof(struct xia_xid);
+	rtm->rtm_src_len = 0;
+	rtm->rtm_tos = 0;
+	rtm->rtm_table = XRTABLE_LOCAL_INDEX;
+	rtm->rtm_protocol = RTPROT_UNSPEC;
+	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+	rtm->rtm_type = RTN_LOCAL;
+	rtm->rtm_flags = 0;
+
+	dst.xid_type = xtbl->fxt_ppal_type;
+	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
+	/* Add the netlink attribute "destination address" to
+	 * the nl_msg contained inside the skb.
+	 */
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+		goto nla_put_failure;
+
+	nlmsg_end(skb, nlh);
+	return 0;
+
+nla_put_failure:
+	nlmsg_cancel(skb, nlh);
+	return -EMSGSIZE;
+}
+
+/* Don't call this function! Use free_fxid instead. */
+static void local_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_ether_local *leid = fxid_lether(fxid);
+
+	xdst_free_anchor(&leid->xel_anchor);
+	kfree(leid);
+}
+
 /* Interface intialization and exit functions. */
 static struct ether_interface *eint_init(struct net_device *dev)
 {
