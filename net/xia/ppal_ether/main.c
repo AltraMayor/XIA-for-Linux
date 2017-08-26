@@ -168,6 +168,232 @@ static void local_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 	kfree(leid);
 }
 
+/* Main-FXID. */
+struct fib_xid_ether_main {
+	struct xip_dst_anchor   xem_anchor;
+	struct ether_interface  *host_interface;
+	struct list_head        interface_common_addr;
+
+	/* WARNING: @xhm_common is of variable size, and
+	 * MUST be the last member of the struct.
+	 */
+	struct fib_xid          xem_common;
+};
+
+/* Main-FXID functions. */
+static inline struct fib_xid_ether_main *fxid_mether(struct fib_xid *fxid)
+{
+	return likely(fxid)
+		? container_of(fxid, struct fib_xid_ether_main, xem_common)
+		: NULL;
+}
+
+/* Main-FXID + INTERFACE. */
+static void attach_neigh_to_interface(struct fib_xid_ether_main *mether)
+{
+	ether_interface_hold(mether->host_interface);
+	/* When using list_add_tail_rcu the caller must take whatever
+	 * precautions are necessary (such as holding appropriate locks) to
+	 * avoid racing with another list-mutation primitive, such as
+	 * list_add_tail_rcu() or list_del_rcu(), running on this same list.
+	 */
+	spin_lock(&mether->host_interface->interface_lock);
+	list_add_tail_rcu(&mether->host_interface->list_interface_common_addr,
+			  &mether->interface_common_addr);
+	spin_unlock(&mether->host_interface->interface_lock);
+	/* Don't call ether_interface_put(einterface) here because @mether
+	 * is in its list.
+	 */
+}
+
+/* Main-FXID - INTERFACE. */
+static void detach_neigh_to_interface(struct fib_xid_ether_main *mether)
+{
+	/* mether->host_interface may be NULL here because
+	 * when ether_interface_get() in main_newroute() returns NULL,
+	 * fxid_free_norcu() is called.
+	 */
+	if (!mether->host_interface)
+		return;
+	/* When using list_del_rcu the caller must take whatever precautions
+	 * are necessary (such as holding appropriate locks) to avoid racing
+	 * with another list-mutation primitive, such as list_add_tail_rcu()
+	 * or list_del_rcu(), running on this same list.
+	 */
+	spin_lock(&mether->host_interface->interface_lock);
+	list_del_rcu(&mether->interface_common_addr);
+	spin_unlock(&mether->host_interface->interface_lock);
+
+	ether_interface_put(mether->host_interface);
+	mether->host_interface = NULL;
+}
+
+/* ETHER main table operations. */
+static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
+			 struct xia_fib_config *cfg)
+{
+	struct xip_deferred_negdep_flush *dnf;
+	struct fib_xid_ether_main *mether;
+	struct net_device *out_interface;
+	struct fib_xid *cur_fxid;
+	u32 nl_flags, bucket;
+	u32 *p;
+	const char *id;
+	int rc, i;
+
+	/* Check for errors in cfg. */
+	if (!cfg->xfc_dst)
+		return -EINVAL;
+
+	p = (u32 *)cfg->xfc_dst->xid_id;
+
+	ASSERT_RTNL();
+	out_interface = __dev_get_by_index(ctx_ether(ctx)->net,
+					   __be32_to_cpu(*p));
+	if (!out_interface)
+		return -ENODEV;
+
+	BUG_ON((XIA_XID_MAX - sizeof(*p)) < out_interface->addr_len);
+	for (i = sizeof(*p) + out_interface->addr_len; i < XIA_XID_MAX; i++)
+		if (cfg->xfc_dst->xid_id[i])
+			return -EINVAL;
+
+	if (!(out_interface->flags & IFF_UP) ||
+	    (out_interface->flags & IFF_LOOPBACK))
+		return -EINVAL;
+
+	nl_flags      = cfg->xfc_nlflags;
+	id            = cfg->xfc_dst->xid_id;
+	cur_fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, id);
+	if (cur_fxid) {
+		/* Found a matching fxid. */
+		if (cur_fxid->fx_table_id != XRTABLE_MAIN_INDEX) {
+			rc = -EINVAL;
+			goto unlock_bucket;
+		}
+
+		/* Exact duplicate entry request. */
+		if ((nl_flags & NLM_F_EXCL) ||
+		    !(nl_flags & NLM_F_REPLACE)) {
+			rc = -EEXIST;
+			goto unlock_bucket;
+		}
+		rc = 0;
+		goto unlock_bucket;
+	}
+
+	if (!(nl_flags & NLM_F_CREATE)) {
+		rc = -ENOENT;
+		goto unlock_bucket;
+	}
+
+	dnf = fib_alloc_dnf(GFP_KERNEL);
+	if (!dnf) {
+		rc = -ENOMEM;
+		goto unlock_bucket;
+	}
+
+	mether = ether_rt_iops->fxid_ppal_alloc(sizeof(*mether), GFP_KERNEL);
+	if (!mether) {
+		rc = -ENOMEM;
+		goto def_upd;
+	}
+	fxid_init(xtbl, &mether->xem_common, id, XRTABLE_MAIN_INDEX, 0);
+	xdst_init_anchor(&mether->xem_anchor);
+	INIT_LIST_HEAD(&mether->interface_common_addr);
+
+	mether->host_interface = ether_interface_get(out_interface);
+	if (!mether->host_interface) {
+		rc = -EINVAL;
+		goto free_mem;
+	}
+	attach_neigh_to_interface(mether);
+	/* Releasing reference obtained with ether_interface_get() because
+	 * attach_neigh_to_interface() secures a reference as well.
+	 */
+	ether_interface_put(mether->host_interface);
+
+	WARN_ON(ether_rt_iops->fxid_add_locked(&bucket, xtbl,
+					       &mether->xem_common));
+	ether_rt_iops->fib_unlock(xtbl, &bucket);
+	fib_defer_dnf(dnf, ctx_ether(ctx)->net, XIDTYPE_ETHER);
+	return 0;
+
+free_mem:
+	fxid_free_norcu(xtbl, &mether->xem_common);
+def_upd:
+	fib_free_dnf(dnf);
+unlock_bucket:
+	ether_rt_iops->fib_unlock(xtbl, &bucket);
+	return rc;
+}
+
+static int main_dump_ether(struct fib_xid *fxid, struct fib_xid_table *xtbl,
+			   struct xip_ppal_ctx *ctx, struct sk_buff *skb,
+			   struct netlink_callback *cb)
+{
+	struct nlmsghdr *nlh;
+	u32 portid = NETLINK_CB(cb->skb).portid;
+	u32 seq = cb->nlh->nlmsg_seq;
+	struct rtmsg *rtm;
+	struct xia_xid dst;
+
+	nlh = nlmsg_put(skb, portid, seq, RTM_NEWROUTE, sizeof(*rtm),
+			NLM_F_MULTI);
+	if (!nlh)
+		return -EMSGSIZE;
+
+	rtm = nlmsg_data(nlh);
+	rtm->rtm_family = AF_XIA;
+	rtm->rtm_dst_len = sizeof(struct xia_xid);
+	rtm->rtm_src_len = 0;
+	rtm->rtm_tos = 0;
+	rtm->rtm_table = XRTABLE_MAIN_INDEX;
+	rtm->rtm_protocol = RTPROT_UNSPEC;
+	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+	rtm->rtm_type = RTN_UNICAST;
+	rtm->rtm_flags = 0;
+
+	dst.xid_type = xtbl->fxt_ppal_type;
+	memmove(dst.xid_id, fxid->fx_xid, XIA_XID_MAX);
+	if (unlikely(nla_put(skb, RTA_DST, sizeof(dst), &dst)))
+		goto nla_put_failure;
+
+	nlmsg_end(skb, nlh);
+	return 0;
+
+nla_put_failure:
+	nlmsg_cancel(skb, nlh);
+	return -EMSGSIZE;
+}
+
+/* Call using fxid_free only. */
+void main_free_ether(struct fib_xid_table *xtbl, struct fib_xid *fxid)
+{
+	struct fib_xid_ether_main *mether = fxid_mether(fxid);
+
+	detach_neigh_to_interface(mether);
+	xdst_free_anchor(&mether->xem_anchor);
+	kfree(mether);
+}
+
+/* ETHER_FIB all table external operations. */
+static const xia_ppal_all_rt_eops_t ether_all_rt_eops = {
+	[XRTABLE_LOCAL_INDEX] = {
+		.newroute = local_newroute,
+		.delroute = list_fib_delroute,
+		.dump_fxid = local_dump_ether,
+		.free_fxid = local_free_ether,
+	},
+
+	[XRTABLE_MAIN_INDEX] = {
+		.newroute = main_newroute,
+		.delroute = list_fib_delroute,
+		.dump_fxid = main_dump_ether,
+		.free_fxid = main_free_ether,
+	},
+};
+
 /* Interface intialization and exit functions. */
 static struct ether_interface *eint_init(struct net_device *dev)
 {
@@ -191,9 +417,48 @@ static struct ether_interface *eint_init(struct net_device *dev)
 	return eint;
 }
 
+/* Caller must hold RTNL lock, and makes sure that nobody adds entries
+ * in eint->list_interface_common_addr while it's running.
+ */
+static void free_neighs_by_interface(struct ether_interface *eint)
+{
+	struct net_device *dev;
+	struct net *net;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *xtbl;
+	struct fib_xid_ether_main *mether, *temp;
+
+	ASSERT_RTNL();
+
+	dev = eint->dev;
+	net = dev_net(dev);
+	ctx = xip_find_my_ppal_ctx_vxt(net, ether_vxt);
+	xtbl = ctx->xpc_xtbl;
+
+	list_for_each_entry_safe(mether, temp,
+				 &eint->list_interface_common_addr,
+				 interface_common_addr){
+		struct fib_xid *fxid;
+		u32 bucket;
+
+		/* We don't lock eint->interface_lock to avoid deadlock. */
+		fxid = ether_rt_iops->fxid_find_lock(&bucket, xtbl, 
+			mether->xem_common.fx_xid);
+		if (fxid) {
+			BUG_ON(fxid->fx_table_id != XRTABLE_MAIN_INDEX);
+			BUG_ON(&mether->xem_common != fxid);
+			ether_rt_iops->fxid_rm_locked(&bucket, xtbl, fxid);
+			fxid_free(xtbl, fxid);
+		}
+		ether_rt_iops->fib_unlock(xtbl, &bucket);
+	}
+}
+
 static void eint_destroy(struct ether_interface *eint)
 {
 	ASSERT_RTNL();
+
+	free_neighs_by_interface(eint);
 
 	RCU_INIT_POINTER(eint->dev->eth_ptr, NULL);
 	ether_interface_put(eint);
@@ -217,6 +482,9 @@ static int ether_interface_event(struct notifier_block *nb,
 		break;
 	case NETDEV_UNREGISTER:
 		eint_destroy(eint);
+		break;
+	case NETDEV_DOWN:
+		free_neighs_by_interface(eint);
 		break;
 	}
 	return NOTIFY_DONE;
@@ -268,11 +536,10 @@ static int __net_init ether_net_init(struct net *net)
 		goto out;
 	}
 
-	/* TODO:rc = ether_rt_iops->xtbl_init(&ether_ctx->ctx, net,
-	 * &xia_main_lock_table, ether_all_rt_eops, ether_rt_iops);
-	 *if (rc)
-	 *	goto ether_ctx;
-	 */
+	rc = ether_rt_iops->xtbl_init(&ether_ctx->ctx, net,
+			&xia_main_lock_table, ether_all_rt_eops, ether_rt_iops);
+	if (rc)
+		goto ether_ctx;
 
 	rc = xip_add_ppal_ctx(net, &ether_ctx->ctx);
 	if (rc)
