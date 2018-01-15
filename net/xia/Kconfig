@@ -11,7 +11,9 @@ config XIA
 	  <http://www.cs.cmu.edu/~xia/>
 
 if XIA
+# Files are listed in alphabetic order.
 source "net/xia/ppal_ad/Kconfig"
+source "net/xia/ppal_ether/Kconfig"
 source "net/xia/ppal_hid/Kconfig"
 source "net/xia/ppal_lpm/Kconfig"
 source "net/xia/ppal_uni4id/Kconfig"

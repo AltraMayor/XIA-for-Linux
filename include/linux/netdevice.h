@@ -1692,6 +1692,10 @@ struct net_device {
 	struct hid_dev __rcu	*hid_ptr;	/* XIA HID principal's data */
 #endif
 
+#if defined(CONFIG_XIA_PPAL_ETHER) || defined(CONFIG_XIA_PPAL_ETHER_MODULE)
+	struct ether_interface __rcu *eth_ptr;
+#endif
+
 /*
  * Cache lines mostly used on receive path (including eth_type_trans())
  */
