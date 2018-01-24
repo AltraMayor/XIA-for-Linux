@@ -109,6 +109,12 @@ static void tree_fxid_init(struct fib_xid *fxid, int table_id, int entry_type)
 	fxid->dead.xtbl = NULL;
 }
 
+static void tree_fxid_copy(struct fib_xid *old_fxid, struct fib_xid *new_fxid)
+{
+	memcpy(new_fxid, old_fxid,
+		sizeof(*old_fxid) + sizeof(struct tree_fib_xid));
+}
+
 static inline void disconnect_from_parent(struct tree_fib_xid *node)
 {
 	if (node && node->parent) {
@@ -683,6 +689,7 @@ const struct xia_ppal_rt_iops xia_ppal_tree_rt_iops = {
 
 	.fxid_ppal_alloc = tree_fxid_ppal_alloc,
 	.fxid_init = tree_fxid_init,
+	.fxid_copy = tree_fxid_copy,
 
 	/* Note that there is no RCU-specific version. */
 	.fxid_find_rcu = tree_fxid_find_rcu,

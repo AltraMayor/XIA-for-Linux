@@ -194,6 +194,16 @@ struct xia_ppal_rt_iops {
 	 */
 	void (*fxid_init)(struct fib_xid *fxid, int table_id, int entry_type);
 
+	/* fxid_copy - copy @old_fxid, including FIB-specific data.
+	 *
+	 * NOTE
+	 *	This function must copy any FIB-specific data in addition
+	 *	to the fields from struct fib_xid. @old_fxid and @new_fxid
+	 *	should reference FIB entries previously allocated by
+	 *	fxid_ppal_alloc().
+	 */
+	void (*fxid_copy)(struct fib_xid *old_fxid, struct fib_xid *new_fxid);
+
 	/** fxid_find_rcu - Find struct fib_xid in @xtbl that has key @xid.
 	 *
 	 * RETURN

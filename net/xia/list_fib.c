@@ -171,6 +171,12 @@ static void list_fxid_init(struct fib_xid *fxid, int table_id, int entry_type)
 	fxid->dead.xtbl = NULL;
 }
 
+static void list_fxid_copy(struct fib_xid *old_fxid, struct fib_xid *new_fxid)
+{
+	memcpy(new_fxid, old_fxid,
+		sizeof(*old_fxid) + sizeof(struct list_fib_xid));
+}
+
 static void list_xtbl_death_work(struct work_struct *work)
 {
 	struct fib_xid_table *xtbl = container_of(work, struct fib_xid_table,
@@ -621,6 +627,7 @@ const struct xia_ppal_rt_iops xia_ppal_list_rt_iops = {
 
 	.fxid_ppal_alloc = list_fxid_ppal_alloc,
 	.fxid_init = list_fxid_init,
+	.fxid_copy = list_fxid_copy,
 
 	.fxid_find_rcu = list_fxid_find_rcu,
 	.fxid_find_lock = list_fxid_find_lock,

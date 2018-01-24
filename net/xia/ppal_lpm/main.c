@@ -46,36 +46,113 @@ static inline struct fib_xid_lpm_local *fxid_llpm(struct fib_xid *fxid)
  */
 const struct xia_ppal_rt_iops *lpm_rt_iops = &xia_ppal_tree_rt_iops;
 
-/* Assuming the FIB is locked, find the appropriate anchor,
- * flush it, and unlock the FIB.
+/* Only call this function after an RCU synchronization,
+ * such as by calling free_fxid.
  */
-static void newroute_flush_anchor_locked(struct fib_xid_table *xtbl,
-					 struct fib_xid *new_fxid,
-					 struct xip_deferred_negdep_flush *dnf)
+static void local_free_lpm(struct fib_xid_table *xtbl, struct fib_xid *fxid)
 {
-	struct fib_xid *pred_fxid = tree_fib_get_pred_locked(new_fxid);
+	struct fib_xid_lpm_local *llpm = fxid_llpm(fxid);
 
+	xdst_free_anchor(&llpm->anchor);
+	kfree(llpm);
+}
+
+/* Assuming the FIB is locked, find the appropriate anchor,
+ * flush it, and unlock the FIB. To do this, we create a copy of
+ * the predecessor so that some readers can continue using the tree while
+ * we wait for other readers to finish to flush the anchor.
+ *
+ * NOTE
+ *	In rare cases, this function can fail due to lack of memory,
+ *	leaving the code unable to flush an anchor for a previous
+ *	entry. In these cases, a new entry cannot be added, so it
+ *	will be removed by this function and freed by the caller.
+ */
+static int newroute_flush_anchor_unlock(struct fib_xid_table *xtbl,
+					struct fib_xid *new_fxid,
+					struct xip_deferred_negdep_flush *dnf)
+{
+	/* At most one of @dup_llpm and @dup_mrd should be used. */
+	struct fib_xid_lpm_local *dup_llpm = NULL;
+	struct fib_xid_redirect_main *dup_mrd = NULL;
+
+	/* Find the predecessor. If it doesn't exist, we're done. */
+	struct fib_xid *pred_fxid = tree_fib_get_pred_locked(new_fxid);
 	if (!pred_fxid) {
 		lpm_rt_iops->fib_unlock(xtbl, NULL);
 		fib_defer_dnf(dnf, xtbl_net(xtbl), xtbl_ppalty(xtbl));
-		return;
+		return 0;
 	}
 
-	fib_free_dnf(dnf);
-	synchronize_rcu();
+	/* Flush the predecessor's anchor by first making a copy,
+	 * replacing the old entry, waiting an RCU synchronization,
+	 * and then freeing the old entry when done.
+	 */
 	switch (pred_fxid->fx_table_id) {
 	case XRTABLE_LOCAL_INDEX:
-		xdst_free_anchor(&fxid_llpm(pred_fxid)->anchor);
+		/* Allocate a duplicate of the predecessor entry. */
+		dup_llpm = lpm_rt_iops->fxid_ppal_alloc(sizeof(*dup_llpm),
+							GFP_ATOMIC);
+		if (!dup_llpm) {
+			/* Can't add this entry now due to lack of memory. */
+			lpm_rt_iops->fxid_rm_locked(NULL, xtbl, new_fxid);
+			lpm_rt_iops->fib_unlock(xtbl, NULL);
+			return -ENOMEM;
+		}
+
+		/* Replace the old predecessor with the new predecessor by
+		 * copying the generic struct fib_xid and replacing the old
+		 * node with the new one in the tree.
+		 */
+		xdst_init_anchor(&dup_llpm->anchor);
+		lpm_rt_iops->fxid_copy(&dup_llpm->common, pred_fxid);
+		lpm_rt_iops->fxid_replace_locked(xtbl, pred_fxid,
+						 &dup_llpm->common);
+
+		/* Release write lock to let tree readers that get a write
+		 * lock (such as in lpm_deliver()) continue, avoiding deadlock.
+		 */
+		lpm_rt_iops->fib_unlock(xtbl, NULL);
+
+		/* Wait for existing RCU readers in routing mechanism to
+		 * finish, and then flush the anchor.
+		 *
+		 * The old predecessor is no longer accessible by the tree and
+		 * existing readers on its anchor have finished, so we can
+		 * release the old predecessor. Since we just called
+		 * synchronize_rcu(), we can directly call local_free_lpm().
+		 */
+		synchronize_rcu();
+		local_free_lpm(xtbl, pred_fxid);
+		BUG_ON(dup_mrd);
 		break;
 	case XRTABLE_MAIN_INDEX:
-		xdst_invalidate_redirect(xtbl_net(xtbl), xtbl_ppalty(xtbl),
-					 pred_fxid->fx_xid,
-					 &fxid_mrd(pred_fxid)->gw);
+		/* Same algorithm as above for main predecessor entries. */
+		dup_mrd = lpm_rt_iops->fxid_ppal_alloc(sizeof(*dup_mrd),
+						       GFP_ATOMIC);
+		if (!dup_mrd) {
+			lpm_rt_iops->fxid_rm_locked(NULL, xtbl, new_fxid);
+			lpm_rt_iops->fib_unlock(xtbl, NULL);
+			return -ENOMEM;
+		}
+
+		dup_mrd->gw = fxid_mrd(pred_fxid)->gw;
+		lpm_rt_iops->fxid_copy(&dup_mrd->common, pred_fxid);
+		lpm_rt_iops->fxid_replace_locked(xtbl, pred_fxid,
+						 &dup_mrd->common);
+
+		lpm_rt_iops->fib_unlock(xtbl, NULL);
+
+		synchronize_rcu();
+		fib_mrd_free(xtbl, pred_fxid);
+		BUG_ON(dup_llpm);
 		break;
 	default:
 		BUG();
 	}
-	lpm_rt_iops->fib_unlock(xtbl, NULL);
+
+	fib_free_dnf(dnf);
+	return 0;
 }
 
 static int local_newroute(struct xip_ppal_ctx *ctx,
@@ -111,15 +188,22 @@ static int local_newroute(struct xip_ppal_ctx *ctx,
 	 * atomically to flush the appropriate anchor.
 	 */
 	rc = tree_fib_newroute_lock(&new_llpm->common, xtbl, cfg, NULL);
-	if (rc) {
-		fib_free_dnf(dnf);
-		fxid_free_norcu(xtbl, &new_llpm->common);
-		return rc;
-	}
+	if (rc)
+		goto unlock_and_free;
 
 	/* Flush appropriate anchor and release lock. */
-	newroute_flush_anchor_locked(xtbl, &new_llpm->common, dnf);
+	rc = newroute_flush_anchor_unlock(xtbl, &new_llpm->common, dnf);
+	if (rc)
+		goto free;
+
 	return 0;
+
+unlock_and_free:
+	lpm_rt_iops->fib_unlock(NULL, xtbl);
+free:
+	fib_free_dnf(dnf);
+	fxid_free_norcu(xtbl, &new_llpm->common);
+	return rc;
 }
 
 static int local_dump_lpm(struct fib_xid *fxid, struct fib_xid_table *xtbl,
@@ -169,15 +253,6 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-/* Don't call this function! Use free_fxid instead. */
-static void local_free_lpm(struct fib_xid_table *xtbl, struct fib_xid *fxid)
-{
-	struct fib_xid_lpm_local *llpm = fxid_llpm(fxid);
-
-	xdst_free_anchor(&llpm->anchor);
-	kfree(llpm);
-}
-
 static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 			 struct xia_fib_config *cfg)
 {
@@ -208,15 +283,22 @@ static int main_newroute(struct xip_ppal_ctx *ctx, struct fib_xid_table *xtbl,
 	 * atomically to flush the appropriate anchor.
 	 */
 	rc = tree_fib_newroute_lock(&new_mrd->common, xtbl, cfg, NULL);
-	if (rc) {
-		fib_free_dnf(dnf);
-		fxid_free_norcu(xtbl, &new_mrd->common);
-		return rc;
-	}
+	if (rc)
+		goto unlock_and_free;
 
 	/* Flush appropriate anchor and release lock. */
-	newroute_flush_anchor_locked(xtbl, &new_mrd->common, dnf);
+	rc = newroute_flush_anchor_unlock(xtbl, &new_mrd->common, dnf);
+	if (rc)
+		goto free;
+
 	return 0;
+
+unlock_and_free:
+	lpm_rt_iops->fib_unlock(NULL, xtbl);
+free:
+	fib_free_dnf(dnf);
+	fxid_free_norcu(xtbl, &new_mrd->common);
+	return rc;
 }
 
 static const xia_ppal_all_rt_eops_t lpm_all_rt_eops = {
