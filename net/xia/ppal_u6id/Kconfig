@@ -1,0 +1,10 @@
+config XIA_PPAL_U6ID
+	tristate "UDP/IPv6 Principal (EXPERIMENTAL)"
+	select NET_UDP_TUNNEL
+	default m
+	help
+	  UDP/IPv6 (U6ID) Principal provides the ability to encapsulate XIP
+	  packets into UDP-over-IPv6 packets to tunnel them through a network.
+	  You should only add this principal if you have added XIA and wish to
+	  utilize IPv6 to tunnel XIP data through a network. 
+	  If you are unsure how to answer this question, answer M.

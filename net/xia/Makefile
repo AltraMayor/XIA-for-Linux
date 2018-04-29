@@ -14,5 +14,7 @@ obj-$(CONFIG_XIA_PPAL_HID) += ppal_hid/
 obj-$(CONFIG_XIA_PPAL_LPM) += ppal_lpm/
 obj-$(CONFIG_XIA_PPAL_UNI4ID) += ppal_uni4id/
 obj-$(CONFIG_XIA_PPAL_U4ID) += ppal_u4id/
+obj-$(CONFIG_XIA_PPAL_U6ID) += ppal_u6id/
 obj-$(CONFIG_XIA_PPAL_XDP) += ppal_xdp/
 obj-$(CONFIG_XIA_PPAL_ZF) += ppal_zf/
+
