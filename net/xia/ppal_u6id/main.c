@@ -448,11 +448,239 @@ static struct pernet_operations u6id_net_ops __read_mostly = {
 
 /* U6ID Routing */
 
+/* Tunnel destination information held in a DST entry. */
+struct u6id_tunnel_dest{
+	struct in6_addr *dest_ip_addr;
+	__be16 dest_port;
+};
+
+static struct u6id_tunnel_dest *create_u6id_tunnel_dest(const u8 *xid) 
+{
+	struct u6id_tunnel_dest *tunnel;
+	__be16 xid_port;
+
+	tunnel = kmalloc(sizeof(*tunnel), GFP_KERNEL);
+	if (!tunnel)
+		return NULL;
+  
+
+	tunnel->dest_ip_addr = kmalloc(sizeof(struct in6_addr), GFP_KERNEL);
+	if (!tunnel->dest_ip_addr)
+	{
+		kfree(tunnel);
+		return NULL;
+	}
+	memcpy(&tunnel->dest_ip_addr->s6_addr, xid, sizeof(tunnel->dest_ip_addr->s6_addr));
+	
+	xid += IPV6_ADDR_LEN;
+	xid_port =__cpu_to_be16(*(__u16 *)xid);
+	tunnel->dest_port = xid_port;
+	return tunnel;
+}
+
+static struct sock *get_tunnel_sock_rcu(struct net *net)
+{
+	struct xip_u6id_ctx *u6id_ctx;
+	struct socket *tunnel_sock;
+
+	u6id_ctx = ctx_u6id(xip_find_ppal_ctx_rcu(net, XIDTYPE_U6ID));
+	tunnel_sock = rcu_dereference(u6id_ctx->tunnel_sock);
+	if (!tunnel_sock)
+		return NULL;
+
+	return tunnel_sock->sk;
+}
+
+static void push_udp_header(struct sock *tunnel_sk, struct sk_buff *skb,
+			struct in6_addr *dest_ip_addr, __be16 dest_port)
+{
+	struct inet_sock *inet = inet_sk(tunnel_sk);
+
+	struct udphdr *uh;
+	int uhlen = sizeof(*uh);
+	int udp_payload_len = skb->len;
+
+	/* Set up UDP header. */
+	skb_push(skb, uhlen);
+	skb_reset_transport_header(skb);
+	uh= udp_hdr(skb);
+	uh->source = inet->inet_sport;
+ 	uh->dest = dest_port;
+	uh->len = htons(uhlen + udp_payload_len);
+
+	udp6_set_csum(udp_get_no_check6_tx(tunnel_sk),
+			skb, &inet6_sk(tunnel_sk)->saddr,
+			dest_ip_addr, uhlen + udp_payload_len);
+				
+}
+
+static int handle_skb_to_ipv6(struct sock *tunnel_sk, struct sk_buff *skb,
+			struct in6_addr *dest_ip_addr, __be16 dest_port)
+{
+	struct inet_sock *inet = inet_sk(tunnel_sk);
+	struct ipv6_pinfo *np = inet6_sk(tunnel_sk);
+	struct flowi6 *fl6;
+	struct in6_addr *final_p, final;
+	struct dst_entry *dst;
+	int rc;
+  
+	fl6 = kmalloc(sizeof(*fl6), GFP_KERNEL);
+  
+	if (!fl6)
+		return -ENOMEM;
+
+ 
+	/* Reset @skb netfilter state. */
+	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
+	IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED | IPSKB_REROUTED);
+	nf_reset(skb);
+
+	/* Set up @skb. */
+	skb->protocol = __cpu_to_be16(ETH_P_IPV6);
+	skb->ignore_df = 1;
+
+	/* Set up IP DST. */
+	skb_dst_drop(skb);
+		 
+	/* Set up @fl6 */
+	memset(fl6, 0, sizeof(*fl6));
+	fl6->flowi6_proto = tunnel_sk->sk_protocol;
+	memcpy(&fl6->daddr, dest_ip_addr, sizeof(*dest_ip_addr));
+	fl6->saddr = np->saddr;
+	fl6->flowi6_oif = tunnel_sk ->sk_bound_dev_if;
+	fl6->flowi6_mark = tunnel_sk->sk_mark;
+	fl6->fl6_sport = inet->inet_sport;
+	fl6->fl6_dport = dest_port;
+  
+	security_sk_classify_flow(tunnel_sk, flowi6_to_flowi(fl6));
+
+	rcu_read_lock();
+	final_p = fl6_update_dst(fl6, rcu_dereference(np->opt), &final);
+		 
+
+	dst = ip6_dst_lookup_flow(tunnel_sk, fl6, final_p);
+	if (IS_ERR(dst)) {
+		rc = PTR_ERR(dst);
+		dst_release(dst);
+	kfree_skb(skb);
+	return rc;
+	}
+
+	skb_dst_set(skb, dst_clone(dst));
+		 
+	rc = ip6_xmit(tunnel_sk, skb, fl6, NULL, 0);
+  
+	rcu_read_unlock();
+	return rc;
+}
+
+static int u6id_output(struct net *net,struct sock *sk, struct sk_buff *skb)
+{
+	struct sock *tunnel_sk;
+	struct u6id_tunnel_dest *tunnel;
+	struct in6_addr *dest_ip_addr;
+	__be16 dest_port;
+	int rc;
+  
+	/* Check that there's enough headroom in the @skb to
+	 * insert the IP and UDP headers. If not enough,
+	 * expand it to make room. Adjust truesize.
+	 */
+	if (skb_cow_head(skb,
+			NET_SKB_PAD + sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
+		kfree(skb);
+		return NET_XMIT_DROP;
+	}
+
+	rcu_read_lock();
+
+	/* The tunnel socket is *not* guaranteed to be here.
+	 * If this point was reached between deleting the tunnel socket and
+	 * flushing the forward anchor, it will be NULL.
+	 */
+	tunnel_sk = get_tunnel_sock_rcu(dev_net(skb_dst(skb)->dev));
+	if (unlikely(!tunnel_sk)) {
+		rcu_read_unlock();
+		kfree_skb(skb);
+		return NET_XMIT_DROP;
+	}
+
+	/* Fetch U6ID from XDST entry to get IP address and port. */
+	tunnel = (struct u6id_tunnel_dest *)skb_xdst(skb)->info;
+	dest_ip_addr = tunnel->dest_ip_addr;
+	dest_port = tunnel->dest_port;
+
+	push_udp_header(tunnel_sk, skb, dest_ip_addr, dest_port);
+
+	/* Send UDP packet with XIP and data as payload. */
+	rc = handle_skb_to_ipv6(tunnel_sk, skb, dest_ip_addr, dest_port);
+
+	rcu_read_unlock();
+	return rc;
+}
+
 static int u6id_deliver(struct xip_route_proc *rproc,struct net *net,
 			const u8*xid, struct xia_xid *next_xid,
 			int anchor_index, struct xip_dst *xdst)
 {
+	struct xip_ppal_ctx *ctx;
+	struct xip_u6id_ctx *u6id_ctx;
+	struct fib_xid *fxid;
+	struct u6id_tunnel_dest *tunnel;
 
+	rcu_read_lock();
+    
+	ctx = xip_find_ppal_ctx_vxt_rcu(net, my_vxt);
+	u6id_ctx = ctx_u6id(ctx);
+     
+	if (unlikely(!u6id_well_formed(xid))) {
+		/* This XID is malformed. */
+		xdst->passthrough_action = XDA_ERROR;
+		xdst->sink_action = XDA_ERROR;
+		xdst_attach_to_anchor(xdst, anchor_index, &u6id_ctx->ill_anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+    
+	fxid = u6id_rt_iops->fxid_find_rcu(ctx->xpc_xtbl, xid);
+	if (fxid) {
+		/* Reached tunnel destination; advance last node. */
+		struct fib_xid_u6id_local *lu6id = fxid_lu6id(fxid);
+		xdst->passthrough_action = XDA_DIG;
+		/* A local U6ID cannot be a sink. */
+		xdst->sink_action = XDA_ERROR;
+		xdst_attach_to_anchor(xdst, anchor_index, &lu6id->anchor);
+		rcu_read_unlock();
+		return XRP_ACT_FORWARD;
+	}
+    
+    
+	/* Assume an unknown, well-formed U6ID is a tunnel destination. */
+	if (!rcu_dereference(u6id_ctx->tunnel_sock)) {
+		xdst_attach_to_anchor(xdst, anchor_index, &u6id_ctx->forward_anchor);
+		rcu_read_unlock();
+		return XRP_ACT_NEXT_EDGE;
+	}
+
+	/* Tunnel socket exist; set up XDST entry. */
+	tunnel = create_u6id_tunnel_dest(xid);
+	if (unlikely(!tunnel)) {
+		rcu_read_unlock();
+		/* Not enough memory to conclude this operation. */
+		return XRP_ACT_ABRUPT_FAILURE;
+	}
+	xdst->info = tunnel;
+	xdst->ppal_destroy = def_ppal_destroy;
+	xdst->passthrough_action = XDA_METHOD;
+	xdst->sink_action = XDA_METHOD;
+	BUG_ON(xdst->dst.dev);
+	xdst->dst.dev = net->loopback_dev;
+	dev_hold(xdst->dst.dev);
+	xdst->dst.input =xdst_def_hop_limit_input_method;
+	xdst->dst.output = u6id_output;
+	xdst_attach_to_anchor(xdst,anchor_index, &u6id_ctx->forward_anchor);
+	rcu_read_unlock();
+	return XRP_ACT_FORWARD;
 }
 
 static struct xip_route_proc u6id_rt_proc __read_mostly = {
