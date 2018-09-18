@@ -18,9 +18,9 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/i2c.h>
-#include <linux/i2c/pcf857x.h>
+#include <linux/platform_data/pcf857x.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
@@ -46,7 +46,6 @@ static const struct i2c_device_id pcf857x_id[] = {
 	{ "pca9675", 16 },
 	{ "max7328", 8 },
 	{ "max7329", 8 },
-	{ "tca9554", 8 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, pcf857x_id);
@@ -66,7 +65,6 @@ static const struct of_device_id pcf857x_of_table[] = {
 	{ .compatible = "nxp,pca9675" },
 	{ .compatible = "maxim,max7328" },
 	{ .compatible = "maxim,max7329" },
-	{ .compatible = "ti,tca9554" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, pcf857x_of_table);
@@ -198,7 +196,7 @@ static irqreturn_t pcf857x_irq(int irq, void *data)
 	mutex_unlock(&gpio->lock);
 
 	for_each_set_bit(i, &change, gpio->chip.ngpio)
-		handle_nested_irq(irq_find_mapping(gpio->chip.irqdomain, i));
+		handle_nested_irq(irq_find_mapping(gpio->chip.irq.domain, i));
 
 	return IRQ_HANDLED;
 }
@@ -372,18 +370,19 @@ static int pcf857x_probe(struct i2c_client *client,
 	gpio->out = ~n_latch;
 	gpio->status = gpio->out;
 
-	status = gpiochip_add_data(&gpio->chip, gpio);
+	status = devm_gpiochip_add_data(&client->dev, &gpio->chip, gpio);
 	if (status < 0)
 		goto fail;
 
 	/* Enable irqchip if we have an interrupt */
 	if (client->irq) {
-		status = gpiochip_irqchip_add(&gpio->chip, &pcf857x_irq_chip,
-					      0, handle_level_irq,
-					      IRQ_TYPE_NONE);
+		status = gpiochip_irqchip_add_nested(&gpio->chip,
+						     &pcf857x_irq_chip,
+						     0, handle_level_irq,
+						     IRQ_TYPE_NONE);
 		if (status) {
 			dev_err(&client->dev, "cannot add irqchip\n");
-			goto fail_irq;
+			goto fail;
 		}
 
 		status = devm_request_threaded_irq(&client->dev, client->irq,
@@ -391,10 +390,10 @@ static int pcf857x_probe(struct i2c_client *client,
 					IRQF_TRIGGER_FALLING | IRQF_SHARED,
 					dev_name(&client->dev), gpio);
 		if (status)
-			goto fail_irq;
+			goto fail;
 
-		gpiochip_set_chained_irqchip(&gpio->chip, &pcf857x_irq_chip,
-					     client->irq, NULL);
+		gpiochip_set_nested_irqchip(&gpio->chip, &pcf857x_irq_chip,
+					    client->irq);
 		gpio->irq_parent = client->irq;
 	}
 
@@ -412,9 +411,6 @@ static int pcf857x_probe(struct i2c_client *client,
 	dev_info(&client->dev, "probed\n");
 
 	return 0;
-
-fail_irq:
-	gpiochip_remove(&gpio->chip);
 
 fail:
 	dev_dbg(&client->dev, "probe error %d for '%s'\n", status,
@@ -440,8 +436,15 @@ static int pcf857x_remove(struct i2c_client *client)
 		}
 	}
 
-	gpiochip_remove(&gpio->chip);
 	return status;
+}
+
+static void pcf857x_shutdown(struct i2c_client *client)
+{
+	struct pcf857x *gpio = i2c_get_clientdata(client);
+
+	/* Drive all the I/O lines high */
+	gpio->write(gpio->client, BIT(gpio->chip.ngpio) - 1);
 }
 
 static struct i2c_driver pcf857x_driver = {
@@ -451,6 +454,7 @@ static struct i2c_driver pcf857x_driver = {
 	},
 	.probe	= pcf857x_probe,
 	.remove	= pcf857x_remove,
+	.shutdown = pcf857x_shutdown,
 	.id_table = pcf857x_id,
 };
 

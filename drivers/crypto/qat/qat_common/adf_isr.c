@@ -238,7 +238,7 @@ static int adf_isr_alloc_msix_entry_table(struct adf_accel_dev *accel_dev)
 	if (!accel_dev->pf.vf_info)
 		msix_num_entries += hw_data->num_banks;
 
-	entries = kzalloc_node(msix_num_entries * sizeof(*entries),
+	entries = kcalloc_node(msix_num_entries, sizeof(*entries),
 			       GFP_KERNEL, dev_to_node(&GET_DEV(accel_dev)));
 	if (!entries)
 		return -ENOMEM;
@@ -302,7 +302,7 @@ static void adf_cleanup_bh(struct adf_accel_dev *accel_dev)
 }
 
 /**
- * adf_vf_isr_resource_free() - Free IRQ for acceleration device
+ * adf_isr_resource_free() - Free IRQ for acceleration device
  * @accel_dev:  Pointer to acceleration device.
  *
  * Function frees interrupts for acceleration device.
@@ -317,7 +317,7 @@ void adf_isr_resource_free(struct adf_accel_dev *accel_dev)
 EXPORT_SYMBOL_GPL(adf_isr_resource_free);
 
 /**
- * adf_vf_isr_resource_alloc() - Allocate IRQ for acceleration device
+ * adf_isr_resource_alloc() - Allocate IRQ for acceleration device
  * @accel_dev:  Pointer to acceleration device.
  *
  * Function allocates interrupts for acceleration device.

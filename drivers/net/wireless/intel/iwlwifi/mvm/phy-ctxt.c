@@ -7,6 +7,8 @@
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2014 Intel Mobile Communications GmbH
+ * Copyright(c) 2017           Intel Deutschland GmbH
+ * Copyright(c) 2018           Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -16,11 +18,6 @@
  * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110,
- * USA
  *
  * The full GNU General Public License is included in this distribution
  * in the file called COPYING.
@@ -33,6 +30,7 @@
  *
  * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2014 Intel Mobile Communications GmbH
+ * Copyright(c) 2018           Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -147,7 +145,7 @@ static void iwl_mvm_phy_ctxt_cmd_data(struct iwl_mvm *mvm,
 	u8 active_cnt, idle_cnt;
 
 	/* Set the channel info data */
-	cmd->ci.band = (chandef->chan->band == IEEE80211_BAND_2GHZ ?
+	cmd->ci.band = (chandef->chan->band == NL80211_BAND_2GHZ ?
 	      PHY_BAND_24 : PHY_BAND_5);
 
 	cmd->ci.channel = chandef->chan->hw_value;
@@ -250,12 +248,31 @@ int iwl_mvm_phy_ctxt_changed(struct iwl_mvm *mvm, struct iwl_mvm_phy_ctxt *ctxt,
 			     struct cfg80211_chan_def *chandef,
 			     u8 chains_static, u8 chains_dynamic)
 {
+	enum iwl_ctxt_action action = FW_CTXT_ACTION_MODIFY;
+
 	lockdep_assert_held(&mvm->mutex);
 
+	if (fw_has_capa(&mvm->fw->ucode_capa,
+			IWL_UCODE_TLV_CAPA_BINDING_CDB_SUPPORT) &&
+	    ctxt->channel->band != chandef->chan->band) {
+		int ret;
+
+		/* ... remove it here ...*/
+		ret = iwl_mvm_phy_ctxt_apply(mvm, ctxt, chandef,
+					     chains_static, chains_dynamic,
+					     FW_CTXT_ACTION_REMOVE, 0);
+		if (ret)
+			return ret;
+
+		/* ... and proceed to add it again */
+		action = FW_CTXT_ACTION_ADD;
+	}
+
 	ctxt->channel = chandef->chan;
+	ctxt->width = chandef->width;
 	return iwl_mvm_phy_ctxt_apply(mvm, ctxt, chandef,
 				      chains_static, chains_dynamic,
-				      FW_CTXT_ACTION_MODIFY, 0);
+				      action, 0);
 }
 
 void iwl_mvm_phy_ctxt_unref(struct iwl_mvm *mvm, struct iwl_mvm_phy_ctxt *ctxt)
@@ -266,6 +283,20 @@ void iwl_mvm_phy_ctxt_unref(struct iwl_mvm *mvm, struct iwl_mvm_phy_ctxt *ctxt)
 		return;
 
 	ctxt->ref--;
+
+	/*
+	 * Move unused phy's to a default channel. When the phy is moved the,
+	 * fw will cleanup immediate quiet bit if it was previously set,
+	 * otherwise we might not be able to reuse this phy.
+	 */
+	if (ctxt->ref == 0) {
+		struct ieee80211_channel *chan;
+		struct cfg80211_chan_def chandef;
+
+		chan = &mvm->hw->wiphy->bands[NL80211_BAND_2GHZ]->channels[0];
+		cfg80211_chandef_create(&chandef, chan, NL80211_CHAN_NO_HT);
+		iwl_mvm_phy_ctxt_changed(mvm, ctxt, &chandef, 1, 1);
+	}
 }
 
 static void iwl_mvm_binding_iterator(void *_data, u8 *mac,

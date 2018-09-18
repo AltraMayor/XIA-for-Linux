@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
+#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/i2c.h>
@@ -53,6 +54,7 @@ static const struct reg_sequence init_list[] = {
 	{RT5616_PR_BASE + 0x21,	0x4040},
 	{RT5616_PR_BASE + 0x23,	0x0004},
 };
+
 #define RT5616_INIT_REG_LEN ARRAY_SIZE(init_list)
 
 static const struct reg_default rt5616_reg[] = {
@@ -96,7 +98,7 @@ static const struct reg_default rt5616_reg[] = {
 	{ 0x8e, 0x0004 },
 	{ 0x8f, 0x1100 },
 	{ 0x90, 0x0000 },
-	{ 0x91, 0x0000 },
+	{ 0x91, 0x0c00 },
 	{ 0x92, 0x0000 },
 	{ 0x93, 0x2000 },
 	{ 0x94, 0x0200 },
@@ -140,9 +142,10 @@ static const struct reg_default rt5616_reg[] = {
 };
 
 struct rt5616_priv {
-	struct snd_soc_codec *codec;
+	struct snd_soc_component *component;
 	struct delayed_work patch_work;
 	struct regmap *regmap;
+	struct clk *mclk;
 
 	int sysclk;
 	int sysclk_src;
@@ -162,9 +165,8 @@ static bool rt5616_volatile_register(struct device *dev, unsigned int reg)
 
 	for (i = 0; i < ARRAY_SIZE(rt5616_ranges); i++) {
 		if (reg >= rt5616_ranges[i].range_min &&
-			reg <= rt5616_ranges[i].range_max) {
+		    reg <= rt5616_ranges[i].range_max)
 			return true;
-		}
 	}
 
 	switch (reg) {
@@ -190,9 +192,8 @@ static bool rt5616_readable_register(struct device *dev, unsigned int reg)
 
 	for (i = 0; i < ARRAY_SIZE(rt5616_ranges); i++) {
 		if (reg >= rt5616_ranges[i].range_min &&
-			reg <= rt5616_ranges[i].range_max) {
+		    reg <= rt5616_ranges[i].range_max)
 			return true;
-		}
 	}
 
 	switch (reg) {
@@ -293,8 +294,7 @@ static const DECLARE_TLV_DB_SCALE(adc_vol_tlv, -17625, 375, 0);
 static const DECLARE_TLV_DB_SCALE(adc_bst_tlv, 0, 1200, 0);
 
 /* {0, +20, +24, +30, +35, +40, +44, +50, +52} dB */
-static unsigned int bst_tlv[] = {
-	TLV_DB_RANGE_HEAD(7),
+static const SNDRV_CTL_TLVD_DECLARE_DB_RANGE(bst_tlv,
 	0, 0, TLV_DB_SCALE_ITEM(0, 0, 0),
 	1, 1, TLV_DB_SCALE_ITEM(2000, 0, 0),
 	2, 2, TLV_DB_SCALE_ITEM(2400, 0, 0),
@@ -302,54 +302,56 @@ static unsigned int bst_tlv[] = {
 	6, 6, TLV_DB_SCALE_ITEM(4400, 0, 0),
 	7, 7, TLV_DB_SCALE_ITEM(5000, 0, 0),
 	8, 8, TLV_DB_SCALE_ITEM(5200, 0, 0),
-};
+);
 
 static const struct snd_kcontrol_new rt5616_snd_controls[] = {
 	/* Headphone Output Volume */
 	SOC_DOUBLE("HP Playback Switch", RT5616_HP_VOL,
-		RT5616_L_MUTE_SFT, RT5616_R_MUTE_SFT, 1, 1),
+		   RT5616_L_MUTE_SFT, RT5616_R_MUTE_SFT, 1, 1),
+	SOC_DOUBLE("HPVOL Playback Switch", RT5616_HP_VOL,
+		   RT5616_VOL_L_SFT, RT5616_VOL_R_SFT, 1, 1),
 	SOC_DOUBLE_TLV("HP Playback Volume", RT5616_HP_VOL,
-		RT5616_L_VOL_SFT, RT5616_R_VOL_SFT, 39, 1, out_vol_tlv),
+		       RT5616_L_VOL_SFT, RT5616_R_VOL_SFT, 39, 1, out_vol_tlv),
 	/* OUTPUT Control */
 	SOC_DOUBLE("OUT Playback Switch", RT5616_LOUT_CTRL1,
-		RT5616_L_MUTE_SFT, RT5616_R_MUTE_SFT, 1, 1),
+		   RT5616_L_MUTE_SFT, RT5616_R_MUTE_SFT, 1, 1),
 	SOC_DOUBLE("OUT Channel Switch", RT5616_LOUT_CTRL1,
-		RT5616_VOL_L_SFT, RT5616_VOL_R_SFT, 1, 1),
+		   RT5616_VOL_L_SFT, RT5616_VOL_R_SFT, 1, 1),
 	SOC_DOUBLE_TLV("OUT Playback Volume", RT5616_LOUT_CTRL1,
-		RT5616_L_VOL_SFT, RT5616_R_VOL_SFT, 39, 1, out_vol_tlv),
+		       RT5616_L_VOL_SFT, RT5616_R_VOL_SFT, 39, 1, out_vol_tlv),
 
 	/* DAC Digital Volume */
 	SOC_DOUBLE_TLV("DAC1 Playback Volume", RT5616_DAC1_DIG_VOL,
-			RT5616_L_VOL_SFT, RT5616_R_VOL_SFT,
-			175, 0, dac_vol_tlv),
+		       RT5616_L_VOL_SFT, RT5616_R_VOL_SFT,
+		       175, 0, dac_vol_tlv),
 	/* IN1/IN2 Control */
 	SOC_SINGLE_TLV("IN1 Boost Volume", RT5616_IN1_IN2,
-		RT5616_BST_SFT1, 8, 0, bst_tlv),
+		       RT5616_BST_SFT1, 8, 0, bst_tlv),
 	SOC_SINGLE_TLV("IN2 Boost Volume", RT5616_IN1_IN2,
-		RT5616_BST_SFT2, 8, 0, bst_tlv),
+		       RT5616_BST_SFT2, 8, 0, bst_tlv),
 	/* INL/INR Volume Control */
 	SOC_DOUBLE_TLV("IN Capture Volume", RT5616_INL1_INR1_VOL,
-			RT5616_INL_VOL_SFT, RT5616_INR_VOL_SFT,
-			31, 1, in_vol_tlv),
+		       RT5616_INL_VOL_SFT, RT5616_INR_VOL_SFT,
+		       31, 1, in_vol_tlv),
 	/* ADC Digital Volume Control */
 	SOC_DOUBLE("ADC Capture Switch", RT5616_ADC_DIG_VOL,
-		RT5616_L_MUTE_SFT, RT5616_R_MUTE_SFT, 1, 1),
+		   RT5616_L_MUTE_SFT, RT5616_R_MUTE_SFT, 1, 1),
 	SOC_DOUBLE_TLV("ADC Capture Volume", RT5616_ADC_DIG_VOL,
-			RT5616_L_VOL_SFT, RT5616_R_VOL_SFT,
-			127, 0, adc_vol_tlv),
+		       RT5616_L_VOL_SFT, RT5616_R_VOL_SFT,
+		       127, 0, adc_vol_tlv),
 
 	/* ADC Boost Volume Control */
 	SOC_DOUBLE_TLV("ADC Boost Volume", RT5616_ADC_BST_VOL,
-			RT5616_ADC_L_BST_SFT, RT5616_ADC_R_BST_SFT,
-			3, 0, adc_bst_tlv),
+		       RT5616_ADC_L_BST_SFT, RT5616_ADC_R_BST_SFT,
+		       3, 0, adc_bst_tlv),
 };
 
 static int is_sys_clk_from_pll(struct snd_soc_dapm_widget *source,
-			 struct snd_soc_dapm_widget *sink)
+			       struct snd_soc_dapm_widget *sink)
 {
 	unsigned int val;
 
-	val = snd_soc_read(snd_soc_dapm_to_codec(source->dapm), RT5616_GLB_CLK);
+	val = snd_soc_component_read32(snd_soc_dapm_to_component(source->dapm), RT5616_GLB_CLK);
 	val &= RT5616_SCLK_SRC_MASK;
 	if (val == RT5616_SCLK_SRC_PLL1)
 		return 1;
@@ -462,20 +464,20 @@ static const struct snd_kcontrol_new rt5616_lout_mix[] = {
 };
 
 static int rt5616_adc_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
+			    struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
-		snd_soc_update_bits(codec, RT5616_ADC_DIG_VOL,
-				RT5616_L_MUTE | RT5616_R_MUTE, 0);
+		snd_soc_component_update_bits(component, RT5616_ADC_DIG_VOL,
+				    RT5616_L_MUTE | RT5616_R_MUTE, 0);
 		break;
 
 	case SND_SOC_DAPM_POST_PMD:
-		snd_soc_update_bits(codec, RT5616_ADC_DIG_VOL,
-				RT5616_L_MUTE | RT5616_R_MUTE,
-				RT5616_L_MUTE | RT5616_R_MUTE);
+		snd_soc_component_update_bits(component, RT5616_ADC_DIG_VOL,
+				    RT5616_L_MUTE | RT5616_R_MUTE,
+				    RT5616_L_MUTE | RT5616_R_MUTE);
 		break;
 
 	default:
@@ -486,62 +488,63 @@ static int rt5616_adc_event(struct snd_soc_dapm_widget *w,
 }
 
 static int rt5616_charge_pump_event(struct snd_soc_dapm_widget *w,
-			   struct snd_kcontrol *kcontrol, int event)
+				    struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
 		/* depop parameters */
-		snd_soc_update_bits(codec, RT5616_DEPOP_M2,
-			RT5616_DEPOP_MASK, RT5616_DEPOP_MAN);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_HP_CP_MASK | RT5616_HP_SG_MASK |
-			RT5616_HP_CB_MASK, RT5616_HP_CP_PU |
-			RT5616_HP_SG_DIS | RT5616_HP_CB_PU);
-		snd_soc_write(codec, RT5616_PR_BASE +
-			RT5616_HP_DCC_INT1, 0x9f00);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M2,
+				    RT5616_DEPOP_MASK, RT5616_DEPOP_MAN);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_HP_CP_MASK | RT5616_HP_SG_MASK |
+				    RT5616_HP_CB_MASK, RT5616_HP_CP_PU |
+				    RT5616_HP_SG_DIS | RT5616_HP_CB_PU);
+		snd_soc_component_write(component, RT5616_PR_BASE +
+			      RT5616_HP_DCC_INT1, 0x9f00);
 		/* headphone amp power on */
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-			RT5616_PWR_FV1 | RT5616_PWR_FV2, 0);
-		snd_soc_update_bits(codec, RT5616_PWR_VOL,
-			RT5616_PWR_HV_L | RT5616_PWR_HV_R,
-			RT5616_PWR_HV_L | RT5616_PWR_HV_R);
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-			RT5616_PWR_HP_L | RT5616_PWR_HP_R |
-			RT5616_PWR_HA, RT5616_PWR_HP_L |
-			RT5616_PWR_HP_R | RT5616_PWR_HA);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+				    RT5616_PWR_FV1 | RT5616_PWR_FV2, 0);
+		snd_soc_component_update_bits(component, RT5616_PWR_VOL,
+				    RT5616_PWR_HV_L | RT5616_PWR_HV_R,
+				    RT5616_PWR_HV_L | RT5616_PWR_HV_R);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+				    RT5616_PWR_HP_L | RT5616_PWR_HP_R |
+				    RT5616_PWR_HA, RT5616_PWR_HP_L |
+				    RT5616_PWR_HP_R | RT5616_PWR_HA);
 		msleep(50);
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-			RT5616_PWR_FV1 | RT5616_PWR_FV2,
-			RT5616_PWR_FV1 | RT5616_PWR_FV2);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+				    RT5616_PWR_FV1 | RT5616_PWR_FV2,
+				    RT5616_PWR_FV1 | RT5616_PWR_FV2);
 
-		snd_soc_update_bits(codec, RT5616_CHARGE_PUMP,
-			RT5616_PM_HP_MASK, RT5616_PM_HP_HV);
-		snd_soc_update_bits(codec, RT5616_PR_BASE +
-			RT5616_CHOP_DAC_ADC, 0x0200, 0x0200);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_HP_CO_MASK | RT5616_HP_SG_MASK,
-			RT5616_HP_CO_EN | RT5616_HP_SG_EN);
+		snd_soc_component_update_bits(component, RT5616_CHARGE_PUMP,
+				    RT5616_PM_HP_MASK, RT5616_PM_HP_HV);
+		snd_soc_component_update_bits(component, RT5616_PR_BASE +
+				    RT5616_CHOP_DAC_ADC, 0x0200, 0x0200);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_HP_CO_MASK | RT5616_HP_SG_MASK,
+				    RT5616_HP_CO_EN | RT5616_HP_SG_EN);
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
-		snd_soc_update_bits(codec, RT5616_PR_BASE +
-			RT5616_CHOP_DAC_ADC, 0x0200, 0x0);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_HP_SG_MASK | RT5616_HP_L_SMT_MASK |
-			RT5616_HP_R_SMT_MASK, RT5616_HP_SG_DIS |
-			RT5616_HP_L_SMT_DIS | RT5616_HP_R_SMT_DIS);
+		snd_soc_component_update_bits(component, RT5616_PR_BASE +
+				    RT5616_CHOP_DAC_ADC, 0x0200, 0x0);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_HP_SG_MASK | RT5616_HP_L_SMT_MASK |
+				    RT5616_HP_R_SMT_MASK, RT5616_HP_SG_DIS |
+				    RT5616_HP_L_SMT_DIS | RT5616_HP_R_SMT_DIS);
 		/* headphone amp power down */
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_SMT_TRIG_MASK | RT5616_HP_CD_PD_MASK |
-			RT5616_HP_CO_MASK | RT5616_HP_CP_MASK |
-			RT5616_HP_SG_MASK | RT5616_HP_CB_MASK,
-			RT5616_SMT_TRIG_DIS | RT5616_HP_CD_PD_EN |
-			RT5616_HP_CO_DIS | RT5616_HP_CP_PD |
-			RT5616_HP_SG_EN | RT5616_HP_CB_PD);
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-			RT5616_PWR_HP_L | RT5616_PWR_HP_R |
-			RT5616_PWR_HA, 0);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_SMT_TRIG_MASK |
+				    RT5616_HP_CD_PD_MASK | RT5616_HP_CO_MASK |
+				    RT5616_HP_CP_MASK | RT5616_HP_SG_MASK |
+				    RT5616_HP_CB_MASK,
+				    RT5616_SMT_TRIG_DIS | RT5616_HP_CD_PD_EN |
+				    RT5616_HP_CO_DIS | RT5616_HP_CP_PD |
+				    RT5616_HP_SG_EN | RT5616_HP_CB_PD);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+				    RT5616_PWR_HP_L | RT5616_PWR_HP_R |
+				    RT5616_PWR_HA, 0);
 		break;
 	default:
 		return 0;
@@ -551,65 +554,65 @@ static int rt5616_charge_pump_event(struct snd_soc_dapm_widget *w,
 }
 
 static int rt5616_hp_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
+			   struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
 		/* headphone unmute sequence */
-		snd_soc_update_bits(codec, RT5616_DEPOP_M3,
-			RT5616_CP_FQ1_MASK | RT5616_CP_FQ2_MASK |
-			RT5616_CP_FQ3_MASK,
-			(RT5616_CP_FQ_192_KHZ << RT5616_CP_FQ1_SFT) |
-			(RT5616_CP_FQ_12_KHZ << RT5616_CP_FQ2_SFT) |
-			(RT5616_CP_FQ_192_KHZ << RT5616_CP_FQ3_SFT));
-		snd_soc_write(codec, RT5616_PR_BASE +
-			RT5616_MAMP_INT_REG2, 0xfc00);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_SMT_TRIG_MASK, RT5616_SMT_TRIG_EN);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_RSTN_MASK, RT5616_RSTN_EN);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_RSTN_MASK | RT5616_HP_L_SMT_MASK |
-			RT5616_HP_R_SMT_MASK, RT5616_RSTN_DIS |
-			RT5616_HP_L_SMT_EN | RT5616_HP_R_SMT_EN);
-		snd_soc_update_bits(codec, RT5616_HP_VOL,
-			RT5616_L_MUTE | RT5616_R_MUTE, 0);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M3,
+				    RT5616_CP_FQ1_MASK | RT5616_CP_FQ2_MASK |
+				    RT5616_CP_FQ3_MASK,
+				    RT5616_CP_FQ_192_KHZ << RT5616_CP_FQ1_SFT |
+				    RT5616_CP_FQ_12_KHZ << RT5616_CP_FQ2_SFT |
+				    RT5616_CP_FQ_192_KHZ << RT5616_CP_FQ3_SFT);
+		snd_soc_component_write(component, RT5616_PR_BASE +
+			      RT5616_MAMP_INT_REG2, 0xfc00);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_SMT_TRIG_MASK, RT5616_SMT_TRIG_EN);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_RSTN_MASK, RT5616_RSTN_EN);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_RSTN_MASK | RT5616_HP_L_SMT_MASK |
+				    RT5616_HP_R_SMT_MASK, RT5616_RSTN_DIS |
+				    RT5616_HP_L_SMT_EN | RT5616_HP_R_SMT_EN);
+		snd_soc_component_update_bits(component, RT5616_HP_VOL,
+				    RT5616_L_MUTE | RT5616_R_MUTE, 0);
 		msleep(100);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_HP_SG_MASK | RT5616_HP_L_SMT_MASK |
-			RT5616_HP_R_SMT_MASK, RT5616_HP_SG_DIS |
-			RT5616_HP_L_SMT_DIS | RT5616_HP_R_SMT_DIS);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_HP_SG_MASK | RT5616_HP_L_SMT_MASK |
+				    RT5616_HP_R_SMT_MASK, RT5616_HP_SG_DIS |
+				    RT5616_HP_L_SMT_DIS | RT5616_HP_R_SMT_DIS);
 		msleep(20);
-		snd_soc_update_bits(codec, RT5616_HP_CALIB_AMP_DET,
-			RT5616_HPD_PS_MASK, RT5616_HPD_PS_EN);
+		snd_soc_component_update_bits(component, RT5616_HP_CALIB_AMP_DET,
+				    RT5616_HPD_PS_MASK, RT5616_HPD_PS_EN);
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
 		/* headphone mute sequence */
-		snd_soc_update_bits(codec, RT5616_DEPOP_M3,
-			RT5616_CP_FQ1_MASK | RT5616_CP_FQ2_MASK |
-			RT5616_CP_FQ3_MASK,
-			(RT5616_CP_FQ_96_KHZ << RT5616_CP_FQ1_SFT) |
-			(RT5616_CP_FQ_12_KHZ << RT5616_CP_FQ2_SFT) |
-			(RT5616_CP_FQ_96_KHZ << RT5616_CP_FQ3_SFT));
-		snd_soc_write(codec, RT5616_PR_BASE +
-			RT5616_MAMP_INT_REG2, 0xfc00);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_HP_SG_MASK, RT5616_HP_SG_EN);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_RSTP_MASK, RT5616_RSTP_EN);
-		snd_soc_update_bits(codec, RT5616_DEPOP_M1,
-			RT5616_RSTP_MASK | RT5616_HP_L_SMT_MASK |
-			RT5616_HP_R_SMT_MASK, RT5616_RSTP_DIS |
-			RT5616_HP_L_SMT_EN | RT5616_HP_R_SMT_EN);
-		snd_soc_update_bits(codec, RT5616_HP_CALIB_AMP_DET,
-			RT5616_HPD_PS_MASK, RT5616_HPD_PS_DIS);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M3,
+				    RT5616_CP_FQ1_MASK | RT5616_CP_FQ2_MASK |
+				    RT5616_CP_FQ3_MASK,
+				    RT5616_CP_FQ_96_KHZ << RT5616_CP_FQ1_SFT |
+				    RT5616_CP_FQ_12_KHZ << RT5616_CP_FQ2_SFT |
+				    RT5616_CP_FQ_96_KHZ << RT5616_CP_FQ3_SFT);
+		snd_soc_component_write(component, RT5616_PR_BASE +
+			      RT5616_MAMP_INT_REG2, 0xfc00);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_HP_SG_MASK, RT5616_HP_SG_EN);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_RSTP_MASK, RT5616_RSTP_EN);
+		snd_soc_component_update_bits(component, RT5616_DEPOP_M1,
+				    RT5616_RSTP_MASK | RT5616_HP_L_SMT_MASK |
+				    RT5616_HP_R_SMT_MASK, RT5616_RSTP_DIS |
+				    RT5616_HP_L_SMT_EN | RT5616_HP_R_SMT_EN);
+		snd_soc_component_update_bits(component, RT5616_HP_CALIB_AMP_DET,
+				    RT5616_HPD_PS_MASK, RT5616_HPD_PS_DIS);
 		msleep(90);
-		snd_soc_update_bits(codec, RT5616_HP_VOL,
-			RT5616_L_MUTE | RT5616_R_MUTE,
-			RT5616_L_MUTE | RT5616_R_MUTE);
+		snd_soc_component_update_bits(component, RT5616_HP_VOL,
+				    RT5616_L_MUTE | RT5616_R_MUTE,
+				    RT5616_L_MUTE | RT5616_R_MUTE);
 		msleep(30);
 		break;
 
@@ -621,24 +624,24 @@ static int rt5616_hp_event(struct snd_soc_dapm_widget *w,
 }
 
 static int rt5616_lout_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
+			     struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-			RT5616_PWR_LM, RT5616_PWR_LM);
-		snd_soc_update_bits(codec, RT5616_LOUT_CTRL1,
-			RT5616_L_MUTE | RT5616_R_MUTE, 0);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+				    RT5616_PWR_LM, RT5616_PWR_LM);
+		snd_soc_component_update_bits(component, RT5616_LOUT_CTRL1,
+				    RT5616_L_MUTE | RT5616_R_MUTE, 0);
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		snd_soc_update_bits(codec, RT5616_LOUT_CTRL1,
-			RT5616_L_MUTE | RT5616_R_MUTE,
-			RT5616_L_MUTE | RT5616_R_MUTE);
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-			RT5616_PWR_LM, 0);
+		snd_soc_component_update_bits(component, RT5616_LOUT_CTRL1,
+				    RT5616_L_MUTE | RT5616_R_MUTE,
+				    RT5616_L_MUTE | RT5616_R_MUTE);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+				    RT5616_PWR_LM, 0);
 		break;
 
 	default:
@@ -649,19 +652,19 @@ static int rt5616_lout_event(struct snd_soc_dapm_widget *w,
 }
 
 static int rt5616_bst1_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
+			     struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG2,
-			RT5616_PWR_BST1_OP2, RT5616_PWR_BST1_OP2);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG2,
+				    RT5616_PWR_BST1_OP2, RT5616_PWR_BST1_OP2);
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG2,
-			RT5616_PWR_BST1_OP2, 0);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG2,
+				    RT5616_PWR_BST1_OP2, 0);
 		break;
 
 	default:
@@ -672,19 +675,19 @@ static int rt5616_bst1_event(struct snd_soc_dapm_widget *w,
 }
 
 static int rt5616_bst2_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
+			     struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG2,
-			RT5616_PWR_BST2_OP2, RT5616_PWR_BST2_OP2);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG2,
+				    RT5616_PWR_BST2_OP2, RT5616_PWR_BST2_OP2);
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		snd_soc_update_bits(codec, RT5616_PWR_ANLG2,
-			RT5616_PWR_BST2_OP2, 0);
+		snd_soc_component_update_bits(component, RT5616_PWR_ANLG2,
+				    RT5616_PWR_BST2_OP2, 0);
 		break;
 
 	default:
@@ -696,13 +699,13 @@ static int rt5616_bst2_event(struct snd_soc_dapm_widget *w,
 
 static const struct snd_soc_dapm_widget rt5616_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY("PLL1", RT5616_PWR_ANLG2,
-			RT5616_PWR_PLL_BIT, 0, NULL, 0),
+			    RT5616_PWR_PLL_BIT, 0, NULL, 0),
 	/* Input Side */
 	/* micbias */
 	SND_SOC_DAPM_SUPPLY("LDO", RT5616_PWR_ANLG1,
-			RT5616_PWR_LDO_BIT, 0, NULL, 0),
+			    RT5616_PWR_LDO_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_SUPPLY("micbias1", RT5616_PWR_ANLG2,
-			RT5616_PWR_MB1_BIT, 0, NULL, 0),
+			    RT5616_PWR_MB1_BIT, 0, NULL, 0),
 
 	/* Input Lines */
 	SND_SOC_DAPM_INPUT("MIC1"),
@@ -714,45 +717,47 @@ static const struct snd_soc_dapm_widget rt5616_dapm_widgets[] = {
 
 	/* Boost */
 	SND_SOC_DAPM_PGA_E("BST1", RT5616_PWR_ANLG2,
-		RT5616_PWR_BST1_BIT, 0, NULL, 0, rt5616_bst1_event,
-		SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
+			   RT5616_PWR_BST1_BIT, 0, NULL, 0, rt5616_bst1_event,
+			   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_PGA_E("BST2", RT5616_PWR_ANLG2,
-		RT5616_PWR_BST2_BIT, 0, NULL, 0, rt5616_bst2_event,
-		SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
+			   RT5616_PWR_BST2_BIT, 0, NULL, 0, rt5616_bst2_event,
+			   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
 	/* Input Volume */
 	SND_SOC_DAPM_PGA("INL1 VOL", RT5616_PWR_VOL,
-		RT5616_PWR_IN1_L_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN1_L_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INR1 VOL", RT5616_PWR_VOL,
-		RT5616_PWR_IN1_R_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN1_R_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INL2 VOL", RT5616_PWR_VOL,
-		RT5616_PWR_IN2_L_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN2_L_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INR2 VOL", RT5616_PWR_VOL,
-		RT5616_PWR_IN2_R_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN2_R_BIT, 0, NULL, 0),
 
 	/* REC Mixer */
 	SND_SOC_DAPM_MIXER("RECMIXL", RT5616_PWR_MIXER, RT5616_PWR_RM_L_BIT, 0,
-			rt5616_rec_l_mix, ARRAY_SIZE(rt5616_rec_l_mix)),
+			   rt5616_rec_l_mix, ARRAY_SIZE(rt5616_rec_l_mix)),
 	SND_SOC_DAPM_MIXER("RECMIXR", RT5616_PWR_MIXER, RT5616_PWR_RM_R_BIT, 0,
-			rt5616_rec_r_mix, ARRAY_SIZE(rt5616_rec_r_mix)),
+			   rt5616_rec_r_mix, ARRAY_SIZE(rt5616_rec_r_mix)),
 	/* ADCs */
 	SND_SOC_DAPM_ADC_E("ADC L", NULL, RT5616_PWR_DIG1,
-		RT5616_PWR_ADC_L_BIT, 0, rt5616_adc_event,
-		SND_SOC_DAPM_POST_PMD | SND_SOC_DAPM_POST_PMU),
+			   RT5616_PWR_ADC_L_BIT, 0, rt5616_adc_event,
+			   SND_SOC_DAPM_POST_PMD | SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_ADC_E("ADC R", NULL, RT5616_PWR_DIG1,
-		RT5616_PWR_ADC_R_BIT, 0, rt5616_adc_event,
-		SND_SOC_DAPM_POST_PMD | SND_SOC_DAPM_POST_PMU),
+			   RT5616_PWR_ADC_R_BIT, 0, rt5616_adc_event,
+			   SND_SOC_DAPM_POST_PMD | SND_SOC_DAPM_POST_PMU),
 
 	/* ADC Mixer */
 	SND_SOC_DAPM_SUPPLY("stereo1 filter", RT5616_PWR_DIG2,
-		RT5616_PWR_ADC_STO1_F_BIT, 0, NULL, 0),
+			    RT5616_PWR_ADC_STO1_F_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_MIXER("Stereo1 ADC MIXL", SND_SOC_NOPM, 0, 0,
-		rt5616_sto1_adc_l_mix, ARRAY_SIZE(rt5616_sto1_adc_l_mix)),
+			   rt5616_sto1_adc_l_mix,
+			   ARRAY_SIZE(rt5616_sto1_adc_l_mix)),
 	SND_SOC_DAPM_MIXER("Stereo1 ADC MIXR", SND_SOC_NOPM, 0, 0,
-		rt5616_sto1_adc_r_mix, ARRAY_SIZE(rt5616_sto1_adc_r_mix)),
+			   rt5616_sto1_adc_r_mix,
+			   ARRAY_SIZE(rt5616_sto1_adc_r_mix)),
 
 	/* Digital Interface */
 	SND_SOC_DAPM_SUPPLY("I2S1", RT5616_PWR_DIG1,
-		RT5616_PWR_I2S1_BIT, 0, NULL, 0),
+			    RT5616_PWR_I2S1_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("IF1 DAC", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("IF1 DAC1 L", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("IF1 DAC1 R", SND_SOC_NOPM, 0, 0, NULL, 0),
@@ -770,68 +775,70 @@ static const struct snd_soc_dapm_widget rt5616_dapm_widgets[] = {
 	/* Output Side */
 	/* DAC mixer before sound effect  */
 	SND_SOC_DAPM_MIXER("DAC MIXL", SND_SOC_NOPM, 0, 0,
-		rt5616_dac_l_mix, ARRAY_SIZE(rt5616_dac_l_mix)),
+			   rt5616_dac_l_mix, ARRAY_SIZE(rt5616_dac_l_mix)),
 	SND_SOC_DAPM_MIXER("DAC MIXR", SND_SOC_NOPM, 0, 0,
-		rt5616_dac_r_mix, ARRAY_SIZE(rt5616_dac_r_mix)),
+			   rt5616_dac_r_mix, ARRAY_SIZE(rt5616_dac_r_mix)),
 
 	SND_SOC_DAPM_SUPPLY("Stero1 DAC Power", RT5616_PWR_DIG2,
-			RT5616_PWR_DAC_STO1_F_BIT, 0, NULL, 0),
+			    RT5616_PWR_DAC_STO1_F_BIT, 0, NULL, 0),
 
 	/* DAC Mixer */
 	SND_SOC_DAPM_MIXER("Stereo DAC MIXL", SND_SOC_NOPM, 0, 0,
-		rt5616_sto_dac_l_mix, ARRAY_SIZE(rt5616_sto_dac_l_mix)),
+			   rt5616_sto_dac_l_mix,
+			   ARRAY_SIZE(rt5616_sto_dac_l_mix)),
 	SND_SOC_DAPM_MIXER("Stereo DAC MIXR", SND_SOC_NOPM, 0, 0,
-		rt5616_sto_dac_r_mix, ARRAY_SIZE(rt5616_sto_dac_r_mix)),
+			   rt5616_sto_dac_r_mix,
+			   ARRAY_SIZE(rt5616_sto_dac_r_mix)),
 
 	/* DACs */
 	SND_SOC_DAPM_DAC("DAC L1", NULL, RT5616_PWR_DIG1,
-			RT5616_PWR_DAC_L1_BIT, 0),
+			 RT5616_PWR_DAC_L1_BIT, 0),
 	SND_SOC_DAPM_DAC("DAC R1", NULL, RT5616_PWR_DIG1,
-			RT5616_PWR_DAC_R1_BIT, 0),
+			 RT5616_PWR_DAC_R1_BIT, 0),
 	/* OUT Mixer */
 	SND_SOC_DAPM_MIXER("OUT MIXL", RT5616_PWR_MIXER, RT5616_PWR_OM_L_BIT,
-		0, rt5616_out_l_mix, ARRAY_SIZE(rt5616_out_l_mix)),
+			   0, rt5616_out_l_mix, ARRAY_SIZE(rt5616_out_l_mix)),
 	SND_SOC_DAPM_MIXER("OUT MIXR", RT5616_PWR_MIXER, RT5616_PWR_OM_R_BIT,
-		0, rt5616_out_r_mix, ARRAY_SIZE(rt5616_out_r_mix)),
+			   0, rt5616_out_r_mix, ARRAY_SIZE(rt5616_out_r_mix)),
 	/* Output Volume */
 	SND_SOC_DAPM_PGA("OUTVOL L", RT5616_PWR_VOL,
-		RT5616_PWR_OV_L_BIT, 0, NULL, 0),
+			 RT5616_PWR_OV_L_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("OUTVOL R", RT5616_PWR_VOL,
-		RT5616_PWR_OV_R_BIT, 0, NULL, 0),
+			 RT5616_PWR_OV_R_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("HPOVOL L", RT5616_PWR_VOL,
-		RT5616_PWR_HV_L_BIT, 0, NULL, 0),
+			 RT5616_PWR_HV_L_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("HPOVOL R", RT5616_PWR_VOL,
-		RT5616_PWR_HV_R_BIT, 0, NULL, 0),
+			 RT5616_PWR_HV_R_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("DAC 1", SND_SOC_NOPM,
-		0, 0, NULL, 0),
+			 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("DAC 2", SND_SOC_NOPM,
-		0, 0, NULL, 0),
+			 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("HPOVOL", SND_SOC_NOPM,
-		0, 0, NULL, 0),
+			 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INL1", RT5616_PWR_VOL,
-		RT5616_PWR_IN1_L_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN1_L_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INR1", RT5616_PWR_VOL,
-		RT5616_PWR_IN1_R_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN1_R_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INL2", RT5616_PWR_VOL,
-		RT5616_PWR_IN2_L_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN2_L_BIT, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("INR2", RT5616_PWR_VOL,
-		RT5616_PWR_IN2_R_BIT, 0, NULL, 0),
+			 RT5616_PWR_IN2_R_BIT, 0, NULL, 0),
 	/* HPO/LOUT/Mono Mixer */
 	SND_SOC_DAPM_MIXER("HPO MIX", SND_SOC_NOPM, 0, 0,
-		rt5616_hpo_mix, ARRAY_SIZE(rt5616_hpo_mix)),
+			   rt5616_hpo_mix, ARRAY_SIZE(rt5616_hpo_mix)),
 	SND_SOC_DAPM_MIXER("LOUT MIX", SND_SOC_NOPM, 0, 0,
-		rt5616_lout_mix, ARRAY_SIZE(rt5616_lout_mix)),
+			   rt5616_lout_mix, ARRAY_SIZE(rt5616_lout_mix)),
 
 	SND_SOC_DAPM_PGA_S("HP amp", 1, SND_SOC_NOPM, 0, 0,
-		rt5616_hp_event, SND_SOC_DAPM_PRE_PMD |
-		SND_SOC_DAPM_POST_PMU),
+			   rt5616_hp_event, SND_SOC_DAPM_PRE_PMD |
+			   SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_PGA_S("LOUT amp", 1, SND_SOC_NOPM, 0, 0,
-		rt5616_lout_event, SND_SOC_DAPM_PRE_PMD |
-		SND_SOC_DAPM_POST_PMU),
+			   rt5616_lout_event, SND_SOC_DAPM_PRE_PMD |
+			   SND_SOC_DAPM_POST_PMU),
 
 	SND_SOC_DAPM_SUPPLY_S("Charge Pump", 1, SND_SOC_NOPM, 0, 0,
-		rt5616_charge_pump_event, SND_SOC_DAPM_POST_PMU |
-		SND_SOC_DAPM_PRE_PMD),
+			      rt5616_charge_pump_event, SND_SOC_DAPM_POST_PMU |
+			      SND_SOC_DAPM_PRE_PMD),
 
 	/* Output Lines */
 	SND_SOC_DAPM_OUTPUT("HPOL"),
@@ -950,11 +957,11 @@ static const struct snd_soc_dapm_route rt5616_dapm_routes[] = {
 };
 
 static int rt5616_hw_params(struct snd_pcm_substream *substream,
-	struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
+			    struct snd_pcm_hw_params *params,
+			    struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = dai->component;
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 	unsigned int val_len = 0, val_clk, mask_clk;
 	int pre_div, bclk_ms, frame_size;
 
@@ -963,12 +970,12 @@ static int rt5616_hw_params(struct snd_pcm_substream *substream,
 	pre_div = rl6231_get_clk_info(rt5616->sysclk, rt5616->lrck[dai->id]);
 
 	if (pre_div < 0) {
-		dev_err(codec->dev, "Unsupported clock setting\n");
+		dev_err(component->dev, "Unsupported clock setting\n");
 		return -EINVAL;
 	}
 	frame_size = snd_soc_params_to_frame_size(params);
 	if (frame_size < 0) {
-		dev_err(codec->dev, "Unsupported frame size: %d\n", frame_size);
+		dev_err(component->dev, "Unsupported frame size: %d\n", frame_size);
 		return -EINVAL;
 	}
 	bclk_ms = frame_size > 32 ? 1 : 0;
@@ -977,7 +984,7 @@ static int rt5616_hw_params(struct snd_pcm_substream *substream,
 	dev_dbg(dai->dev, "bclk is %dHz and lrck is %dHz\n",
 		rt5616->bclk[dai->id], rt5616->lrck[dai->id]);
 	dev_dbg(dai->dev, "bclk_ms is %d and pre_div is %d for iis %d\n",
-				bclk_ms, pre_div, dai->id);
+		bclk_ms, pre_div, dai->id);
 
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
@@ -997,18 +1004,17 @@ static int rt5616_hw_params(struct snd_pcm_substream *substream,
 
 	mask_clk = RT5616_I2S_PD1_MASK;
 	val_clk = pre_div << RT5616_I2S_PD1_SFT;
-	snd_soc_update_bits(codec, RT5616_I2S1_SDP,
-		RT5616_I2S_DL_MASK, val_len);
-	snd_soc_update_bits(codec, RT5616_ADDA_CLK1, mask_clk, val_clk);
-
+	snd_soc_component_update_bits(component, RT5616_I2S1_SDP,
+			    RT5616_I2S_DL_MASK, val_len);
+	snd_soc_component_update_bits(component, RT5616_ADDA_CLK1, mask_clk, val_clk);
 
 	return 0;
 }
 
 static int rt5616_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
-	struct snd_soc_codec *codec = dai->codec;
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = dai->component;
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 	unsigned int reg_val = 0;
 
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
@@ -1049,19 +1055,18 @@ static int rt5616_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		return -EINVAL;
 	}
 
-	snd_soc_update_bits(codec, RT5616_I2S1_SDP,
-		RT5616_I2S_MS_MASK | RT5616_I2S_BP_MASK |
-		RT5616_I2S_DF_MASK, reg_val);
-
+	snd_soc_component_update_bits(component, RT5616_I2S1_SDP,
+			    RT5616_I2S_MS_MASK | RT5616_I2S_BP_MASK |
+			    RT5616_I2S_DF_MASK, reg_val);
 
 	return 0;
 }
 
 static int rt5616_set_dai_sysclk(struct snd_soc_dai *dai,
-		int clk_id, unsigned int freq, int dir)
+				 int clk_id, unsigned int freq, int dir)
 {
-	struct snd_soc_codec *codec = dai->codec;
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = dai->component;
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 	unsigned int reg_val = 0;
 
 	if (freq == rt5616->sysclk && clk_id == rt5616->sysclk_src)
@@ -1075,11 +1080,12 @@ static int rt5616_set_dai_sysclk(struct snd_soc_dai *dai,
 		reg_val |= RT5616_SCLK_SRC_PLL1;
 		break;
 	default:
-		dev_err(codec->dev, "Invalid clock id (%d)\n", clk_id);
+		dev_err(component->dev, "Invalid clock id (%d)\n", clk_id);
 		return -EINVAL;
 	}
-	snd_soc_update_bits(codec, RT5616_GLB_CLK,
-		RT5616_SCLK_SRC_MASK, reg_val);
+
+	snd_soc_component_update_bits(component, RT5616_GLB_CLK,
+			    RT5616_SCLK_SRC_MASK, reg_val);
 	rt5616->sysclk = freq;
 	rt5616->sysclk_src = clk_id;
 
@@ -1089,10 +1095,10 @@ static int rt5616_set_dai_sysclk(struct snd_soc_dai *dai,
 }
 
 static int rt5616_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
-			unsigned int freq_in, unsigned int freq_out)
+			      unsigned int freq_in, unsigned int freq_out)
 {
-	struct snd_soc_codec *codec = dai->codec;
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = dai->component;
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 	struct rl6231_pll_code pll_code;
 	int ret;
 
@@ -1101,45 +1107,49 @@ static int rt5616_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 		return 0;
 
 	if (!freq_in || !freq_out) {
-		dev_dbg(codec->dev, "PLL disabled\n");
+		dev_dbg(component->dev, "PLL disabled\n");
 
 		rt5616->pll_in = 0;
 		rt5616->pll_out = 0;
-		snd_soc_update_bits(codec, RT5616_GLB_CLK,
-			RT5616_SCLK_SRC_MASK, RT5616_SCLK_SRC_MCLK);
+		snd_soc_component_update_bits(component, RT5616_GLB_CLK,
+				    RT5616_SCLK_SRC_MASK,
+				    RT5616_SCLK_SRC_MCLK);
 		return 0;
 	}
 
 	switch (source) {
 	case RT5616_PLL1_S_MCLK:
-		snd_soc_update_bits(codec, RT5616_GLB_CLK,
-			RT5616_PLL1_SRC_MASK, RT5616_PLL1_SRC_MCLK);
+		snd_soc_component_update_bits(component, RT5616_GLB_CLK,
+				    RT5616_PLL1_SRC_MASK,
+				    RT5616_PLL1_SRC_MCLK);
 		break;
 	case RT5616_PLL1_S_BCLK1:
 	case RT5616_PLL1_S_BCLK2:
-		snd_soc_update_bits(codec, RT5616_GLB_CLK,
-			RT5616_PLL1_SRC_MASK, RT5616_PLL1_SRC_BCLK1);
+		snd_soc_component_update_bits(component, RT5616_GLB_CLK,
+				    RT5616_PLL1_SRC_MASK,
+				    RT5616_PLL1_SRC_BCLK1);
 		break;
 	default:
-		dev_err(codec->dev, "Unknown PLL source %d\n", source);
+		dev_err(component->dev, "Unknown PLL source %d\n", source);
 		return -EINVAL;
 	}
 
 	ret = rl6231_pll_calc(freq_in, freq_out, &pll_code);
 	if (ret < 0) {
-		dev_err(codec->dev, "Unsupport input clock %d\n", freq_in);
+		dev_err(component->dev, "Unsupport input clock %d\n", freq_in);
 		return ret;
 	}
 
-	dev_dbg(codec->dev, "bypass=%d m=%d n=%d k=%d\n",
+	dev_dbg(component->dev, "bypass=%d m=%d n=%d k=%d\n",
 		pll_code.m_bp, (pll_code.m_bp ? 0 : pll_code.m_code),
 		pll_code.n_code, pll_code.k_code);
 
-	snd_soc_write(codec, RT5616_PLL_CTRL1,
-		pll_code.n_code << RT5616_PLL_N_SFT | pll_code.k_code);
-	snd_soc_write(codec, RT5616_PLL_CTRL2,
-		(pll_code.m_bp ? 0 : pll_code.m_code) << RT5616_PLL_M_SFT |
-		pll_code.m_bp << RT5616_PLL_M_BP_SFT);
+	snd_soc_component_write(component, RT5616_PLL_CTRL1,
+		      pll_code.n_code << RT5616_PLL_N_SFT | pll_code.k_code);
+	snd_soc_component_write(component, RT5616_PLL_CTRL2,
+		      (pll_code.m_bp ? 0 : pll_code.m_code) <<
+		      RT5616_PLL_M_SFT |
+		      pll_code.m_bp << RT5616_PLL_M_BP_SFT);
 
 	rt5616->pll_in = freq_in;
 	rt5616->pll_out = freq_out;
@@ -1148,34 +1158,62 @@ static int rt5616_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 	return 0;
 }
 
-static int rt5616_set_bias_level(struct snd_soc_codec *codec,
-			enum snd_soc_bias_level level)
+static int rt5616_set_bias_level(struct snd_soc_component *component,
+				 enum snd_soc_bias_level level)
 {
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
+	int ret;
+
 	switch (level) {
+
+	case SND_SOC_BIAS_ON:
+		break;
+
+	case SND_SOC_BIAS_PREPARE:
+		/*
+		 * SND_SOC_BIAS_PREPARE is called while preparing for a
+		 * transition to ON or away from ON. If current bias_level
+		 * is SND_SOC_BIAS_ON, then it is preparing for a transition
+		 * away from ON. Disable the clock in that case, otherwise
+		 * enable it.
+		 */
+		if (IS_ERR(rt5616->mclk))
+			break;
+
+		if (snd_soc_component_get_bias_level(component) == SND_SOC_BIAS_ON) {
+			clk_disable_unprepare(rt5616->mclk);
+		} else {
+			ret = clk_prepare_enable(rt5616->mclk);
+			if (ret)
+				return ret;
+		}
+		break;
+
 	case SND_SOC_BIAS_STANDBY:
-		if (snd_soc_codec_get_bias_level(codec) == SND_SOC_BIAS_OFF) {
-			snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-				RT5616_PWR_VREF1 | RT5616_PWR_MB |
-				RT5616_PWR_BG | RT5616_PWR_VREF2,
-				RT5616_PWR_VREF1 | RT5616_PWR_MB |
-				RT5616_PWR_BG | RT5616_PWR_VREF2);
+		if (snd_soc_component_get_bias_level(component) == SND_SOC_BIAS_OFF) {
+			snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+					    RT5616_PWR_VREF1 | RT5616_PWR_MB |
+					    RT5616_PWR_BG | RT5616_PWR_VREF2,
+					    RT5616_PWR_VREF1 | RT5616_PWR_MB |
+					    RT5616_PWR_BG | RT5616_PWR_VREF2);
 			mdelay(10);
-			snd_soc_update_bits(codec, RT5616_PWR_ANLG1,
-				RT5616_PWR_FV1 | RT5616_PWR_FV2,
-				RT5616_PWR_FV1 | RT5616_PWR_FV2);
-			snd_soc_update_bits(codec, RT5616_D_MISC,
-				RT5616_D_GATE_EN, RT5616_D_GATE_EN);
+			snd_soc_component_update_bits(component, RT5616_PWR_ANLG1,
+					    RT5616_PWR_FV1 | RT5616_PWR_FV2,
+					    RT5616_PWR_FV1 | RT5616_PWR_FV2);
+			snd_soc_component_update_bits(component, RT5616_D_MISC,
+					    RT5616_D_GATE_EN,
+					    RT5616_D_GATE_EN);
 		}
 		break;
 
 	case SND_SOC_BIAS_OFF:
-		snd_soc_update_bits(codec, RT5616_D_MISC, RT5616_D_GATE_EN, 0);
-		snd_soc_write(codec, RT5616_PWR_DIG1, 0x0000);
-		snd_soc_write(codec, RT5616_PWR_DIG2, 0x0000);
-		snd_soc_write(codec, RT5616_PWR_VOL, 0x0000);
-		snd_soc_write(codec, RT5616_PWR_MIXER, 0x0000);
-		snd_soc_write(codec, RT5616_PWR_ANLG1, 0x0000);
-		snd_soc_write(codec, RT5616_PWR_ANLG2, 0x0000);
+		snd_soc_component_update_bits(component, RT5616_D_MISC, RT5616_D_GATE_EN, 0);
+		snd_soc_component_write(component, RT5616_PWR_DIG1, 0x0000);
+		snd_soc_component_write(component, RT5616_PWR_DIG2, 0x0000);
+		snd_soc_component_write(component, RT5616_PWR_VOL, 0x0000);
+		snd_soc_component_write(component, RT5616_PWR_MIXER, 0x0000);
+		snd_soc_component_write(component, RT5616_PWR_ANLG1, 0x0000);
+		snd_soc_component_write(component, RT5616_PWR_ANLG2, 0x0000);
 		break;
 
 	default:
@@ -1185,19 +1223,24 @@ static int rt5616_set_bias_level(struct snd_soc_codec *codec,
 	return 0;
 }
 
-static int rt5616_probe(struct snd_soc_codec *codec)
+static int rt5616_probe(struct snd_soc_component *component)
 {
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 
-	rt5616->codec = codec;
+	/* Check if MCLK provided */
+	rt5616->mclk = devm_clk_get(component->dev, "mclk");
+	if (PTR_ERR(rt5616->mclk) == -EPROBE_DEFER)
+		return -EPROBE_DEFER;
+
+	rt5616->component = component;
 
 	return 0;
 }
 
 #ifdef CONFIG_PM
-static int rt5616_suspend(struct snd_soc_codec *codec)
+static int rt5616_suspend(struct snd_soc_component *component)
 {
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 
 	regcache_cache_only(rt5616->regmap, true);
 	regcache_mark_dirty(rt5616->regmap);
@@ -1205,9 +1248,9 @@ static int rt5616_suspend(struct snd_soc_codec *codec)
 	return 0;
 }
 
-static int rt5616_resume(struct snd_soc_codec *codec)
+static int rt5616_resume(struct snd_soc_component *component)
 {
-	struct rt5616_priv *rt5616 = snd_soc_codec_get_drvdata(codec);
+	struct rt5616_priv *rt5616 = snd_soc_component_get_drvdata(component);
 
 	regcache_cache_only(rt5616->regmap, false);
 	regcache_sync(rt5616->regmap);
@@ -1218,19 +1261,18 @@ static int rt5616_resume(struct snd_soc_codec *codec)
 #define rt5616_resume NULL
 #endif
 
-#define RT5616_STEREO_RATES SNDRV_PCM_RATE_8000_96000
+#define RT5616_STEREO_RATES SNDRV_PCM_RATE_8000_192000
 #define RT5616_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE | \
 			SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S8)
 
-
-struct snd_soc_dai_ops rt5616_aif_dai_ops = {
+static const struct snd_soc_dai_ops rt5616_aif_dai_ops = {
 	.hw_params = rt5616_hw_params,
 	.set_fmt = rt5616_set_dai_fmt,
 	.set_sysclk = rt5616_set_dai_sysclk,
 	.set_pll = rt5616_set_dai_pll,
 };
 
-struct snd_soc_dai_driver rt5616_dai[] = {
+static struct snd_soc_dai_driver rt5616_dai[] = {
 	{
 		.name = "rt5616-aif1",
 		.id = RT5616_AIF1,
@@ -1252,18 +1294,20 @@ struct snd_soc_dai_driver rt5616_dai[] = {
 	},
 };
 
-static struct snd_soc_codec_driver soc_codec_dev_rt5616 = {
-	.probe = rt5616_probe,
-	.suspend = rt5616_suspend,
-	.resume = rt5616_resume,
-	.set_bias_level = rt5616_set_bias_level,
-	.idle_bias_off = true,
-	.controls = rt5616_snd_controls,
-	.num_controls = ARRAY_SIZE(rt5616_snd_controls),
-	.dapm_widgets = rt5616_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(rt5616_dapm_widgets),
-	.dapm_routes = rt5616_dapm_routes,
-	.num_dapm_routes = ARRAY_SIZE(rt5616_dapm_routes),
+static const struct snd_soc_component_driver soc_component_dev_rt5616 = {
+	.probe			= rt5616_probe,
+	.suspend		= rt5616_suspend,
+	.resume			= rt5616_resume,
+	.set_bias_level		= rt5616_set_bias_level,
+	.controls		= rt5616_snd_controls,
+	.num_controls		= ARRAY_SIZE(rt5616_snd_controls),
+	.dapm_widgets		= rt5616_dapm_widgets,
+	.num_dapm_widgets	= ARRAY_SIZE(rt5616_dapm_widgets),
+	.dapm_routes		= rt5616_dapm_routes,
+	.num_dapm_routes	= ARRAY_SIZE(rt5616_dapm_routes),
+	.use_pmdown_time	= 1,
+	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config rt5616_regmap = {
@@ -1296,15 +1340,15 @@ MODULE_DEVICE_TABLE(of, rt5616_of_match);
 #endif
 
 static int rt5616_i2c_probe(struct i2c_client *i2c,
-		    const struct i2c_device_id *id)
+			    const struct i2c_device_id *id)
 {
 	struct rt5616_priv *rt5616;
 	unsigned int val;
 	int ret;
 
 	rt5616 = devm_kzalloc(&i2c->dev, sizeof(struct rt5616_priv),
-				GFP_KERNEL);
-	if (rt5616 == NULL)
+			      GFP_KERNEL);
+	if (!rt5616)
 		return -ENOMEM;
 
 	i2c_set_clientdata(i2c, rt5616);
@@ -1326,14 +1370,14 @@ static int rt5616_i2c_probe(struct i2c_client *i2c,
 	}
 	regmap_write(rt5616->regmap, RT5616_RESET, 0);
 	regmap_update_bits(rt5616->regmap, RT5616_PWR_ANLG1,
-		RT5616_PWR_VREF1 | RT5616_PWR_MB |
-		RT5616_PWR_BG | RT5616_PWR_VREF2,
-		RT5616_PWR_VREF1 | RT5616_PWR_MB |
-		RT5616_PWR_BG | RT5616_PWR_VREF2);
+			   RT5616_PWR_VREF1 | RT5616_PWR_MB |
+			   RT5616_PWR_BG | RT5616_PWR_VREF2,
+			   RT5616_PWR_VREF1 | RT5616_PWR_MB |
+			   RT5616_PWR_BG | RT5616_PWR_VREF2);
 	mdelay(10);
 	regmap_update_bits(rt5616->regmap, RT5616_PWR_ANLG1,
-		RT5616_PWR_FV1 | RT5616_PWR_FV2,
-		RT5616_PWR_FV1 | RT5616_PWR_FV2);
+			   RT5616_PWR_FV1 | RT5616_PWR_FV2,
+			   RT5616_PWR_FV1 | RT5616_PWR_FV2);
 
 	ret = regmap_register_patch(rt5616->regmap, init_list,
 				    ARRAY_SIZE(init_list));
@@ -1341,17 +1385,15 @@ static int rt5616_i2c_probe(struct i2c_client *i2c,
 		dev_warn(&i2c->dev, "Failed to apply regmap patch: %d\n", ret);
 
 	regmap_update_bits(rt5616->regmap, RT5616_PWR_ANLG1,
-		RT5616_PWR_LDO_DVO_MASK, RT5616_PWR_LDO_DVO_1_2V);
+			   RT5616_PWR_LDO_DVO_MASK, RT5616_PWR_LDO_DVO_1_2V);
 
-	return snd_soc_register_codec(&i2c->dev, &soc_codec_dev_rt5616,
-			rt5616_dai, ARRAY_SIZE(rt5616_dai));
-
+	return devm_snd_soc_register_component(&i2c->dev,
+				      &soc_component_dev_rt5616,
+				      rt5616_dai, ARRAY_SIZE(rt5616_dai));
 }
 
 static int rt5616_i2c_remove(struct i2c_client *i2c)
 {
-	snd_soc_unregister_codec(&i2c->dev);
-
 	return 0;
 }
 
@@ -1361,7 +1403,6 @@ static void rt5616_i2c_shutdown(struct i2c_client *client)
 
 	regmap_write(rt5616->regmap, RT5616_HP_VOL, 0xc8c8);
 	regmap_write(rt5616->regmap, RT5616_LOUT_CTRL1, 0xc8c8);
-
 }
 
 static struct i2c_driver rt5616_i2c_driver = {

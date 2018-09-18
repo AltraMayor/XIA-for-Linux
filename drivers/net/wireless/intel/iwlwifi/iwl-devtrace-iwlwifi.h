@@ -2,6 +2,7 @@
  *
  * Copyright(c) 2009 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016 - 2017 Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -73,12 +74,12 @@ TRACE_EVENT(iwlwifi_dev_rx,
 	TP_ARGS(dev, trans, pkt, len),
 	TP_STRUCT__entry(
 		DEV_ENTRY
-		__field(u8, cmd)
+		__field(u16, cmd)
 		__dynamic_array(u8, rxbuf, iwl_rx_trace_len(trans, pkt, len))
 	),
 	TP_fast_assign(
 		DEV_ASSIGN;
-		__entry->cmd = pkt->hdr.cmd;
+		__entry->cmd = WIDE_ID(pkt->hdr.group_id, pkt->hdr.cmd);
 		memcpy(__get_dynamic_array(rxbuf), pkt,
 		       iwl_rx_trace_len(trans, pkt, len));
 	),
@@ -90,11 +91,11 @@ TRACE_EVENT(iwlwifi_dev_tx,
 	TP_PROTO(const struct device *dev, struct sk_buff *skb,
 		 void *tfd, size_t tfdlen,
 		 void *buf0, size_t buf0_len,
-		 void *buf1, size_t buf1_len),
-	TP_ARGS(dev, skb, tfd, tfdlen, buf0, buf0_len, buf1, buf1_len),
+		 int hdr_len),
+	TP_ARGS(dev, skb, tfd, tfdlen, buf0, buf0_len, hdr_len),
 	TP_STRUCT__entry(
 		DEV_ENTRY
-
+		__field(void *, skbaddr)
 		__field(size_t, framelen)
 		__dynamic_array(u8, tfd, tfdlen)
 
@@ -104,30 +105,32 @@ TRACE_EVENT(iwlwifi_dev_tx,
 		 * for the possible padding).
 		 */
 		__dynamic_array(u8, buf0, buf0_len)
-		__dynamic_array(u8, buf1, iwl_trace_data(skb) ? 0 : buf1_len)
+		__dynamic_array(u8, buf1, hdr_len > 0 && iwl_trace_data(skb) ?
+						0 : skb->len - hdr_len)
 	),
 	TP_fast_assign(
 		DEV_ASSIGN;
-		__entry->framelen = buf0_len + buf1_len;
+		__entry->skbaddr = skb;
+		__entry->framelen = buf0_len;
+		if (hdr_len > 0)
+			__entry->framelen += skb->len - hdr_len;
 		memcpy(__get_dynamic_array(tfd), tfd, tfdlen);
 		memcpy(__get_dynamic_array(buf0), buf0, buf0_len);
-		if (!iwl_trace_data(skb))
-			memcpy(__get_dynamic_array(buf1), buf1, buf1_len);
+		if (hdr_len > 0 && !iwl_trace_data(skb))
+			skb_copy_bits(skb, hdr_len,
+				      __get_dynamic_array(buf1),
+				      skb->len - hdr_len);
 	),
-	TP_printk("[%s] TX %.2x (%zu bytes)",
+	TP_printk("[%s] TX %.2x (%zu bytes) skbaddr=%p",
 		  __get_str(dev), ((u8 *)__get_dynamic_array(buf0))[0],
-		  __entry->framelen)
+		  __entry->framelen, __entry->skbaddr)
 );
 
+struct iwl_error_event_table;
 TRACE_EVENT(iwlwifi_dev_ucode_error,
-	TP_PROTO(const struct device *dev, u32 desc, u32 tsf_low,
-		 u32 data1, u32 data2, u32 line, u32 blink1,
-		 u32 blink2, u32 ilink1, u32 ilink2, u32 bcon_time,
-		 u32 gp1, u32 gp2, u32 gp3, u32 major, u32 minor, u32 hw_ver,
-		 u32 brd_ver),
-	TP_ARGS(dev, desc, tsf_low, data1, data2, line,
-		blink1, blink2, ilink1, ilink2, bcon_time, gp1, gp2,
-		gp3, major, minor, hw_ver, brd_ver),
+	TP_PROTO(const struct device *dev, const struct iwl_error_event_table *table,
+		 u32 hw_ver, u32 brd_ver),
+	TP_ARGS(dev, table, hw_ver, brd_ver),
 	TP_STRUCT__entry(
 		DEV_ENTRY
 		__field(u32, desc)
@@ -135,14 +138,13 @@ TRACE_EVENT(iwlwifi_dev_ucode_error,
 		__field(u32, data1)
 		__field(u32, data2)
 		__field(u32, line)
-		__field(u32, blink1)
 		__field(u32, blink2)
 		__field(u32, ilink1)
 		__field(u32, ilink2)
 		__field(u32, bcon_time)
 		__field(u32, gp1)
 		__field(u32, gp2)
-		__field(u32, gp3)
+		__field(u32, rev_type)
 		__field(u32, major)
 		__field(u32, minor)
 		__field(u32, hw_ver)
@@ -150,34 +152,32 @@ TRACE_EVENT(iwlwifi_dev_ucode_error,
 	),
 	TP_fast_assign(
 		DEV_ASSIGN;
-		__entry->desc = desc;
-		__entry->tsf_low = tsf_low;
-		__entry->data1 = data1;
-		__entry->data2 = data2;
-		__entry->line = line;
-		__entry->blink1 = blink1;
-		__entry->blink2 = blink2;
-		__entry->ilink1 = ilink1;
-		__entry->ilink2 = ilink2;
-		__entry->bcon_time = bcon_time;
-		__entry->gp1 = gp1;
-		__entry->gp2 = gp2;
-		__entry->gp3 = gp3;
-		__entry->major = major;
-		__entry->minor = minor;
+		__entry->desc = table->error_id;
+		__entry->tsf_low = table->tsf_low;
+		__entry->data1 = table->data1;
+		__entry->data2 = table->data2;
+		__entry->line = table->line;
+		__entry->blink2 = table->blink2;
+		__entry->ilink1 = table->ilink1;
+		__entry->ilink2 = table->ilink2;
+		__entry->bcon_time = table->bcon_time;
+		__entry->gp1 = table->gp1;
+		__entry->gp2 = table->gp2;
+		__entry->rev_type = table->gp3;
+		__entry->major = table->ucode_ver;
+		__entry->minor = table->hw_ver;
 		__entry->hw_ver = hw_ver;
 		__entry->brd_ver = brd_ver;
 	),
 	TP_printk("[%s] #%02d %010u data 0x%08X 0x%08X line %u, "
-		  "blink 0x%05X 0x%05X ilink 0x%05X 0x%05X "
-		  "bcon_tm %010u gp 0x%08X 0x%08X 0x%08X major 0x%08X "
+		  "blink2 0x%05X ilink 0x%05X 0x%05X "
+		  "bcon_tm %010u gp 0x%08X 0x%08X rev_type 0x%08X major 0x%08X "
 		  "minor 0x%08X hw 0x%08X brd 0x%08X",
 		  __get_str(dev), __entry->desc, __entry->tsf_low,
-		  __entry->data1,
-		  __entry->data2, __entry->line, __entry->blink1,
+		  __entry->data1, __entry->data2, __entry->line,
 		  __entry->blink2, __entry->ilink1, __entry->ilink2,
 		  __entry->bcon_time, __entry->gp1, __entry->gp2,
-		  __entry->gp3, __entry->major, __entry->minor,
+		  __entry->rev_type, __entry->major, __entry->minor,
 		  __entry->hw_ver, __entry->brd_ver)
 );
 

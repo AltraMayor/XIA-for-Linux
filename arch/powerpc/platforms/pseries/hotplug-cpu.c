@@ -24,6 +24,7 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/sched.h>	/* for idle_task_exit */
+#include <linux/sched/hotplug.h>
 #include <linux/cpu.h>
 #include <linux/of.h>
 #include <linux/slab.h>
@@ -33,7 +34,9 @@
 #include <asm/machdep.h>
 #include <asm/vdso_datapage.h>
 #include <asm/xics.h>
+#include <asm/xive.h>
 #include <asm/plpar_wrappers.h>
+#include <asm/topology.h>
 
 #include "pseries.h"
 #include "offline_states.h"
@@ -47,20 +50,14 @@ static DEFINE_PER_CPU(enum cpu_state_vals, current_state) = CPU_STATE_OFFLINE;
 
 static enum cpu_state_vals default_offline_state = CPU_STATE_OFFLINE;
 
-static int cede_offline_enabled __read_mostly = 1;
+static bool cede_offline_enabled __read_mostly = true;
 
 /*
  * Enable/disable cede_offline when available.
  */
 static int __init setup_cede_offline(char *str)
 {
-	if (!strcmp(str, "off"))
-		cede_offline_enabled = 0;
-	else if (!strcmp(str, "on"))
-		cede_offline_enabled = 1;
-	else
-		return 0;
-	return 1;
+	return (kstrtobool(str, &cede_offline_enabled) == 0);
 }
 
 __setup("cede_offline=", setup_cede_offline);
@@ -114,7 +111,10 @@ static void pseries_mach_cpu_die(void)
 
 	local_irq_disable();
 	idle_task_exit();
-	xics_teardown_cpu();
+	if (xive_enabled())
+		xive_teardown_cpu();
+	else
+		xics_teardown_cpu();
 
 	if (get_preferred_offline_state(cpu) == CPU_STATE_INACTIVE) {
 		set_cpu_current_state(cpu, CPU_STATE_INACTIVE);
@@ -179,7 +179,10 @@ static int pseries_cpu_disable(void)
 		boot_cpuid = cpumask_any(cpu_online_mask);
 
 	/* FIXME: abstract this to not be platform specific later on */
-	xics_migrate_irqs_away();
+	if (xive_enabled())
+		xive_smp_disable_cpu();
+	else
+		xics_migrate_irqs_away();
 	return 0;
 }
 
@@ -231,7 +234,7 @@ static void pseries_cpu_die(unsigned int cpu)
 	 * done here.  Change isolate state to Isolate and
 	 * change allocation-state to Unusable.
 	 */
-	paca[cpu].cpu_start = 0;
+	paca_ptrs[cpu]->cpu_start = 0;
 }
 
 /*
@@ -269,8 +272,8 @@ static int pseries_add_processor(struct device_node *np)
 		/* If we get here, it most likely means that NR_CPUS is
 		 * less than the partition's max processors setting.
 		 */
-		printk(KERN_ERR "Cannot add cpu %s; this system configuration"
-		       " supports %d logical cpus.\n", np->full_name,
+		printk(KERN_ERR "Cannot add cpu %pOF; this system configuration"
+		       " supports %d logical cpus.\n", np,
 		       num_possible_cpus());
 		goto out_unlock;
 	}
@@ -329,6 +332,7 @@ static void pseries_remove_processor(struct device_node *np)
 			BUG_ON(cpu_online(cpu));
 			set_cpu_present(cpu, false);
 			set_hard_smp_processor_id(cpu, -1);
+			update_numa_cpu_lookup_table(cpu, -1);
 			break;
 		}
 		if (cpu >= nr_cpu_ids)
@@ -361,6 +365,8 @@ static int dlpar_online_cpu(struct device_node *dn)
 			BUG_ON(get_cpu_current_state(cpu)
 					!= CPU_STATE_OFFLINE);
 			cpu_maps_update_done();
+			timed_topology_update(1);
+			find_and_online_cpu_nid(cpu);
 			rc = device_online(get_cpu_device(cpu));
 			if (rc)
 				goto out;
@@ -460,15 +466,19 @@ static ssize_t dlpar_cpu_add(u32 drc_index)
 	}
 
 	dn = dlpar_configure_connector(cpu_to_be32(drc_index), parent);
-	of_node_put(parent);
 	if (!dn) {
 		pr_warn("Failed call to configure-connector, drc index: %x\n",
 			drc_index);
 		dlpar_release_drc(drc_index);
+		of_node_put(parent);
 		return -EINVAL;
 	}
 
-	rc = dlpar_attach_node(dn);
+	rc = dlpar_attach_node(dn, parent);
+
+	/* Regardless we are done with parent now */
+	of_node_put(parent);
+
 	if (rc) {
 		saved_rc = rc;
 		pr_warn("Failed to attach node %s, rc: %d, drc index: %x\n",
@@ -527,6 +537,7 @@ static int dlpar_offline_cpu(struct device_node *dn)
 				set_preferred_offline_state(cpu,
 							    CPU_STATE_OFFLINE);
 				cpu_maps_update_done();
+				timed_topology_update(1);
 				rc = device_offline(get_cpu_device(cpu));
 				if (rc)
 					goto out;
@@ -559,7 +570,7 @@ static ssize_t dlpar_cpu_remove(struct device_node *dn, u32 drc_index)
 {
 	int rc;
 
-	pr_debug("Attemping to remove CPU %s, drc index: %x\n",
+	pr_debug("Attempting to remove CPU %s, drc index: %x\n",
 		 dn->name, drc_index);
 
 	rc = dlpar_offline_cpu(dn);
@@ -909,8 +920,6 @@ static int parse_cede_parameters(void)
 
 static int __init pseries_cpu_hotplug_init(void)
 {
-	struct device_node *np;
-	const char *typep;
 	int cpu;
 	int qcss_tok;
 
@@ -918,17 +927,6 @@ static int __init pseries_cpu_hotplug_init(void)
 	ppc_md.cpu_probe = dlpar_cpu_probe;
 	ppc_md.cpu_release = dlpar_cpu_release;
 #endif /* CONFIG_ARCH_CPU_PROBE_RELEASE */
-
-	for_each_node_by_name(np, "interrupt-controller") {
-		typep = of_get_property(np, "compatible", NULL);
-		if (strstr(typep, "open-pic")) {
-			of_node_put(np);
-
-			printk(KERN_INFO "CPU Hotplug not supported on "
-				"systems using MPIC\n");
-			return 0;
-		}
-	}
 
 	rtas_stop_self_token = rtas_token("stop-self");
 	qcss_tok = rtas_token("query-cpu-stopped-state");

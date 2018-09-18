@@ -180,11 +180,9 @@ static struct region_code_mapping region_code_mapping_t[] = {
 u8 *mwifiex_11d_code_2_region(u8 code)
 {
 	u8 i;
-	u8 size = sizeof(region_code_mapping_t)/
-				sizeof(struct region_code_mapping);
 
 	/* Look for code in mapping table */
-	for (i = 0; i < size; i++)
+	for (i = 0; i < ARRAY_SIZE(region_code_mapping_t); i++)
 		if (region_code_mapping_t[i].code == code)
 			return region_code_mapping_t[i].region;
 
@@ -322,9 +320,9 @@ mwifiex_get_cfp(struct mwifiex_private *priv, u8 band, u16 channel, u32 freq)
 		return cfp;
 
 	if (mwifiex_band_to_radio_type(band) == HostCmd_SCAN_RADIO_TYPE_BG)
-		sband = priv->wdev.wiphy->bands[IEEE80211_BAND_2GHZ];
+		sband = priv->wdev.wiphy->bands[NL80211_BAND_2GHZ];
 	else
-		sband = priv->wdev.wiphy->bands[IEEE80211_BAND_5GHZ];
+		sband = priv->wdev.wiphy->bands[NL80211_BAND_5GHZ];
 
 	if (!sband) {
 		mwifiex_dbg(priv->adapter, ERROR,
@@ -350,7 +348,7 @@ mwifiex_get_cfp(struct mwifiex_private *priv, u8 band, u16 channel, u32 freq)
 		}
 	}
 	if (i == sband->n_channels) {
-		mwifiex_dbg(priv->adapter, ERROR,
+		mwifiex_dbg(priv->adapter, WARN,
 			    "%s: cannot find cfp by band %d\t"
 			    "& channel=%d freq=%d\n",
 			    __func__, band, channel, freq);
@@ -399,15 +397,15 @@ u32 mwifiex_get_rates_from_cfg80211(struct mwifiex_private *priv,
 	int i;
 
 	if (radio_type) {
-		sband = wiphy->bands[IEEE80211_BAND_5GHZ];
+		sband = wiphy->bands[NL80211_BAND_5GHZ];
 		if (WARN_ON_ONCE(!sband))
 			return 0;
-		rate_mask = request->rates[IEEE80211_BAND_5GHZ];
+		rate_mask = request->rates[NL80211_BAND_5GHZ];
 	} else {
-		sband = wiphy->bands[IEEE80211_BAND_2GHZ];
+		sband = wiphy->bands[NL80211_BAND_2GHZ];
 		if (WARN_ON_ONCE(!sband))
 			return 0;
-		rate_mask = request->rates[IEEE80211_BAND_2GHZ];
+		rate_mask = request->rates[NL80211_BAND_2GHZ];
 	}
 
 	num_rates = 0;

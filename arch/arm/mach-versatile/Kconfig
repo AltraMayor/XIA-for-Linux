@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config ARCH_VERSATILE
 	bool "ARM Ltd. Versatile family"
 	depends on ARCH_MULTI_V5
@@ -8,8 +9,10 @@ config ARCH_VERSATILE
 	select COMMON_CLK_VERSATILE
 	select CPU_ARM926T
 	select ICST
-	select MIGHT_HAVE_PCI
+	select MFD_SYSCON
 	select PLAT_VERSATILE
+	select POWER_RESET
+	select POWER_RESET_VERSATILE
 	select VERSATILE_FPGA_IRQ
 	help
 	  This enables support for ARM Ltd Versatile board.

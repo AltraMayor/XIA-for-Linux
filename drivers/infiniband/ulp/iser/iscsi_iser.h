@@ -374,7 +374,6 @@ struct iser_reg_ops {
 struct iser_device {
 	struct ib_device             *ib_device;
 	struct ib_pd	             *pd;
-	struct ib_mr	             *mr;
 	struct ib_event_handler      event_handler;
 	struct list_head             ig_list;
 	int                          refcount;
@@ -383,10 +382,6 @@ struct iser_device {
 	const struct iser_reg_ops    *reg_ops;
 	bool                         remote_inv_sup;
 };
-
-#define ISER_CHECK_GUARD	0xc0
-#define ISER_CHECK_REFTAG	0x0f
-#define ISER_CHECK_APPTAG	0x30
 
 /**
  * struct iser_reg_resources - Fast registration recources
@@ -431,6 +426,7 @@ struct iser_fr_desc {
 	struct list_head		  list;
 	struct iser_reg_resources	  rsc;
 	struct iser_pi_context		 *pi_ctx;
+	struct list_head                  all_list;
 };
 
 /**
@@ -444,6 +440,7 @@ struct iser_fr_pool {
 	struct list_head        list;
 	spinlock_t              lock;
 	int                     size;
+	struct list_head        all_list;
 };
 
 /**
@@ -458,9 +455,6 @@ struct iser_fr_pool {
  * @comp:                iser completion context
  * @fr_pool:             connection fast registration poool
  * @pi_support:          Indicate device T10-PI support
- * @last:                last send wr to signal all flush errors were drained
- * @last_cqe:            cqe handler for last wr
- * @last_comp:           completes when all connection completions consumed
  */
 struct ib_conn {
 	struct rdma_cm_id           *cma_id;
@@ -472,10 +466,7 @@ struct ib_conn {
 	struct iser_comp	    *comp;
 	struct iser_fr_pool          fr_pool;
 	bool			     pi_support;
-	struct ib_send_wr	     last;
-	struct ib_cqe		     last_cqe;
 	struct ib_cqe		     reg_cqe;
-	struct completion	     last_comp;
 };
 
 /**
@@ -503,7 +494,7 @@ struct ib_conn {
  * @rx_descs:         rx buffers array (cyclic buffer)
  * @num_rx_descs:     number of rx descriptors
  * @scsi_sg_tablesize: scsi host sg_tablesize
- * @scsi_max_sectors: scsi host max sectors
+ * @pages_per_mr:     maximum pages available for registration
  */
 struct iser_conn {
 	struct ib_conn		     ib_conn;
@@ -526,7 +517,7 @@ struct iser_conn {
 	struct iser_rx_desc	     *rx_descs;
 	u32                          num_rx_descs;
 	unsigned short               scsi_sg_tablesize;
-	unsigned int                 scsi_max_sectors;
+	unsigned short               pages_per_mr;
 	bool			     snd_w_inv;
 };
 
@@ -617,7 +608,6 @@ void iser_cmd_comp(struct ib_cq *cq, struct ib_wc *wc);
 void iser_ctrl_comp(struct ib_cq *cq, struct ib_wc *wc);
 void iser_dataout_comp(struct ib_cq *cq, struct ib_wc *wc);
 void iser_reg_comp(struct ib_cq *cq, struct ib_wc *wc);
-void iser_last_comp(struct ib_cq *cq, struct ib_wc *wc);
 
 void iser_task_rdma_init(struct iscsi_iser_task *task);
 

@@ -24,6 +24,8 @@
 #define SURFACE_BUTTON_OBJ_NAME		"VGBI"
 #define SURFACE_BUTTON_DEVICE_NAME	"Surface Pro 3/4 Buttons"
 
+#define SURFACE_BUTTON_NOTIFY_TABLET_MODE	0xc8
+
 #define SURFACE_BUTTON_NOTIFY_PRESS_POWER	0xc6
 #define SURFACE_BUTTON_NOTIFY_RELEASE_POWER	0xc7
 
@@ -33,7 +35,7 @@
 #define SURFACE_BUTTON_NOTIFY_PRESS_VOLUME_UP	0xc0
 #define SURFACE_BUTTON_NOTIFY_RELEASE_VOLUME_UP	0xc1
 
-#define SURFACE_BUTTON_NOTIFY_PRESS_VOLUME_DOWN	0xc2
+#define SURFACE_BUTTON_NOTIFY_PRESS_VOLUME_DOWN		0xc2
 #define SURFACE_BUTTON_NOTIFY_RELEASE_VOLUME_DOWN	0xc3
 
 ACPI_MODULE_NAME("surface pro 3 button");
@@ -105,16 +107,19 @@ static void surface_button_notify(struct acpi_device *device, u32 event)
 	case SURFACE_BUTTON_NOTIFY_RELEASE_VOLUME_DOWN:
 		key_code = KEY_VOLUMEDOWN;
 		break;
+	case SURFACE_BUTTON_NOTIFY_TABLET_MODE:
+		dev_warn_once(&device->dev, "Tablet mode is not supported\n");
+		break;
 	default:
 		dev_info_ratelimited(&device->dev,
-				  "Unsupported event [0x%x]\n", event);
+				     "Unsupported event [0x%x]\n", event);
 		break;
 	}
 	input = button->input;
 	if (key_code == KEY_RESERVED)
 		return;
 	if (pressed)
-		pm_wakeup_event(&device->dev, 0);
+		pm_wakeup_dev_event(&device->dev, 0, button->suspended);
 	if (button->suspended)
 		return;
 	input_report_key(input, key_code, pressed?1:0);
@@ -180,6 +185,8 @@ static int surface_button_add(struct acpi_device *device)
 	error = input_register_device(input);
 	if (error)
 		goto err_free_input;
+
+	device_init_wakeup(&device->dev, true);
 	dev_info(&device->dev,
 			"%s [%s]\n", name, acpi_device_bid(device));
 	return 0;

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_POWERPC_NOHASH_32_PTE_44x_H
 #define _ASM_POWERPC_NOHASH_32_PTE_44x_H
 #ifdef __KERNEL__
@@ -32,7 +33,7 @@
  *   -  -  -  -  -    - U0 U1 U2 U3 W  I  M  G  E   - UX UW UR SX SW SR
  *
  * Newer 440 cores (440x6 as used on AMCC 460EX/460GT) have additional
- * TLB2 storage attibute fields. Those are:
+ * TLB2 storage attribute fields. Those are:
  *
  *   TLB2:
  *   0...10    11   12   13   14   15   16...31

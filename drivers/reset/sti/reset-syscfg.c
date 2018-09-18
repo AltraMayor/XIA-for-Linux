@@ -134,7 +134,7 @@ static int syscfg_reset_status(struct reset_controller_dev *rcdev,
 	return rst->active_low ? !ret_val : !!ret_val;
 }
 
-static struct reset_control_ops syscfg_reset_ops = {
+static const struct reset_control_ops syscfg_reset_ops = {
 	.reset    = syscfg_reset_dev,
 	.assert   = syscfg_reset_assert,
 	.deassert = syscfg_reset_deassert,
@@ -145,16 +145,14 @@ static int syscfg_reset_controller_register(struct device *dev,
 				const struct syscfg_reset_controller_data *data)
 {
 	struct syscfg_reset_controller *rc;
-	size_t size;
 	int i, err;
 
 	rc = devm_kzalloc(dev, sizeof(*rc), GFP_KERNEL);
 	if (!rc)
 		return -ENOMEM;
 
-	size = sizeof(struct syscfg_reset_channel) * data->nr_channels;
-
-	rc->channels = devm_kzalloc(dev, size, GFP_KERNEL);
+	rc->channels = devm_kcalloc(dev, data->nr_channels,
+				    sizeof(*rc->channels), GFP_KERNEL);
 	if (!rc->channels)
 		return -ENOMEM;
 

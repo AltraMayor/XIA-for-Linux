@@ -176,6 +176,8 @@ MODULE_DESCRIPTION("10/100/1000 Base-T Ethernet Driver for the ET1310 by Agere S
 #define NUM_FBRS		2
 
 #define MAX_PACKETS_HANDLED	256
+#define ET131X_MIN_MTU		64
+#define ET131X_MAX_MTU		9216
 
 #define ALCATEL_MULTICAST_PKT	0x01000000
 #define ALCATEL_BROADCAST_PKT	0x02000000
@@ -440,7 +442,6 @@ struct et131x_adapter {
 	struct net_device *netdev;
 	struct pci_dev *pdev;
 	struct mii_bus *mii_bus;
-	struct phy_device *phydev;
 	struct napi_struct napi;
 
 	/* Flags that indicate current state of the adapter */
@@ -864,7 +865,7 @@ static void et1310_config_mac_regs2(struct et131x_adapter *adapter)
 {
 	int32_t delay = 0;
 	struct mac_regs __iomem *mac = &adapter->regs->mac;
-	struct phy_device *phydev = adapter->phydev;
+	struct phy_device *phydev = adapter->netdev->phydev;
 	u32 cfg1;
 	u32 cfg2;
 	u32 ifctrl;
@@ -1035,7 +1036,7 @@ static void et1310_setup_device_for_unicast(struct et131x_adapter *adapter)
 static void et1310_config_rxmac_regs(struct et131x_adapter *adapter)
 {
 	struct rxmac_regs __iomem *rxmac = &adapter->regs->rxmac;
-	struct phy_device *phydev = adapter->phydev;
+	struct phy_device *phydev = adapter->netdev->phydev;
 	u32 sa_lo;
 	u32 sa_hi = 0;
 	u32 pf_ctrl = 0;
@@ -1230,7 +1231,7 @@ out:
 
 static int et131x_mii_read(struct et131x_adapter *adapter, u8 reg, u16 *value)
 {
-	struct phy_device *phydev = adapter->phydev;
+	struct phy_device *phydev = adapter->netdev->phydev;
 
 	if (!phydev)
 		return -EIO;
@@ -1311,7 +1312,7 @@ static void et1310_phy_read_mii_bit(struct et131x_adapter *adapter,
 
 static void et1310_config_flow_control(struct et131x_adapter *adapter)
 {
-	struct phy_device *phydev = adapter->phydev;
+	struct phy_device *phydev = adapter->netdev->phydev;
 
 	if (phydev->duplex == DUPLEX_HALF) {
 		adapter->flow = FLOW_NONE;
@@ -1456,7 +1457,7 @@ static int et131x_mdio_write(struct mii_bus *bus, int phy_addr,
 static void et1310_phy_power_switch(struct et131x_adapter *adapter, bool down)
 {
 	u16 data;
-	struct  phy_device *phydev = adapter->phydev;
+	struct  phy_device *phydev = adapter->netdev->phydev;
 
 	et131x_mii_read(adapter, MII_BMCR, &data);
 	data &= ~BMCR_PDOWN;
@@ -1469,7 +1470,7 @@ static void et1310_phy_power_switch(struct et131x_adapter *adapter, bool down)
 static void et131x_xcvr_init(struct et131x_adapter *adapter)
 {
 	u16 lcr2;
-	struct  phy_device *phydev = adapter->phydev;
+	struct  phy_device *phydev = adapter->netdev->phydev;
 
 	/* Set the LED behavior such that LED 1 indicates speed (off =
 	 * 10Mbits, blink = 100Mbits, on = 1000Mbits) and LED 2 indicates
@@ -2111,7 +2112,7 @@ static int et131x_init_recv(struct et131x_adapter *adapter)
 /* et131x_set_rx_dma_timer - Set the heartbeat timer according to line rate */
 static void et131x_set_rx_dma_timer(struct et131x_adapter *adapter)
 {
-	struct phy_device *phydev = adapter->phydev;
+	struct phy_device *phydev = adapter->netdev->phydev;
 
 	/* For version B silicon, we do not use the RxDMA timer for 10 and 100
 	 * Mbits/s line rates. We do not enable and RxDMA interrupt coalescing.
@@ -2281,7 +2282,7 @@ static struct rfd *nic_rx_pkts(struct et131x_adapter *adapter)
 
 	adapter->netdev->stats.rx_bytes += rfd->len;
 
-	memcpy(skb_put(skb, rfd->len), fbr->virt[buff_index], rfd->len);
+	skb_put_data(skb, fbr->virt[buff_index], rfd->len);
 
 	skb->protocol = eth_type_trans(skb, adapter->netdev);
 	skb->ip_summed = CHECKSUM_NONE;
@@ -2426,7 +2427,7 @@ static int nic_send_packet(struct et131x_adapter *adapter, struct tcb *tcb)
 	struct sk_buff *skb = tcb->skb;
 	u32 nr_frags = skb_shinfo(skb)->nr_frags + 1;
 	struct skb_frag_struct *frags = &skb_shinfo(skb)->frags[0];
-	struct phy_device *phydev = adapter->phydev;
+	struct phy_device *phydev = adapter->netdev->phydev;
 	dma_addr_t dma_addr;
 	struct tx_ring *tx_ring = &adapter->tx_ring;
 
@@ -2791,22 +2792,6 @@ static void et131x_handle_send_pkts(struct et131x_adapter *adapter)
 	spin_unlock_irqrestore(&adapter->tcb_send_qlock, flags);
 }
 
-static int et131x_get_settings(struct net_device *netdev,
-			       struct ethtool_cmd *cmd)
-{
-	struct et131x_adapter *adapter = netdev_priv(netdev);
-
-	return phy_ethtool_gset(adapter->phydev, cmd);
-}
-
-static int et131x_set_settings(struct net_device *netdev,
-			       struct ethtool_cmd *cmd)
-{
-	struct et131x_adapter *adapter = netdev_priv(netdev);
-
-	return phy_ethtool_sset(adapter->phydev, cmd);
-}
-
 static int et131x_get_regs_len(struct net_device *netdev)
 {
 #define ET131X_REGS_LEN 256
@@ -2978,13 +2963,13 @@ static void et131x_get_drvinfo(struct net_device *netdev,
 		sizeof(info->bus_info));
 }
 
-static struct ethtool_ops et131x_ethtool_ops = {
-	.get_settings	= et131x_get_settings,
-	.set_settings	= et131x_set_settings,
+static const struct ethtool_ops et131x_ethtool_ops = {
 	.get_drvinfo	= et131x_get_drvinfo,
 	.get_regs_len	= et131x_get_regs_len,
 	.get_regs	= et131x_get_regs,
 	.get_link	= ethtool_op_get_link,
+	.get_link_ksettings = phy_ethtool_get_link_ksettings,
+	.set_link_ksettings = phy_ethtool_set_link_ksettings,
 };
 
 /* et131x_hwaddr_init - set up the MAC Address */
@@ -3095,10 +3080,10 @@ err_out:
  * The routine called when the error timer expires, to track the number of
  * recurring errors.
  */
-static void et131x_error_timer_handler(unsigned long data)
+static void et131x_error_timer_handler(struct timer_list *t)
 {
-	struct et131x_adapter *adapter = (struct et131x_adapter *)data;
-	struct phy_device *phydev = adapter->phydev;
+	struct et131x_adapter *adapter = from_timer(adapter, t, error_timer);
+	struct phy_device *phydev = adapter->netdev->phydev;
 
 	if (et1310_in_phy_coma(adapter)) {
 		/* Bring the device immediately out of coma, to
@@ -3168,7 +3153,7 @@ static int et131x_adapter_memory_alloc(struct et131x_adapter *adapter)
 static void et131x_adjust_link(struct net_device *netdev)
 {
 	struct et131x_adapter *adapter = netdev_priv(netdev);
-	struct  phy_device *phydev = adapter->phydev;
+	struct  phy_device *phydev = netdev->phydev;
 
 	if (!phydev)
 		return;
@@ -3287,7 +3272,6 @@ static int et131x_mii_probe(struct net_device *netdev)
 
 	phydev->advertising = phydev->supported;
 	phydev->autoneg = AUTONEG_ENABLE;
-	adapter->phydev = phydev;
 
 	phy_attached_info(phydev);
 
@@ -3323,7 +3307,7 @@ static void et131x_pci_remove(struct pci_dev *pdev)
 
 	unregister_netdev(netdev);
 	netif_napi_del(&adapter->napi);
-	phy_disconnect(adapter->phydev);
+	phy_disconnect(netdev->phydev);
 	mdiobus_unregister(adapter->mii_bus);
 	mdiobus_free(adapter->mii_bus);
 
@@ -3338,20 +3322,16 @@ static void et131x_pci_remove(struct pci_dev *pdev)
 
 static void et131x_up(struct net_device *netdev)
 {
-	struct et131x_adapter *adapter = netdev_priv(netdev);
-
 	et131x_enable_txrx(netdev);
-	phy_start(adapter->phydev);
+	phy_start(netdev->phydev);
 }
 
 static void et131x_down(struct net_device *netdev)
 {
-	struct et131x_adapter *adapter = netdev_priv(netdev);
-
 	/* Save the timestamp for the TX watchdog, prevent a timeout */
-	netdev->trans_start = jiffies;
+	netif_trans_update(netdev);
 
-	phy_stop(adapter->phydev);
+	phy_stop(netdev->phydev);
 	et131x_disable_txrx(netdev);
 }
 
@@ -3595,7 +3575,7 @@ static int et131x_poll(struct napi_struct *napi, int budget)
 	et131x_handle_send_pkts(adapter);
 
 	if (work_done < budget) {
-		napi_complete(&adapter->napi);
+		napi_complete_done(&adapter->napi, work_done);
 		et131x_enable_interrupts(adapter);
 	}
 
@@ -3644,11 +3624,9 @@ static int et131x_open(struct net_device *netdev)
 	int result;
 
 	/* Start the timer to track NIC errors */
-	init_timer(&adapter->error_timer);
+	timer_setup(&adapter->error_timer, et131x_error_timer_handler, 0);
 	adapter->error_timer.expires = jiffies +
 		msecs_to_jiffies(TX_ERROR_PERIOD);
-	adapter->error_timer.function = et131x_error_timer_handler;
-	adapter->error_timer.data = (unsigned long)adapter;
 	add_timer(&adapter->error_timer);
 
 	result = request_irq(irq, et131x_isr,
@@ -3684,12 +3662,10 @@ static int et131x_close(struct net_device *netdev)
 static int et131x_ioctl(struct net_device *netdev, struct ifreq *reqbuf,
 			int cmd)
 {
-	struct et131x_adapter *adapter = netdev_priv(netdev);
-
-	if (!adapter->phydev)
+	if (!netdev->phydev)
 		return -EINVAL;
 
-	return phy_mii_ioctl(adapter->phydev, reqbuf, cmd);
+	return phy_mii_ioctl(netdev->phydev, reqbuf, cmd);
 }
 
 /* et131x_set_packet_filter - Configures the Rx Packet filtering */
@@ -3816,7 +3792,7 @@ static netdev_tx_t et131x_tx(struct sk_buff *skb, struct net_device *netdev)
 		netif_stop_queue(netdev);
 
 	/* Save the timestamp for the TX timeout watchdog */
-	netdev->trans_start = jiffies;
+	netif_trans_update(netdev);
 
 	/* TCB is not available */
 	if (tx_ring->used >= NUM_TCB)
@@ -3851,7 +3827,7 @@ static void et131x_tx_timeout(struct net_device *netdev)
 	unsigned long flags;
 
 	/* If the device is closed, ignore the timeout */
-	if (~(adapter->flags & FMP_ADAPTER_INTERRUPT_IN_USE))
+	if (!(adapter->flags & FMP_ADAPTER_INTERRUPT_IN_USE))
 		return;
 
 	/* Any nonrecoverable hardware error?
@@ -3892,9 +3868,6 @@ static int et131x_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	int result = 0;
 	struct et131x_adapter *adapter = netdev_priv(netdev);
-
-	if (new_mtu < 64 || new_mtu > 9216)
-		return -EINVAL;
 
 	et131x_disable_txrx(netdev);
 
@@ -3982,6 +3955,8 @@ static int et131x_pci_setup(struct pci_dev *pdev,
 
 	netdev->watchdog_timeo = ET131X_TX_TIMEOUT;
 	netdev->netdev_ops     = &et131x_netdev_ops;
+	netdev->min_mtu        = ET131X_MIN_MTU;
+	netdev->max_mtu        = ET131X_MAX_MTU;
 
 	SET_NETDEV_DEV(netdev, &pdev->dev);
 	netdev->ethtool_ops = &et131x_ethtool_ops;
@@ -4073,7 +4048,7 @@ out:
 	return rc;
 
 err_phy_disconnect:
-	phy_disconnect(adapter->phydev);
+	phy_disconnect(netdev->phydev);
 err_mdio_unregister:
 	mdiobus_unregister(adapter->mii_bus);
 err_mdio_free:

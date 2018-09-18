@@ -73,21 +73,17 @@ bool ocrdma_alloc_stats_resources(struct ocrdma_dev *dev)
 	mem->size = max_t(u32, sizeof(struct ocrdma_rdma_stats_req),
 			sizeof(struct ocrdma_rdma_stats_resp));
 
-	mem->va   = dma_alloc_coherent(&dev->nic_info.pdev->dev, mem->size,
-					 &mem->pa, GFP_KERNEL);
+	mem->va = dma_zalloc_coherent(&dev->nic_info.pdev->dev, mem->size,
+				      &mem->pa, GFP_KERNEL);
 	if (!mem->va) {
 		pr_err("%s: stats mbox allocation failed\n", __func__);
 		return false;
 	}
 
-	memset(mem->va, 0, mem->size);
-
 	/* Alloc debugfs mem */
 	mem->debugfs_mem = kzalloc(OCRDMA_MAX_DBGFS_MEM, GFP_KERNEL);
-	if (!mem->debugfs_mem) {
-		pr_err("%s: stats debugfs mem allocation failed\n", __func__);
+	if (!mem->debugfs_mem)
 		return false;
-	}
 
 	return true;
 }
@@ -610,7 +606,7 @@ static char *ocrdma_driver_dbg_stats(struct ocrdma_dev *dev)
 static void ocrdma_update_stats(struct ocrdma_dev *dev)
 {
 	ulong now = jiffies, secs;
-	int status = 0;
+	int status;
 	struct ocrdma_rdma_stats_resp *rdma_stats =
 		      (struct ocrdma_rdma_stats_resp *)dev->stats_mem.va;
 	struct ocrdma_rsrc_stats *rsrc_stats = &rdma_stats->act_rsrc_stats;
@@ -641,11 +637,11 @@ static ssize_t ocrdma_dbgfs_ops_write(struct file *filp,
 {
 	char tmp_str[32];
 	long reset;
-	int status = 0;
+	int status;
 	struct ocrdma_stats *pstats = filp->private_data;
 	struct ocrdma_dev *dev = pstats->dev;
 
-	if (count > 32)
+	if (*ppos != 0 || count == 0 || count > sizeof(tmp_str))
 		goto err;
 
 	if (copy_from_user(tmp_str, buffer, count))
@@ -660,7 +656,7 @@ static ssize_t ocrdma_dbgfs_ops_write(struct file *filp,
 		if (reset) {
 			status = ocrdma_mbx_rdma_stats(dev, true);
 			if (status) {
-				pr_err("Failed to reset stats = %d", status);
+				pr_err("Failed to reset stats = %d\n", status);
 				goto err;
 			}
 		}
@@ -836,7 +832,7 @@ void ocrdma_add_port_stats(struct ocrdma_dev *dev)
 
 	dev->reset_stats.type = OCRDMA_RESET_STATS;
 	dev->reset_stats.dev = dev;
-	if (!debugfs_create_file("reset_stats", S_IRUSR, dev->dir,
+	if (!debugfs_create_file("reset_stats", 0200, dev->dir,
 				&dev->reset_stats, &ocrdma_dbg_ops))
 		goto err;
 

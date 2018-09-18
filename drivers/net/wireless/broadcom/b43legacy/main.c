@@ -36,7 +36,7 @@
 #include <linux/etherdevice.h>
 #include <linux/firmware.h>
 #include <linux/workqueue.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/skbuff.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
@@ -1056,7 +1056,7 @@ static void b43legacy_write_probe_resp_plcp(struct b43legacy_wldev *dev,
 	b43legacy_generate_plcp_hdr(&plcp, size + FCS_LEN, rate->hw_value);
 	dur = ieee80211_generic_frame_duration(dev->wl->hw,
 					       dev->wl->vif,
-					       IEEE80211_BAND_2GHZ,
+					       NL80211_BAND_2GHZ,
 					       size,
 					       rate);
 	/* Write PLCP in two parts and timing for packet transfer */
@@ -1122,7 +1122,7 @@ static const u8 *b43legacy_generate_probe_resp(struct b43legacy_wldev *dev,
 					 IEEE80211_STYPE_PROBE_RESP);
 	dur = ieee80211_generic_frame_duration(dev->wl->hw,
 					       dev->wl->vif,
-					       IEEE80211_BAND_2GHZ,
+					       NL80211_BAND_2GHZ,
 					       *dest_size,
 					       rate);
 	hdr->duration_id = dur;
@@ -2719,7 +2719,7 @@ static int b43legacy_op_dev_config(struct ieee80211_hw *hw,
 
 	/* Switch the PHY mode (if necessary). */
 	switch (conf->chandef.chan->band) {
-	case IEEE80211_BAND_2GHZ:
+	case NL80211_BAND_2GHZ:
 		if (phy->type == B43legacy_PHYTYPE_B)
 			new_phymode = B43legacy_PHYMODE_B;
 		else
@@ -2792,7 +2792,7 @@ out_unlock_mutex:
 static void b43legacy_update_basic_rates(struct b43legacy_wldev *dev, u32 brates)
 {
 	struct ieee80211_supported_band *sband =
-		dev->wl->hw->wiphy->bands[IEEE80211_BAND_2GHZ];
+		dev->wl->hw->wiphy->bands[NL80211_BAND_2GHZ];
 	struct ieee80211_rate *rate;
 	int i;
 	u16 basic, direct, offset, basic_offset, rateptr;
@@ -3300,8 +3300,8 @@ static int b43legacy_wireless_core_init(struct b43legacy_wldev *dev)
 
 	if ((phy->type == B43legacy_PHYTYPE_B) ||
 	    (phy->type == B43legacy_PHYTYPE_G)) {
-		phy->_lo_pairs = kzalloc(sizeof(struct b43legacy_lopair)
-					 * B43legacy_LO_COUNT,
+		phy->_lo_pairs = kcalloc(B43legacy_LO_COUNT,
+					 sizeof(struct b43legacy_lopair),
 					 GFP_KERNEL);
 		if (!phy->_lo_pairs)
 			return -ENOMEM;
@@ -3630,13 +3630,13 @@ static int b43legacy_setup_modes(struct b43legacy_wldev *dev,
 
 	phy->possible_phymodes = 0;
 	if (have_bphy) {
-		hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
+		hw->wiphy->bands[NL80211_BAND_2GHZ] =
 			&b43legacy_band_2GHz_BPHY;
 		phy->possible_phymodes |= B43legacy_PHYMODE_B;
 	}
 
 	if (have_gphy) {
-		hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
+		hw->wiphy->bands[NL80211_BAND_2GHZ] =
 			&b43legacy_band_2GHz_GPHY;
 		phy->possible_phymodes |= B43legacy_PHYMODE_G;
 	}
@@ -3838,7 +3838,9 @@ static int b43legacy_wireless_init(struct ssb_device *dev)
 	hw->wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_AP) |
 		BIT(NL80211_IFTYPE_STATION) |
+#ifdef CONFIG_WIRELESS_WDS
 		BIT(NL80211_IFTYPE_WDS) |
+#endif
 		BIT(NL80211_IFTYPE_ADHOC);
 	hw->queues = 1; /* FIXME: hardware has more queues */
 	hw->max_rates = 2;
@@ -3847,6 +3849,8 @@ static int b43legacy_wireless_init(struct ssb_device *dev)
 		SET_IEEE80211_PERM_ADDR(hw, sprom->et1mac);
 	else
 		SET_IEEE80211_PERM_ADDR(hw, sprom->il0mac);
+
+	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 
 	/* Get and initialize struct b43legacy_wl */
 	wl = hw_to_b43legacy_wl(hw);

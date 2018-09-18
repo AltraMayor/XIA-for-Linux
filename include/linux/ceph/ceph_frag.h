@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef FS_CEPH_FRAG_H
 #define FS_CEPH_FRAG_H
 
@@ -51,11 +52,11 @@ static inline __u32 ceph_frag_make_child(__u32 f, int by, int i)
 	return ceph_frag_make(newbits,
 			 ceph_frag_value(f) | (i << (24 - newbits)));
 }
-static inline int ceph_frag_is_leftmost(__u32 f)
+static inline bool ceph_frag_is_leftmost(__u32 f)
 {
 	return ceph_frag_value(f) == 0;
 }
-static inline int ceph_frag_is_rightmost(__u32 f)
+static inline bool ceph_frag_is_rightmost(__u32 f)
 {
 	return ceph_frag_value(f) == ceph_frag_mask(f);
 }

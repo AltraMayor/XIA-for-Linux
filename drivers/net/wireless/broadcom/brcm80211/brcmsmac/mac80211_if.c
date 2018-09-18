@@ -49,7 +49,7 @@
 	FIF_PSPOLL)
 
 #define CHAN2GHZ(channel, freqency, chflags)  { \
-	.band = IEEE80211_BAND_2GHZ, \
+	.band = NL80211_BAND_2GHZ, \
 	.center_freq = (freqency), \
 	.hw_value = (channel), \
 	.flags = chflags, \
@@ -58,7 +58,7 @@
 }
 
 #define CHAN5GHZ(channel, chflags)  { \
-	.band = IEEE80211_BAND_5GHZ, \
+	.band = NL80211_BAND_5GHZ, \
 	.center_freq = 5000 + 5*(channel), \
 	.hw_value = (channel), \
 	.flags = chflags, \
@@ -108,7 +108,7 @@ MODULE_DEVICE_TABLE(bcma, brcms_coreid_table);
  * flags are specified by the BRCM_DL_* macros in
  * drivers/net/wireless/brcm80211/include/defs.h.
  */
-module_param_named(debug, brcm_msg_level, uint, S_IRUGO | S_IWUSR);
+module_param_named(debug, brcm_msg_level, uint, 0644);
 #endif
 
 static struct ieee80211_channel brcms_2ghz_chantable[] = {
@@ -217,7 +217,7 @@ static struct ieee80211_rate legacy_ratetable[] = {
 };
 
 static const struct ieee80211_supported_band brcms_band_2GHz_nphy_template = {
-	.band = IEEE80211_BAND_2GHZ,
+	.band = NL80211_BAND_2GHZ,
 	.channels = brcms_2ghz_chantable,
 	.n_channels = ARRAY_SIZE(brcms_2ghz_chantable),
 	.bitrates = legacy_ratetable,
@@ -238,7 +238,7 @@ static const struct ieee80211_supported_band brcms_band_2GHz_nphy_template = {
 };
 
 static const struct ieee80211_supported_band brcms_band_5GHz_nphy_template = {
-	.band = IEEE80211_BAND_5GHZ,
+	.band = NL80211_BAND_5GHZ,
 	.channels = brcms_5ghz_nphy_chantable,
 	.n_channels = ARRAY_SIZE(brcms_5ghz_nphy_chantable),
 	.bitrates = legacy_ratetable + BRCMS_LEGACY_5G_RATE_OFFSET,
@@ -818,13 +818,15 @@ brcms_ops_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 static int
 brcms_ops_ampdu_action(struct ieee80211_hw *hw,
 		    struct ieee80211_vif *vif,
-		    enum ieee80211_ampdu_mlme_action action,
-		    struct ieee80211_sta *sta, u16 tid, u16 *ssn,
-		    u8 buf_size, bool amsdu)
+		    struct ieee80211_ampdu_params *params)
 {
 	struct brcms_info *wl = hw->priv;
 	struct scb *scb = &wl->wlc->pri_scb;
 	int status;
+	struct ieee80211_sta *sta = params->sta;
+	enum ieee80211_ampdu_mlme_action action = params->action;
+	u16 tid = params->tid;
+	u8 buf_size = params->buf_size;
 
 	if (WARN_ON(scb->magic != SCB_MAGIC))
 		return -EIDRM;
@@ -1024,8 +1026,8 @@ static int ieee_hw_rate_init(struct ieee80211_hw *hw)
 	int has_5g = 0;
 	u16 phy_type;
 
-	hw->wiphy->bands[IEEE80211_BAND_2GHZ] = NULL;
-	hw->wiphy->bands[IEEE80211_BAND_5GHZ] = NULL;
+	hw->wiphy->bands[NL80211_BAND_2GHZ] = NULL;
+	hw->wiphy->bands[NL80211_BAND_5GHZ] = NULL;
 
 	phy_type = brcms_c_get_phy_type(wl->wlc, 0);
 	if (phy_type == PHY_TYPE_N || phy_type == PHY_TYPE_LCN) {
@@ -1036,7 +1038,7 @@ static int ieee_hw_rate_init(struct ieee80211_hw *hw)
 			band->ht_cap.mcs.rx_mask[1] = 0;
 			band->ht_cap.mcs.rx_highest = cpu_to_le16(72);
 		}
-		hw->wiphy->bands[IEEE80211_BAND_2GHZ] = band;
+		hw->wiphy->bands[NL80211_BAND_2GHZ] = band;
 	} else {
 		return -EPERM;
 	}
@@ -1047,7 +1049,7 @@ static int ieee_hw_rate_init(struct ieee80211_hw *hw)
 		if (phy_type == PHY_TYPE_N || phy_type == PHY_TYPE_LCN) {
 			band = &wlc->bandstate[BAND_5G_INDEX]->band;
 			*band = brcms_band_5GHz_nphy_template;
-			hw->wiphy->bands[IEEE80211_BAND_5GHZ] = band;
+			hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
 		} else {
 			return -EPERM;
 		}
@@ -1079,6 +1081,8 @@ static int ieee_hw_init(struct ieee80211_hw *hw)
 	 *
 	 * hw->wiphy->flags |= WIPHY_FLAG_AP_PROBE_RESP_OFFLOAD;
 	 */
+
+	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 
 	hw->rate_control_algorithm = "minstrel_ht";
 
@@ -1559,7 +1563,7 @@ void brcms_free_timer(struct brcms_timer *t)
 }
 
 /*
- * precondition: perimeter lock has been acquired
+ * precondition: no locking required
  */
 int brcms_ucode_init_buf(struct brcms_info *wl, void **pbuf, u32 idx)
 {
@@ -1574,7 +1578,7 @@ int brcms_ucode_init_buf(struct brcms_info *wl, void **pbuf, u32 idx)
 			if (le32_to_cpu(hdr->idx) == idx) {
 				pdata = wl->fw.fw_bin[i]->data +
 					le32_to_cpu(hdr->offset);
-				*pbuf = kmemdup(pdata, len, GFP_ATOMIC);
+				*pbuf = kmemdup(pdata, len, GFP_KERNEL);
 				if (*pbuf == NULL)
 					goto fail;
 

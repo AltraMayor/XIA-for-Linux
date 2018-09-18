@@ -335,7 +335,7 @@ static inline int bfusb_recv_block(struct bfusb_data *data, int hdr, unsigned ch
 	}
 
 	if (len > 0)
-		memcpy(skb_put(data->reassembly, len), buf, len);
+		skb_put_data(data->reassembly, buf, len);
 
 	if (hdr & 0x08) {
 		hci_recv_frame(data->hdev, data->reassembly);
@@ -490,7 +490,7 @@ static int bfusb_send_frame(struct hci_dev *hdev, struct sk_buff *skb)
 	count = skb->len;
 
 	/* Max HCI frame size seems to be 1511 + 1 */
-	nskb = bt_skb_alloc(count + 32, GFP_ATOMIC);
+	nskb = bt_skb_alloc(count + 32, GFP_KERNEL);
 	if (!nskb) {
 		BT_ERR("Can't allocate memory for new packet");
 		return -ENOMEM;
@@ -505,7 +505,7 @@ static int bfusb_send_frame(struct hci_dev *hdev, struct sk_buff *skb)
 		buf[1] = 0x00;
 		buf[2] = (size == BFUSB_MAX_BLOCK_SIZE) ? 0 : size;
 
-		memcpy(skb_put(nskb, 3), buf, 3);
+		skb_put_data(nskb, buf, 3);
 		skb_copy_from_linear_data_offset(skb, sent, skb_put(nskb, size), size);
 
 		sent  += size;
@@ -516,7 +516,7 @@ static int bfusb_send_frame(struct hci_dev *hdev, struct sk_buff *skb)
 	if ((nskb->len % data->bulk_pkt_size) == 0) {
 		buf[0] = 0xdd;
 		buf[1] = 0x00;
-		memcpy(skb_put(nskb, 2), buf, 2);
+		skb_put_data(nskb, buf, 2);
 	}
 
 	read_lock(&data->lock);

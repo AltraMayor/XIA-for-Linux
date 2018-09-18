@@ -63,7 +63,7 @@ static int fat_ioctl_set_attributes(struct file *file, u32 __user *user_attr)
 
 	/* Equivalent to a chmod() */
 	ia.ia_valid = ATTR_MODE | ATTR_CTIME;
-	ia.ia_ctime = current_fs_time(inode->i_sb);
+	ia.ia_ctime = current_time(inode);
 	if (is_dir)
 		ia.ia_mode = fat_make_mode(sbi, attr, S_IRWXUGO);
 	else {
@@ -121,6 +121,37 @@ static int fat_ioctl_get_volume_id(struct inode *inode, u32 __user *user_attr)
 	return put_user(sbi->vol_id, user_attr);
 }
 
+static int fat_ioctl_fitrim(struct inode *inode, unsigned long arg)
+{
+	struct super_block *sb = inode->i_sb;
+	struct fstrim_range __user *user_range;
+	struct fstrim_range range;
+	struct request_queue *q = bdev_get_queue(sb->s_bdev);
+	int err;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (!blk_queue_discard(q))
+		return -EOPNOTSUPP;
+
+	user_range = (struct fstrim_range __user *)arg;
+	if (copy_from_user(&range, user_range, sizeof(range)))
+		return -EFAULT;
+
+	range.minlen = max_t(unsigned int, range.minlen,
+			     q->limits.discard_granularity);
+
+	err = fat_trim_fs(inode, &range);
+	if (err < 0)
+		return err;
+
+	if (copy_to_user(user_range, &range, sizeof(range)))
+		return -EFAULT;
+
+	return 0;
+}
+
 long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
@@ -133,6 +164,8 @@ long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return fat_ioctl_set_attributes(filp, user_attr);
 	case FAT_IOCTL_GET_VOLUME_ID:
 		return fat_ioctl_get_volume_id(inode, user_attr);
+	case FITRIM:
+		return fat_ioctl_fitrim(inode, arg);
 	default:
 		return -ENOTTY;	/* Inappropriate ioctl for device */
 	}
@@ -194,7 +227,7 @@ static int fat_cont_expand(struct inode *inode, loff_t size)
 	if (err)
 		goto out;
 
-	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
+	inode->i_ctime = inode->i_mtime = current_time(inode);
 	mark_inode_dirty(inode);
 	if (IS_SYNC(inode)) {
 		int err2;
@@ -297,7 +330,7 @@ static int fat_free(struct inode *inode, int skip)
 		MSDOS_I(inode)->i_logstart = 0;
 	}
 	MSDOS_I(inode)->i_attrs |= ATTR_ARCH;
-	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
+	inode->i_ctime = inode->i_mtime = current_time(inode);
 	if (wait) {
 		err = fat_sync_inode(inode);
 		if (err) {
@@ -365,9 +398,10 @@ void fat_truncate_blocks(struct inode *inode, loff_t offset)
 	fat_flush_inodes(inode->i_sb, inode, NULL);
 }
 
-int fat_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
+int fat_getattr(const struct path *path, struct kstat *stat,
+		u32 request_mask, unsigned int flags)
 {
-	struct inode *inode = d_inode(dentry);
+	struct inode *inode = d_inode(path->dentry);
 	generic_fillattr(inode, stat);
 	stat->blksize = MSDOS_SB(inode->i_sb)->cluster_size;
 
@@ -450,7 +484,7 @@ int fat_setattr(struct dentry *dentry, struct iattr *attr)
 			attr->ia_valid &= ~TIMES_SET_FLAGS;
 	}
 
-	error = inode_change_ok(inode, attr);
+	error = setattr_prepare(dentry, attr);
 	attr->ia_valid = ia_valid;
 	if (error) {
 		if (sbi->options.quiet)

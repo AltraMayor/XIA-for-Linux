@@ -37,14 +37,9 @@ struct p8_aes_ctx {
 
 static int p8_aes_init(struct crypto_tfm *tfm)
 {
-	const char *alg;
+	const char *alg = crypto_tfm_alg_name(tfm);
 	struct crypto_cipher *fallback;
 	struct p8_aes_ctx *ctx = crypto_tfm_ctx(tfm);
-
-	if (!(alg = crypto_tfm_alg_name(tfm))) {
-		printk(KERN_ERR "Failed to get algorithm name.\n");
-		return -ENOENT;
-	}
 
 	fallback = crypto_alloc_cipher(alg, 0, CRYPTO_ALG_NEED_FALLBACK);
 	if (IS_ERR(fallback)) {
@@ -53,8 +48,6 @@ static int p8_aes_init(struct crypto_tfm *tfm)
 		       alg, PTR_ERR(fallback));
 		return PTR_ERR(fallback);
 	}
-	printk(KERN_INFO "Using '%s' as fallback implementation.\n",
-	       crypto_tfm_alg_driver_name((struct crypto_tfm *) fallback));
 
 	crypto_cipher_set_flags(fallback,
 				crypto_cipher_get_flags((struct

@@ -1809,13 +1809,12 @@ static void
 bfa_ioc_send_enable(struct bfa_ioc_s *ioc)
 {
 	struct bfi_ioc_ctrl_req_s enable_req;
-	struct timeval tv;
 
 	bfi_h2i_set(enable_req.mh, BFI_MC_IOC, BFI_IOC_H2I_ENABLE_REQ,
 		    bfa_ioc_portid(ioc));
 	enable_req.clscode = cpu_to_be16(ioc->clscode);
-	do_gettimeofday(&tv);
-	enable_req.tv_sec = be32_to_cpu(tv.tv_sec);
+	/* unsigned 32-bit time_t overflow in y2106 */
+	enable_req.tv_sec = be32_to_cpu(ktime_get_real_seconds());
 	bfa_ioc_mbox_send(ioc, &enable_req, sizeof(struct bfi_ioc_ctrl_req_s));
 }
 
@@ -1826,6 +1825,9 @@ bfa_ioc_send_disable(struct bfa_ioc_s *ioc)
 
 	bfi_h2i_set(disable_req.mh, BFI_MC_IOC, BFI_IOC_H2I_DISABLE_REQ,
 		    bfa_ioc_portid(ioc));
+	disable_req.clscode = cpu_to_be16(ioc->clscode);
+	/* unsigned 32-bit time_t overflow in y2106 */
+	disable_req.tv_sec = be32_to_cpu(ktime_get_real_seconds());
 	bfa_ioc_mbox_send(ioc, &disable_req, sizeof(struct bfi_ioc_ctrl_req_s));
 }
 
@@ -2803,7 +2805,7 @@ void
 bfa_ioc_get_adapter_manufacturer(struct bfa_ioc_s *ioc, char *manufacturer)
 {
 	memset((void *)manufacturer, 0, BFA_ADAPTER_MFG_NAME_LEN);
-	memcpy(manufacturer, BFA_MFG_NAME, BFA_ADAPTER_MFG_NAME_LEN);
+	strlcpy(manufacturer, BFA_MFG_NAME, BFA_ADAPTER_MFG_NAME_LEN);
 }
 
 void
@@ -5822,12 +5824,6 @@ bfa_phy_intr(void *phyarg, struct bfi_mbmsg_s *msg)
 }
 
 /*
- *	DCONF module specific
- */
-
-BFA_MODULE(dconf);
-
-/*
  * DCONF state machine events
  */
 enum bfa_dconf_event {
@@ -6073,7 +6069,7 @@ bfa_dconf_sm_iocdown_dirty(struct bfa_dconf_mod_s *dconf,
 /*
  * Compute and return memory needed by DRV_CFG module.
  */
-static void
+void
 bfa_dconf_meminfo(struct bfa_iocfc_cfg_s *cfg, struct bfa_meminfo_s *meminfo,
 		  struct bfa_s *bfa)
 {
@@ -6087,9 +6083,8 @@ bfa_dconf_meminfo(struct bfa_iocfc_cfg_s *cfg, struct bfa_meminfo_s *meminfo,
 				sizeof(struct bfa_dconf_s));
 }
 
-static void
-bfa_dconf_attach(struct bfa_s *bfa, void *bfad, struct bfa_iocfc_cfg_s *cfg,
-		struct bfa_pcidev_s *pcidev)
+void
+bfa_dconf_attach(struct bfa_s *bfa, void *bfad, struct bfa_iocfc_cfg_s *cfg)
 {
 	struct bfa_dconf_mod_s *dconf = BFA_DCONF_MOD(bfa);
 
@@ -6134,31 +6129,18 @@ bfa_dconf_modinit(struct bfa_s *bfa)
 	struct bfa_dconf_mod_s *dconf = BFA_DCONF_MOD(bfa);
 	bfa_sm_send_event(dconf, BFA_DCONF_SM_INIT);
 }
-static void
-bfa_dconf_start(struct bfa_s *bfa)
-{
-}
-
-static void
-bfa_dconf_stop(struct bfa_s *bfa)
-{
-}
 
 static void bfa_dconf_timer(void *cbarg)
 {
 	struct bfa_dconf_mod_s *dconf = cbarg;
 	bfa_sm_send_event(dconf, BFA_DCONF_SM_TIMEOUT);
 }
-static void
+
+void
 bfa_dconf_iocdisable(struct bfa_s *bfa)
 {
 	struct bfa_dconf_mod_s *dconf = BFA_DCONF_MOD(bfa);
 	bfa_sm_send_event(dconf, BFA_DCONF_SM_IOCDISABLE);
-}
-
-static void
-bfa_dconf_detach(struct bfa_s *bfa)
-{
 }
 
 static bfa_status_t

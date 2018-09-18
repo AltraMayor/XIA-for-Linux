@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * sh-mobile VEU mem2mem driver
  *
  * Copyright (C) 2012 Renesas Electronics Corporation
  * Author: Guennadi Liakhovetski, <g.liakhovetski@gmx.de>
  * Copyright (C) 2008 Magnus Damm
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the version 2 of the GNU General Public License as
- * published by the Free Software Foundation
  */
 
 #include <linux/err.h>
@@ -118,7 +115,6 @@ struct sh_veu_dev {
 	struct sh_veu_file *output;
 	struct mutex fop_lock;
 	void __iomem *base;
-	struct vb2_alloc_ctx *alloc_ctx;
 	spinlock_t lock;
 	bool is_2h;
 	unsigned int xaction;
@@ -268,7 +264,7 @@ static void sh_veu_process(struct sh_veu_dev *veu,
 	sh_veu_reg_write(veu, VEU_EIER, 1); /* enable interrupt in VEU */
 }
 
-/**
+/*
  * sh_veu_device_run() - prepares and starts the device
  *
  * This will be called by the framework when it decides to schedule a particular
@@ -521,8 +517,8 @@ static void sh_veu_colour_offset(struct sh_veu_dev *veu, struct sh_veu_vfmt *vfm
 	/* dst_left and dst_top validity will be verified in CROP / COMPOSE */
 	unsigned int left = vfmt->frame.left & ~0x03;
 	unsigned int top = vfmt->frame.top;
-	dma_addr_t offset = ((left * veu->vfmt_out.fmt->depth) >> 3) +
-		top * veu->vfmt_out.bytesperline;
+	dma_addr_t offset = (dma_addr_t)top * veu->vfmt_out.bytesperline +
+			(((dma_addr_t)left * veu->vfmt_out.fmt->depth) >> 3);
 	unsigned int y_line;
 
 	vfmt->offset_y = offset;
@@ -866,7 +862,7 @@ static const struct v4l2_ioctl_ops sh_veu_ioctl_ops = {
 
 static int sh_veu_queue_setup(struct vb2_queue *vq,
 			      unsigned int *nbuffers, unsigned int *nplanes,
-			      unsigned int sizes[], void *alloc_ctxs[])
+			      unsigned int sizes[], struct device *alloc_devs[])
 {
 	struct sh_veu_dev *veu = vb2_get_drv_priv(vq);
 	struct sh_veu_vfmt *vfmt = sh_veu_get_vfmt(veu, vq->type);
@@ -882,14 +878,11 @@ static int sh_veu_queue_setup(struct vb2_queue *vq,
 		*nbuffers = count;
 	}
 
-	if (*nplanes) {
-		alloc_ctxs[0] = veu->alloc_ctx;
+	if (*nplanes)
 		return sizes[0] < size ? -EINVAL : 0;
-	}
 
 	*nplanes = 1;
 	sizes[0] = size;
-	alloc_ctxs[0] = veu->alloc_ctx;
 
 	dev_dbg(veu->dev, "get %d buffer(s) of size %d each.\n", count, size);
 
@@ -948,6 +941,7 @@ static int sh_veu_queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->mem_ops = &vb2_dma_contig_memops;
 	src_vq->lock = &veu->fop_lock;
 	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+	src_vq->dev = veu->v4l2_dev.dev;
 
 	ret = vb2_queue_init(src_vq);
 	if (ret < 0)
@@ -962,6 +956,7 @@ static int sh_veu_queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->mem_ops = &vb2_dma_contig_memops;
 	dst_vq->lock = &veu->fop_lock;
 	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+	dst_vq->dev = veu->v4l2_dev.dev;
 
 	return vb2_queue_init(dst_vq);
 }
@@ -1018,7 +1013,7 @@ static int sh_veu_release(struct file *file)
 	return 0;
 }
 
-static unsigned int sh_veu_poll(struct file *file,
+static __poll_t sh_veu_poll(struct file *file,
 				struct poll_table_struct *wait)
 {
 	struct sh_veu_file *veu_file = file->private_data;
@@ -1148,12 +1143,6 @@ static int sh_veu_probe(struct platform_device *pdev)
 
 	vdev = &veu->vdev;
 
-	veu->alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
-	if (IS_ERR(veu->alloc_ctx)) {
-		ret = PTR_ERR(veu->alloc_ctx);
-		goto einitctx;
-	}
-
 	*vdev = sh_veu_videodev;
 	vdev->v4l2_dev = &veu->v4l2_dev;
 	spin_lock_init(&veu->lock);
@@ -1187,8 +1176,6 @@ evidreg:
 	pm_runtime_disable(&pdev->dev);
 	v4l2_m2m_release(veu->m2m_dev);
 em2minit:
-	vb2_dma_contig_cleanup_ctx(veu->alloc_ctx);
-einitctx:
 	v4l2_device_unregister(&veu->v4l2_dev);
 	return ret;
 }
@@ -1202,7 +1189,6 @@ static int sh_veu_remove(struct platform_device *pdev)
 	video_unregister_device(&veu->vdev);
 	pm_runtime_disable(&pdev->dev);
 	v4l2_m2m_release(veu->m2m_dev);
-	vb2_dma_contig_cleanup_ctx(veu->alloc_ctx);
 	v4l2_device_unregister(&veu->v4l2_dev);
 
 	return 0;

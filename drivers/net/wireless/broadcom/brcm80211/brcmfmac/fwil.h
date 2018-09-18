@@ -78,12 +78,14 @@
 #define BRCMF_C_SET_SCAN_CHANNEL_TIME		185
 #define BRCMF_C_SET_SCAN_UNASSOC_TIME		187
 #define BRCMF_C_SCB_DEAUTHENTICATE_FOR_REASON	201
+#define BRCMF_C_SET_ASSOC_PREFER		205
 #define BRCMF_C_GET_VALID_CHANNELS		217
 #define BRCMF_C_GET_KEY_PRIMARY			235
 #define BRCMF_C_SET_KEY_PRIMARY			236
 #define BRCMF_C_SET_SCAN_PASSIVE_TIME		258
 #define BRCMF_C_GET_VAR				262
 #define BRCMF_C_SET_VAR				263
+#define BRCMF_C_SET_WSEC_PMK			268
 
 s32 brcmf_fil_cmd_data_set(struct brcmf_if *ifp, u32 cmd, void *data, u32 len);
 s32 brcmf_fil_cmd_data_get(struct brcmf_if *ifp, u32 cmd, void *data, u32 len);

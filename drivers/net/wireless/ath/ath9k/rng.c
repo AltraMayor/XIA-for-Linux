@@ -22,7 +22,9 @@
 #include "ar9003_phy.h"
 
 #define ATH9K_RNG_BUF_SIZE	320
-#define ATH9K_RNG_ENTROPY(x)	(((x) * 8 * 320) >> 10) /* quality: 320/1024 */
+#define ATH9K_RNG_ENTROPY(x)	(((x) * 8 * 10) >> 5) /* quality: 10/32 */
+
+static DECLARE_WAIT_QUEUE_HEAD(rng_queue);
 
 static int ath9k_rng_data_read(struct ath_softc *sc, u32 *buf, u32 buf_size)
 {
@@ -55,11 +57,26 @@ static int ath9k_rng_data_read(struct ath_softc *sc, u32 *buf, u32 buf_size)
 	return j << 2;
 }
 
+static u32 ath9k_rng_delay_get(u32 fail_stats)
+{
+	u32 delay;
+
+	if (fail_stats < 100)
+		delay = 10;
+	else if (fail_stats < 105)
+		delay = 1000;
+	else
+		delay = 10000;
+
+	return delay;
+}
+
 static int ath9k_rng_kthread(void *data)
 {
 	int bytes_read;
 	struct ath_softc *sc = data;
 	u32 *rng_buf;
+	u32 delay, fail_stats = 0;
 
 	rng_buf = kmalloc_array(ATH9K_RNG_BUF_SIZE, sizeof(u32), GFP_KERNEL);
 	if (!rng_buf)
@@ -69,9 +86,14 @@ static int ath9k_rng_kthread(void *data)
 		bytes_read = ath9k_rng_data_read(sc, rng_buf,
 						 ATH9K_RNG_BUF_SIZE);
 		if (unlikely(!bytes_read)) {
-			msleep_interruptible(10);
+			delay = ath9k_rng_delay_get(++fail_stats);
+			wait_event_interruptible_timeout(rng_queue,
+							 kthread_should_stop(),
+							 msecs_to_jiffies(delay));
 			continue;
 		}
+
+		fail_stats = 0;
 
 		/* sleep until entropy bits under write_wakeup_threshold */
 		add_hwgenerator_randomness((void *)rng_buf, bytes_read,
@@ -102,6 +124,8 @@ void ath9k_rng_start(struct ath_softc *sc)
 
 void ath9k_rng_stop(struct ath_softc *sc)
 {
-	if (sc->rng_task)
+	if (sc->rng_task) {
 		kthread_stop(sc->rng_task);
+		sc->rng_task = NULL;
+	}
 }

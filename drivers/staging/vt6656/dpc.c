@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * File: dpc.c
  *
@@ -34,7 +24,7 @@
 #include "rf.h"
 
 int vnt_rx_data(struct vnt_private *priv, struct vnt_rcb *ptr_rcb,
-	unsigned long bytes_received)
+		unsigned long bytes_received)
 {
 	struct ieee80211_hw *hw = priv->hw;
 	struct ieee80211_supported_band *sband;
@@ -42,11 +32,11 @@ int vnt_rx_data(struct vnt_private *priv, struct vnt_rcb *ptr_rcb,
 	struct ieee80211_rx_status rx_status = { 0 };
 	struct ieee80211_hdr *hdr;
 	__le16 fc;
-	u8 *rsr, *new_rsr, *rssi, *frame;
+	u8 *rsr, *new_rsr, *rssi;
 	__le64 *tsf_time;
 	u32 frame_size;
 	int ii, r;
-	u8 *rx_sts, *rx_rate, *sq, *sq_3;
+	u8 *rx_rate, *sq, *sq_3;
 	u32 wbk_status;
 	u8 *skb_data;
 	u16 *pay_load_len;
@@ -75,22 +65,21 @@ int vnt_rx_data(struct vnt_private *priv, struct vnt_rcb *ptr_rcb,
 
 	skb_data = (u8 *)skb->data;
 
-	rx_sts = skb_data+4;
-	rx_rate = skb_data+5;
+	rx_rate = skb_data + 5;
 
 	/* real Frame Size = USBframe_size -4WbkStatus - 4RxStatus */
 	/* -8TSF - 4RSR - 4SQ3 - ?Padding */
 
 	/* if SQ3 the range is 24~27, if no SQ3 the range is 20~23 */
 
-	pay_load_len = (u16 *) (skb_data + 6);
+	pay_load_len = (u16 *)(skb_data + 6);
 
 	/*Fix hardware bug => PLCP_Length error */
 	if (((bytes_received - (*pay_load_len)) > 27) ||
-		((bytes_received - (*pay_load_len)) < 24) ||
-			(bytes_received < (*pay_load_len))) {
+	    ((bytes_received - (*pay_load_len)) < 24) ||
+	    (bytes_received < (*pay_load_len))) {
 		dev_dbg(&priv->usb->dev, "Wrong PLCP Length %x\n",
-							*pay_load_len);
+			*pay_load_len);
 		return false;
 	}
 
@@ -143,8 +132,6 @@ int vnt_rx_data(struct vnt_private *priv, struct vnt_rcb *ptr_rcb,
 
 	priv->bb_pre_ed_rssi = (u8)rx_dbm + 1;
 	priv->current_rssi = priv->bb_pre_ed_rssi;
-
-	frame = skb_data + 8;
 
 	skb_pull(skb, 8);
 	skb_trim(skb, frame_size);

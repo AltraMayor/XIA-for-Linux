@@ -38,7 +38,7 @@
 #include <asm/prom.h>
 #include <asm/spu.h>
 #include <asm/spu_priv1.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "spufs.h"
 
@@ -103,7 +103,7 @@ spufs_new_inode(struct super_block *sb, umode_t mode)
 	inode->i_mode = mode;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
-	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+	inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 out:
 	return inode;
 }
@@ -238,7 +238,7 @@ const struct file_operations spufs_context_fops = {
 	.release	= spufs_dir_close,
 	.llseek		= dcache_dir_lseek,
 	.read		= generic_read_dir,
-	.iterate	= dcache_readdir,
+	.iterate_shared	= dcache_readdir,
 	.fsync		= noop_fsync,
 };
 EXPORT_SYMBOL_GPL(spufs_context_fops);
@@ -455,7 +455,7 @@ spufs_create_context(struct inode *inode, struct dentry *dentry,
 		}
 	}
 
-	ret = spufs_mkdir(inode, dentry, flags, mode & S_IRWXUGO);
+	ret = spufs_mkdir(inode, dentry, flags, mode & 0777);
 	if (ret)
 		goto out_aff_unlock;
 
@@ -496,8 +496,10 @@ spufs_mkgang(struct inode *dir, struct dentry *dentry, umode_t mode)
 	gang = alloc_spu_gang();
 	SPUFS_I(inode)->i_ctx = NULL;
 	SPUFS_I(inode)->i_gang = gang;
-	if (!gang)
+	if (!gang) {
+		ret = -ENOMEM;
 		goto out_iput;
+	}
 
 	inode->i_op = &simple_dir_inode_operations;
 	inode->i_fop = &simple_dir_operations;
@@ -544,7 +546,7 @@ static int spufs_create_gang(struct inode *inode,
 	struct path path = {.mnt = mnt, .dentry = dentry};
 	int ret;
 
-	ret = spufs_mkgang(inode, dentry, mode & S_IRWXUGO);
+	ret = spufs_mkgang(inode, dentry, mode & 0777);
 	if (!ret) {
 		ret = spufs_gang_open(&path);
 		if (ret < 0) {
@@ -602,6 +604,24 @@ static const match_table_t spufs_tokens = {
 	{ Opt_debug, "debug" },
 	{ Opt_err,    NULL  },
 };
+
+static int spufs_show_options(struct seq_file *m, struct dentry *root)
+{
+	struct spufs_sb_info *sbi = spufs_get_sb_info(root->d_sb);
+	struct inode *inode = root->d_inode;
+
+	if (!uid_eq(inode->i_uid, GLOBAL_ROOT_UID))
+		seq_printf(m, ",uid=%u",
+			   from_kuid_munged(&init_user_ns, inode->i_uid));
+	if (!gid_eq(inode->i_gid, GLOBAL_ROOT_GID))
+		seq_printf(m, ",gid=%u",
+			   from_kgid_munged(&init_user_ns, inode->i_gid));
+	if ((inode->i_mode & S_IALLUGO) != 0775)
+		seq_printf(m, ",mode=%o", inode->i_mode);
+	if (sbi->debug)
+		seq_puts(m, ",debug");
+	return 0;
+}
 
 static int
 spufs_parse_options(struct super_block *sb, char *options, struct inode *root)
@@ -722,18 +742,16 @@ spufs_fill_super(struct super_block *sb, void *data, int silent)
 		.destroy_inode = spufs_destroy_inode,
 		.statfs = simple_statfs,
 		.evict_inode = spufs_evict_inode,
-		.show_options = generic_show_options,
+		.show_options = spufs_show_options,
 	};
-
-	save_mount_options(sb, data);
 
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
-	sb->s_blocksize = PAGE_CACHE_SIZE;
-	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
+	sb->s_blocksize = PAGE_SIZE;
+	sb->s_blocksize_bits = PAGE_SHIFT;
 	sb->s_magic = SPUFS_MAGIC;
 	sb->s_op = &s_ops;
 	sb->s_fs_info = info;

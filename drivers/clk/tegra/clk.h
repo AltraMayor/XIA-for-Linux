@@ -19,6 +19,7 @@
 
 #include <linux/clk-provider.h>
 #include <linux/clkdev.h>
+#include <linux/delay.h>
 
 /**
  * struct tegra_clk_sync_source - external clock source from codec
@@ -116,7 +117,7 @@ struct tegra_clk_pll_freq_table {
 	unsigned long	input_rate;
 	unsigned long	output_rate;
 	u32		n;
-	u16		m;
+	u32		m;
 	u8		p;
 	u8		cpcon;
 	u16		sdm_data;
@@ -362,12 +363,6 @@ struct clk *tegra_clk_register_pllxc(const char *name, const char *parent_name,
 			    struct tegra_clk_pll_params *pll_params,
 			    spinlock_t *lock);
 
-struct clk *tegra_clk_register_pllxc_tegra210(const char *name,
-			const char *parent_name, void __iomem *clk_base,
-			void __iomem *pmc, unsigned long flags,
-			struct tegra_clk_pll_params *pll_params,
-			spinlock_t *lock);
-
 struct clk *tegra_clk_register_pllm(const char *name, const char *parent_name,
 			   void __iomem *clk_base, void __iomem *pmc,
 			   unsigned long flags,
@@ -383,6 +378,12 @@ struct clk *tegra_clk_register_pllc(const char *name, const char *parent_name,
 struct clk *tegra_clk_register_pllre(const char *name, const char *parent_name,
 			   void __iomem *clk_base, void __iomem *pmc,
 			   unsigned long flags,
+			   struct tegra_clk_pll_params *pll_params,
+			   spinlock_t *lock, unsigned long parent_rate);
+
+struct clk *tegra_clk_register_pllre_tegra210(const char *name,
+			   const char *parent_name, void __iomem *clk_base,
+			   void __iomem *pmc, unsigned long flags,
 			   struct tegra_clk_pll_params *pll_params,
 			   spinlock_t *lock, unsigned long parent_rate);
 
@@ -420,6 +421,23 @@ struct clk *tegra_clk_register_pllmb(const char *name, const char *parent_name,
 			   unsigned long flags,
 			   struct tegra_clk_pll_params *pll_params,
 			   spinlock_t *lock);
+
+struct clk *tegra_clk_register_pllu(const char *name, const char *parent_name,
+				void __iomem *clk_base, unsigned long flags,
+				struct tegra_clk_pll_params *pll_params,
+				spinlock_t *lock);
+
+struct clk *tegra_clk_register_pllu_tegra114(const char *name,
+				const char *parent_name,
+				void __iomem *clk_base, unsigned long flags,
+				struct tegra_clk_pll_params *pll_params,
+				spinlock_t *lock);
+
+struct clk *tegra_clk_register_pllu_tegra210(const char *name,
+				const char *parent_name,
+				void __iomem *clk_base, unsigned long flags,
+				struct tegra_clk_pll_params *pll_params,
+				spinlock_t *lock);
 
 /**
  * struct tegra_clk_pll_out - PLL divider down clock
@@ -496,7 +514,7 @@ struct tegra_clk_periph_gate {
 	u8			flags;
 	int			clk_num;
 	int			*enable_refcnt;
-	struct tegra_clk_periph_regs	*regs;
+	const struct tegra_clk_periph_regs *regs;
 };
 
 #define to_clk_periph_gate(_hw)					\
@@ -515,6 +533,23 @@ extern const struct clk_ops tegra_clk_periph_gate_ops;
 struct clk *tegra_clk_register_periph_gate(const char *name,
 		const char *parent_name, u8 gate_flags, void __iomem *clk_base,
 		unsigned long flags, int clk_num, int *enable_refcnt);
+
+struct tegra_clk_periph_fixed {
+	struct clk_hw hw;
+	void __iomem *base;
+	const struct tegra_clk_periph_regs *regs;
+	unsigned int mul;
+	unsigned int div;
+	unsigned int num;
+};
+
+struct clk *tegra_clk_register_periph_fixed(const char *name,
+					    const char *parent,
+					    unsigned long flags,
+					    void __iomem *base,
+					    unsigned int mul,
+					    unsigned int div,
+					    unsigned int num);
 
 /**
  * struct clk-periph - peripheral clock
@@ -546,11 +581,11 @@ struct tegra_clk_periph {
 
 extern const struct clk_ops tegra_clk_periph_ops;
 struct clk *tegra_clk_register_periph(const char *name,
-		const char **parent_names, int num_parents,
+		const char * const *parent_names, int num_parents,
 		struct tegra_clk_periph *periph, void __iomem *clk_base,
 		u32 offset, unsigned long flags);
 struct clk *tegra_clk_register_periph_nodiv(const char *name,
-		const char **parent_names, int num_parents,
+		const char * const *parent_names, int num_parents,
 		struct tegra_clk_periph *periph, void __iomem *clk_base,
 		u32 offset);
 
@@ -586,7 +621,7 @@ struct tegra_periph_init_data {
 	const char *name;
 	int clk_id;
 	union {
-		const char **parent_names;
+		const char *const *parent_names;
 		const char *parent_name;
 	} p;
 	int num_parents;
@@ -628,6 +663,9 @@ struct tegra_periph_init_data {
 			_clk_num, _gate_flags, _clk_id,\
 			NULL, 0, NULL)
 
+struct clk *tegra_clk_register_periph_data(void __iomem *clk_base,
+					   struct tegra_periph_init_data *init);
+
 /**
  * struct clk_super_mux - super clock
  *
@@ -646,6 +684,8 @@ struct tegra_periph_init_data {
 struct tegra_clk_super_mux {
 	struct clk_hw	hw;
 	void __iomem	*reg;
+	struct tegra_clk_frac_div frac_div;
+	const struct clk_ops	*div_ops;
 	u8		width;
 	u8		flags;
 	u8		div2_index;
@@ -662,6 +702,35 @@ struct clk *tegra_clk_register_super_mux(const char *name,
 		const char **parent_names, u8 num_parents,
 		unsigned long flags, void __iomem *reg, u8 clk_super_flags,
 		u8 width, u8 pllx_index, u8 div2_index, spinlock_t *lock);
+struct clk *tegra_clk_register_super_clk(const char *name,
+		const char * const *parent_names, u8 num_parents,
+		unsigned long flags, void __iomem *reg, u8 clk_super_flags,
+		spinlock_t *lock);
+
+/**
+ * struct tegra_sdmmc_mux - switch divider with Low Jitter inputs for SDMMC
+ *
+ * @hw:		handle between common and hardware-specific interfaces
+ * @reg:	register controlling mux and divider
+ * @flags:	hardware-specific flags
+ * @lock:	optional register lock
+ * @gate:	gate clock
+ * @gate_ops:	gate clock ops
+ */
+struct tegra_sdmmc_mux {
+	struct clk_hw		hw;
+	void __iomem		*reg;
+	spinlock_t		*lock;
+	const struct clk_ops	*gate_ops;
+	struct tegra_clk_periph_gate	gate;
+	u8			div_flags;
+};
+
+#define to_clk_sdmmc_mux(_hw) container_of(_hw, struct tegra_sdmmc_mux, hw)
+
+struct clk *tegra_clk_register_sdmmc_mux_div(const char *name,
+		void __iomem *clk_base, u32 offset, u32 clk_num, u8 div_flags,
+		unsigned long flags, void *lock);
 
 /**
  * struct clk_init_table - clock initialization table
@@ -716,12 +785,12 @@ void tegra_init_from_table(struct tegra_clk_init_table *tbl,
 void tegra_init_dup_clks(struct tegra_clk_duplicate *dup_list,
 		struct clk *clks[], int clk_max);
 
-struct tegra_clk_periph_regs *get_reg_bank(int clkid);
+const struct tegra_clk_periph_regs *get_reg_bank(int clkid);
 struct clk **tegra_clk_init(void __iomem *clk_base, int num, int periph_banks);
 
 struct clk **tegra_lookup_dt_id(int clk_id, struct tegra_clk *tegra_clk);
 
-void tegra_add_of_provider(struct device_node *np);
+void tegra_add_of_provider(struct device_node *np, void *clk_src_onecell_get);
 void tegra_register_devclks(struct tegra_devclk *dev_clks, int num);
 
 void tegra_audio_clk_init(void __iomem *clk_base,
@@ -769,5 +838,15 @@ extern tegra_clk_apply_init_table_func tegra_clk_apply_init_table;
 int tegra_pll_wait_for_lock(struct tegra_clk_pll *pll);
 u16 tegra_pll_get_fixed_mdiv(struct clk_hw *hw, unsigned long input_rate);
 int tegra_pll_p_div_to_hw(struct tegra_clk_pll *pll, u8 p_div);
+int div_frac_get(unsigned long rate, unsigned parent_rate, u8 width,
+		 u8 frac_width, u8 flags);
+
+
+/* Combined read fence with delay */
+#define fence_udelay(delay, reg)	\
+	do {				\
+		readl(reg);		\
+		udelay(delay);		\
+	} while (0)
 
 #endif /* TEGRA_CLK_H */

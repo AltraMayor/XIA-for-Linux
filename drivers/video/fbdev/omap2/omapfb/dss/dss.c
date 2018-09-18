@@ -40,8 +40,9 @@
 #include <linux/regulator/consumer.h>
 #include <linux/suspend.h>
 #include <linux/component.h>
+#include <linux/pinctrl/consumer.h>
 
-#include <video/omapdss.h>
+#include <video/omapfb_dss.h>
 
 #include "dss.h"
 #include "dss_features.h"
@@ -887,65 +888,46 @@ static const struct dss_features dra7xx_dss_feats = {
 	.num_ports		=	ARRAY_SIZE(dra7xx_ports),
 };
 
-static int dss_init_features(struct platform_device *pdev)
+static const struct dss_features *dss_get_features(void)
 {
-	const struct dss_features *src;
-	struct dss_features *dst;
-
-	dst = devm_kzalloc(&pdev->dev, sizeof(*dst), GFP_KERNEL);
-	if (!dst) {
-		dev_err(&pdev->dev, "Failed to allocate local DSS Features\n");
-		return -ENOMEM;
-	}
-
 	switch (omapdss_get_version()) {
 	case OMAPDSS_VER_OMAP24xx:
-		src = &omap24xx_dss_feats;
-		break;
+		return &omap24xx_dss_feats;
 
 	case OMAPDSS_VER_OMAP34xx_ES1:
 	case OMAPDSS_VER_OMAP34xx_ES3:
 	case OMAPDSS_VER_AM35xx:
-		src = &omap34xx_dss_feats;
-		break;
+		return &omap34xx_dss_feats;
 
 	case OMAPDSS_VER_OMAP3630:
-		src = &omap3630_dss_feats;
-		break;
+		return &omap3630_dss_feats;
 
 	case OMAPDSS_VER_OMAP4430_ES1:
 	case OMAPDSS_VER_OMAP4430_ES2:
 	case OMAPDSS_VER_OMAP4:
-		src = &omap44xx_dss_feats;
-		break;
+		return &omap44xx_dss_feats;
 
 	case OMAPDSS_VER_OMAP5:
-		src = &omap54xx_dss_feats;
-		break;
+		return &omap54xx_dss_feats;
 
 	case OMAPDSS_VER_AM43xx:
-		src = &am43xx_dss_feats;
-		break;
+		return &am43xx_dss_feats;
 
 	case OMAPDSS_VER_DRA7xx:
-		src = &dra7xx_dss_feats;
-		break;
+		return &dra7xx_dss_feats;
 
 	default:
-		return -ENODEV;
+		return NULL;
 	}
-
-	memcpy(dst, src, sizeof(*dst));
-	dss.feat = dst;
-
-	return 0;
 }
+
+static void dss_uninit_ports(struct platform_device *pdev);
 
 static int dss_init_ports(struct platform_device *pdev)
 {
 	struct device_node *parent = pdev->dev.of_node;
 	struct device_node *port;
-	int r;
+	int r, ret = 0;
 
 	if (parent == NULL)
 		return 0;
@@ -972,17 +954,21 @@ static int dss_init_ports(struct platform_device *pdev)
 
 		switch (port_type) {
 		case OMAP_DISPLAY_TYPE_DPI:
-			dpi_init_port(pdev, port);
+			ret = dpi_init_port(pdev, port);
 			break;
 		case OMAP_DISPLAY_TYPE_SDI:
-			sdi_init_port(pdev, port);
+			ret = sdi_init_port(pdev, port);
 			break;
 		default:
 			break;
 		}
-	} while ((port = omapdss_of_get_next_port(parent, port)) != NULL);
+	} while (!ret &&
+		 (port = omapdss_of_get_next_port(parent, port)) != NULL);
 
-	return 0;
+	if (ret)
+		dss_uninit_ports(pdev);
+
+	return ret;
 }
 
 static void dss_uninit_ports(struct platform_device *pdev)
@@ -1098,9 +1084,9 @@ static int dss_bind(struct device *dev)
 
 	dss.pdev = pdev;
 
-	r = dss_init_features(dss.pdev);
-	if (r)
-		return r;
+	dss.feat = dss_get_features();
+	if (!dss.feat)
+		return -ENODEV;
 
 	dss_mem = platform_get_resource(dss.pdev, IORESOURCE_MEM, 0);
 	if (!dss_mem) {

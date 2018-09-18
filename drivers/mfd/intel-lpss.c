@@ -34,13 +34,14 @@
 #define LPSS_DEV_SIZE		0x200
 #define LPSS_PRIV_OFFSET	0x200
 #define LPSS_PRIV_SIZE		0x100
+#define LPSS_PRIV_REG_COUNT	(LPSS_PRIV_SIZE / 4)
 #define LPSS_IDMA64_OFFSET	0x800
 #define LPSS_IDMA64_SIZE	0x800
 
 /* Offsets from lpss->priv */
 #define LPSS_PRIV_RESETS		0x04
-#define LPSS_PRIV_RESETS_FUNC		BIT(2)
-#define LPSS_PRIV_RESETS_IDMA		0x3
+#define LPSS_PRIV_RESETS_IDMA		BIT(2)
+#define LPSS_PRIV_RESETS_FUNC		0x3
 
 #define LPSS_PRIV_ACTIVELTR		0x10
 #define LPSS_PRIV_IDLELTR		0x14
@@ -76,6 +77,7 @@ struct intel_lpss {
 	struct mfd_cell *cell;
 	struct device *dev;
 	void __iomem *priv;
+	u32 priv_ctx[LPSS_PRIV_REG_COUNT];
 	int devid;
 	u32 caps;
 	u32 active_ltr;
@@ -273,10 +275,10 @@ static void intel_lpss_init_dev(const struct intel_lpss *lpss)
 
 	intel_lpss_deassert_reset(lpss);
 
+	intel_lpss_set_remap_addr(lpss);
+
 	if (!intel_lpss_has_idma(lpss))
 		return;
-
-	intel_lpss_set_remap_addr(lpss);
 
 	/* Make sure that SPI multiblock DMA transfers are re-enabled */
 	if (lpss->type == LPSS_DEV_SPI)
@@ -336,8 +338,8 @@ static int intel_lpss_register_clock(struct intel_lpss *lpss)
 		return 0;
 
 	/* Root clock */
-	clk = clk_register_fixed_rate(NULL, dev_name(lpss->dev), NULL,
-				      CLK_IS_ROOT, lpss->info->clk_rate);
+	clk = clk_register_fixed_rate(NULL, dev_name(lpss->dev), NULL, 0,
+				      lpss->info->clk_rate);
 	if (IS_ERR(clk))
 		return PTR_ERR(clk);
 
@@ -407,7 +409,7 @@ int intel_lpss_probe(struct device *dev,
 	if (ret)
 		return ret;
 
-	lpss->cell->pset = info->pset;
+	lpss->cell->properties = info->properties;
 
 	intel_lpss_init_dev(lpss);
 
@@ -448,11 +450,14 @@ int intel_lpss_probe(struct device *dev,
 	if (ret)
 		goto err_remove_ltr;
 
+	dev_pm_set_driver_flags(dev, DPM_FLAG_SMART_SUSPEND);
+
 	return 0;
 
 err_remove_ltr:
 	intel_lpss_debugfs_remove(lpss);
 	intel_lpss_ltr_hide(lpss);
+	intel_lpss_unregister_clock(lpss);
 
 err_clk_register:
 	ida_simple_remove(&intel_lpss_devid_ida, lpss->devid);
@@ -475,7 +480,9 @@ EXPORT_SYMBOL_GPL(intel_lpss_remove);
 
 static int resume_lpss_device(struct device *dev, void *data)
 {
-	pm_runtime_resume(dev);
+	if (!dev_pm_test_driver_flags(dev, DPM_FLAG_SMART_SUSPEND))
+		pm_runtime_resume(dev);
+
 	return 0;
 }
 
@@ -492,6 +499,21 @@ EXPORT_SYMBOL_GPL(intel_lpss_prepare);
 
 int intel_lpss_suspend(struct device *dev)
 {
+	struct intel_lpss *lpss = dev_get_drvdata(dev);
+	unsigned int i;
+
+	/* Save device context */
+	for (i = 0; i < LPSS_PRIV_REG_COUNT; i++)
+		lpss->priv_ctx[i] = readl(lpss->priv + i * 4);
+
+	/*
+	 * If the device type is not UART, then put the controller into
+	 * reset. UART cannot be put into reset since S3/S0ix fail when
+	 * no_console_suspend flag is enabled.
+	 */
+	if (lpss->type != LPSS_DEV_UART)
+		writel(0, lpss->priv + LPSS_PRIV_RESETS);
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(intel_lpss_suspend);
@@ -499,8 +521,13 @@ EXPORT_SYMBOL_GPL(intel_lpss_suspend);
 int intel_lpss_resume(struct device *dev)
 {
 	struct intel_lpss *lpss = dev_get_drvdata(dev);
+	unsigned int i;
 
-	intel_lpss_init_dev(lpss);
+	intel_lpss_deassert_reset(lpss);
+
+	/* Restore device context */
+	for (i = 0; i < LPSS_PRIV_REG_COUNT; i++)
+		writel(lpss->priv_ctx[i], lpss->priv + i * 4);
 
 	return 0;
 }

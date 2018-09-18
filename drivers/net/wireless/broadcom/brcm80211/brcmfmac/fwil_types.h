@@ -32,11 +32,30 @@
 #define	BRCMF_BSS_INFO_VERSION	109 /* curr ver of brcmf_bss_info_le struct */
 #define BRCMF_BSS_RSSI_ON_CHANNEL	0x0002
 
-#define BRCMF_STA_WME              0x00000002      /* WMM association */
-#define BRCMF_STA_AUTHE            0x00000008      /* Authenticated */
-#define BRCMF_STA_ASSOC            0x00000010      /* Associated */
-#define BRCMF_STA_AUTHO            0x00000020      /* Authorized */
-#define BRCMF_STA_SCBSTATS         0x00004000      /* Per STA debug stats */
+#define BRCMF_STA_BRCM			0x00000001	/* Running a Broadcom driver */
+#define BRCMF_STA_WME			0x00000002	/* WMM association */
+#define BRCMF_STA_NONERP		0x00000004	/* No ERP */
+#define BRCMF_STA_AUTHE			0x00000008	/* Authenticated */
+#define BRCMF_STA_ASSOC			0x00000010	/* Associated */
+#define BRCMF_STA_AUTHO			0x00000020	/* Authorized */
+#define BRCMF_STA_WDS			0x00000040	/* Wireless Distribution System */
+#define BRCMF_STA_WDS_LINKUP		0x00000080	/* WDS traffic/probes flowing properly */
+#define BRCMF_STA_PS			0x00000100	/* STA is in power save mode from AP's viewpoint */
+#define BRCMF_STA_APSD_BE		0x00000200	/* APSD delv/trigger for AC_BE is default enabled */
+#define BRCMF_STA_APSD_BK		0x00000400	/* APSD delv/trigger for AC_BK is default enabled */
+#define BRCMF_STA_APSD_VI		0x00000800	/* APSD delv/trigger for AC_VI is default enabled */
+#define BRCMF_STA_APSD_VO		0x00001000	/* APSD delv/trigger for AC_VO is default enabled */
+#define BRCMF_STA_N_CAP			0x00002000	/* STA 802.11n capable */
+#define BRCMF_STA_SCBSTATS		0x00004000	/* Per STA debug stats */
+#define BRCMF_STA_AMPDU_CAP		0x00008000	/* STA AMPDU capable */
+#define BRCMF_STA_AMSDU_CAP		0x00010000	/* STA AMSDU capable */
+#define BRCMF_STA_MIMO_PS		0x00020000	/* mimo ps mode is enabled */
+#define BRCMF_STA_MIMO_RTS		0x00040000	/* send rts in mimo ps mode */
+#define BRCMF_STA_RIFS_CAP		0x00080000	/* rifs enabled */
+#define BRCMF_STA_VHT_CAP		0x00100000	/* STA VHT(11ac) capable */
+#define BRCMF_STA_WPS			0x00200000	/* WPS state */
+#define BRCMF_STA_DWDS_CAP		0x01000000	/* DWDS CAP */
+#define BRCMF_STA_DWDS			0x02000000	/* DWDS active */
 
 /* size of brcmf_scan_params not including variable length array */
 #define BRCMF_SCAN_PARAMS_FIXED_SIZE	64
@@ -44,6 +63,14 @@
 /* masks for channel and ssid count */
 #define BRCMF_SCAN_PARAMS_COUNT_MASK	0x0000ffff
 #define BRCMF_SCAN_PARAMS_NSSID_SHIFT	16
+
+/* scan type definitions */
+#define BRCMF_SCANTYPE_DEFAULT		0xFF
+#define BRCMF_SCANTYPE_ACTIVE		0
+#define BRCMF_SCANTYPE_PASSIVE		1
+
+#define BRCMF_WSEC_MAX_PSK_LEN		32
+#define	BRCMF_WSEC_PASSPHRASE		BIT(0)
 
 /* primary (ie tx) key */
 #define BRCMF_PRIMARY_KEY		(1 << 1)
@@ -111,7 +138,9 @@
 /* Wakeup if received matched secured pattern: */
 #define BRCMF_WOWL_SECURE		(1 << 25)
 /* Wakeup on finding preferred network */
-#define BRCMF_WOWL_PFN_FOUND		(1 << 26)
+#define BRCMF_WOWL_PFN_FOUND		(1 << 27)
+/* Wakeup on receiving pairwise key EAP packets: */
+#define WIPHY_WOWL_EAP_PK		(1 << 28)
 /* Link Down indication in WoWL mode: */
 #define BRCMF_WOWL_LINKDOWN		(1 << 31)
 
@@ -129,10 +158,38 @@
 #define BRCMF_TXBF_MU_BFR_CAP		BIT(1)
 
 #define	BRCMF_MAXPMKID			16	/* max # PMKID cache entries */
+#define BRCMF_NUMCHANNELS		64
 
 #define BRCMF_PFN_MACADDR_CFG_VER	1
 #define BRCMF_PFN_MAC_OUI_ONLY		BIT(0)
 #define BRCMF_PFN_SET_MAC_UNASSOC	BIT(1)
+
+#define BRCMF_MCSSET_LEN		16
+
+#define BRCMF_RSN_KCK_LENGTH		16
+#define BRCMF_RSN_KEK_LENGTH		16
+#define BRCMF_RSN_REPLAY_LEN		8
+
+#define BRCMF_MFP_NONE			0
+#define BRCMF_MFP_CAPABLE		1
+#define BRCMF_MFP_REQUIRED		2
+
+#define BRCMF_VHT_CAP_MCS_MAP_NSS_MAX	8
+
+/* MAX_CHUNK_LEN is the maximum length for data passing to firmware in each
+ * ioctl. It is relatively small because firmware has small maximum size input
+ * playload restriction for ioctls.
+ */
+#define MAX_CHUNK_LEN			1400
+
+#define DLOAD_HANDLER_VER		1	/* Downloader version */
+#define DLOAD_FLAG_VER_MASK		0xf000	/* Downloader version mask */
+#define DLOAD_FLAG_VER_SHIFT		12	/* Downloader version shift */
+
+#define DL_BEGIN			0x0002
+#define DL_END				0x0004
+
+#define DL_TYPE_CLM			2
 
 /* join preference types for join_pref iovar */
 enum brcmf_join_pref_types {
@@ -279,7 +336,7 @@ struct brcmf_bss_info_le {
 	__le32 reserved32[1];	/* Reserved for expansion of BSS properties */
 	u8 flags;		/* flags */
 	u8 reserved[3];	/* Reserved for expansion of BSS properties */
-	u8 basic_mcs[MCSSET_LEN];	/* 802.11N BSS required MCS set */
+	u8 basic_mcs[BRCMF_MCSSET_LEN];	/* 802.11N BSS required MCS set */
 
 	__le16 ie_offset;	/* offset at which IEs start, from beginning */
 	__le32 ie_length;	/* byte length of Information Elements */
@@ -457,6 +514,19 @@ struct brcmf_wsec_key_le {
 	u8 ea[ETH_ALEN];	/* per station */
 };
 
+/**
+ * struct brcmf_wsec_pmk_le - firmware pmk material.
+ *
+ * @key_len: number of octets in key material.
+ * @flags: key handling qualifiers.
+ * @key: PMK key material.
+ */
+struct brcmf_wsec_pmk_le {
+	__le16  key_len;
+	__le16  flags;
+	u8 key[2 * BRCMF_WSEC_MAX_PSK_LEN + 1];
+};
+
 /* Used to get specific STA parameters */
 struct brcmf_scb_val_le {
 	__le32 val;
@@ -482,6 +552,8 @@ struct brcmf_sta_info_le {
 						/* w/hi bit set if basic */
 	__le32 in;		/* seconds elapsed since associated */
 	__le32 listen_interval_inms; /* Min Listen interval in ms for STA */
+
+	/* Fields valid for ver >= 3 */
 	__le32 tx_pkts;	/* # of packets transmitted */
 	__le32 tx_failures;	/* # of packets failed */
 	__le32 rx_ucast_pkts;	/* # of unicast packets received */
@@ -490,6 +562,8 @@ struct brcmf_sta_info_le {
 	__le32 rx_rate;	/* Rate of last successful rx frame */
 	__le32 rx_decrypt_succeeds;	/* # of packet decrypted successfully */
 	__le32 rx_decrypt_failures;	/* # of packet decrypted failed */
+
+	/* Fields valid for ver >= 4 */
 	__le32 tx_tot_pkts;    /* # of tx pkts (ucast + mcast) */
 	__le32 rx_tot_pkts;    /* # of data packets recvd (uni + mcast) */
 	__le32 tx_mcast_pkts;  /* # of mcast pkts txed */
@@ -526,6 +600,14 @@ struct brcmf_sta_info_le {
 						*/
 	__le32 rx_pkts_retried;        /* # rx with retry bit set */
 	__le32 tx_rate_fallback;       /* lowest fallback TX rate */
+
+	/* Fields valid for ver >= 5 */
+	struct {
+		__le32 count;					/* # rates in this set */
+		u8 rates[BRCMF_MAXRATES_IN_SET];		/* rates in 500kbps units w/hi bit set if basic */
+		u8 mcs[BRCMF_MCSSET_LEN];			/* supported mcs index bit map */
+		__le16 vht_mcs[BRCMF_VHT_CAP_MCS_MAP_NSS_MAX];	/* supported mcs index bit map per nss */
+	} rateset_adv;
 };
 
 struct brcmf_chanspec_list {
@@ -707,6 +789,21 @@ struct brcmf_pno_param_le {
 };
 
 /**
+ * struct brcmf_pno_config_le - PNO channel configuration.
+ *
+ * @reporttype: determines what is reported.
+ * @channel_num: number of channels specified in @channel_list.
+ * @channel_list: channels to use in PNO scan.
+ * @flags: reserved.
+ */
+struct brcmf_pno_config_le {
+	__le32  reporttype;
+	__le32  channel_num;
+	__le16  channel_list[BRCMF_NUMCHANNELS];
+	__le32  flags;
+};
+
+/**
  * struct brcmf_pno_net_param_le - scan parameters per preferred network.
  *
  * @ssid: ssid name and its length.
@@ -757,6 +854,13 @@ struct brcmf_pno_scanresults_le {
 	__le32 count;
 };
 
+struct brcmf_pno_scanresults_v2_le {
+	__le32 version;
+	__le32 status;
+	__le32 count;
+	__le32 scan_ch_bucket;
+};
+
 /**
  * struct brcmf_pno_macaddr_le - to configure PNO macaddr randomization.
  *
@@ -768,6 +872,33 @@ struct brcmf_pno_macaddr_le {
 	u8 version;
 	u8 flags;
 	u8 mac[ETH_ALEN];
+};
+
+/**
+ * struct brcmf_dload_data_le - data passing to firmware for downloading
+ * @flag: flags related to download data.
+ * @dload_type: type of download data.
+ * @len: length in bytes of download data.
+ * @crc: crc of download data.
+ * @data: download data.
+ */
+struct brcmf_dload_data_le {
+	__le16 flag;
+	__le16 dload_type;
+	__le32 len;
+	__le32 crc;
+	u8 data[1];
+};
+
+/**
+ * struct brcmf_pno_bssid_le - bssid configuration for PNO scan.
+ *
+ * @bssid: BSS network identifier.
+ * @flags: flags for this BSSID.
+ */
+struct brcmf_pno_bssid_le {
+	u8 bssid[ETH_ALEN];
+	__le16 flags;
 };
 
 /**
@@ -785,6 +916,84 @@ struct brcmf_pktcnt_le {
 	__le32 tx_good_pkt;
 	__le32 tx_bad_pkt;
 	__le32 rx_ocast_good_pkt;
+};
+
+/**
+ * struct brcmf_gtk_keyinfo_le - GTP rekey data
+ *
+ * @kck: key confirmation key.
+ * @kek: key encryption key.
+ * @replay_counter: replay counter.
+ */
+struct brcmf_gtk_keyinfo_le {
+	u8 kck[BRCMF_RSN_KCK_LENGTH];
+	u8 kek[BRCMF_RSN_KEK_LENGTH];
+	u8 replay_counter[BRCMF_RSN_REPLAY_LEN];
+};
+
+#define BRCMF_PNO_REPORT_NO_BATCH	BIT(2)
+
+/**
+ * struct brcmf_gscan_bucket_config - configuration data for channel bucket.
+ *
+ * @bucket_end_index: last channel index in @channel_list in
+ *	@struct brcmf_pno_config_le.
+ * @bucket_freq_multiple: scan interval expressed in N * @scan_freq.
+ * @flag: channel bucket report flags.
+ * @reserved: for future use.
+ * @repeat: number of scan at interval for exponential scan.
+ * @max_freq_multiple: maximum scan interval for exponential scan.
+ */
+struct brcmf_gscan_bucket_config {
+	u8 bucket_end_index;
+	u8 bucket_freq_multiple;
+	u8 flag;
+	u8 reserved;
+	__le16 repeat;
+	__le16 max_freq_multiple;
+};
+
+/* version supported which must match firmware */
+#define BRCMF_GSCAN_CFG_VERSION                     2
+
+/**
+ * enum brcmf_gscan_cfg_flags - bit values for gscan flags.
+ *
+ * @BRCMF_GSCAN_CFG_FLAGS_ALL_RESULTS: send probe responses/beacons to host.
+ * @BRCMF_GSCAN_CFG_ALL_BUCKETS_IN_1ST_SCAN: all buckets will be included in
+ *	first scan cycle.
+ * @BRCMF_GSCAN_CFG_FLAGS_CHANGE_ONLY: indicated only flags member is changed.
+ */
+enum brcmf_gscan_cfg_flags {
+	BRCMF_GSCAN_CFG_FLAGS_ALL_RESULTS = BIT(0),
+	BRCMF_GSCAN_CFG_ALL_BUCKETS_IN_1ST_SCAN = BIT(3),
+	BRCMF_GSCAN_CFG_FLAGS_CHANGE_ONLY = BIT(7),
+};
+
+/**
+ * struct brcmf_gscan_config - configuration data for gscan.
+ *
+ * @version: version of the api to match firmware.
+ * @flags: flags according %enum brcmf_gscan_cfg_flags.
+ * @buffer_threshold: percentage threshold of buffer to generate an event.
+ * @swc_nbssid_threshold: number of BSSIDs with significant change that
+ *	will generate an event.
+ * @swc_rssi_window_size: size of rssi cache buffer (max=8).
+ * @count_of_channel_buckets: number of array members in @bucket.
+ * @retry_threshold: !unknown!
+ * @lost_ap_window: !unknown!
+ * @bucket: array of channel buckets.
+ */
+struct brcmf_gscan_config {
+	__le16 version;
+	u8 flags;
+	u8 buffer_threshold;
+	u8 swc_nbssid_threshold;
+	u8 swc_rssi_window_size;
+	u8 count_of_channel_buckets;
+	u8 retry_threshold;
+	__le16  lost_ap_window;
+	struct brcmf_gscan_bucket_config bucket[1];
 };
 
 #endif /* FWIL_TYPES_H_ */

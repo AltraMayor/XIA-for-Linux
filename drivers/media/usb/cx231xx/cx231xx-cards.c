@@ -31,7 +31,7 @@
 #include <media/v4l2-common.h>
 
 #include <media/drv-intf/cx25840.h>
-#include "dvb-usb-ids.h"
+#include <media/dvb-usb-ids.h>
 #include "xc5000.h"
 #include "tda18271.h"
 
@@ -486,7 +486,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.output_mode = OUT_MODE_VIP11,
 		.demod_xfer_mode = 0,
 		.ctl_pin_status_mask = 0xFFFFFFC4,
-		.agc_analog_digital_select_gpio = 0x00,	/* According with PV cxPolaris.inf file */
+		.agc_analog_digital_select_gpio = 0x1c,
 		.tuner_sif_gpio = -1,
 		.tuner_scl_gpio = -1,
 		.tuner_sda_gpio = -1,
@@ -715,7 +715,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = I2C_1_MUX_3,
 		.demod_i2c_master = I2C_1_MUX_3,
 		.has_dvb = 1,
-		.demod_addr = 0x0e,
+		.demod_addr = 0x64, /* 0xc8 >> 1 */
 		.norm = V4L2_STD_PAL,
 
 		.input = {{
@@ -754,7 +754,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = I2C_1_MUX_3,
 		.demod_i2c_master = I2C_1_MUX_3,
 		.has_dvb = 1,
-		.demod_addr = 0x0e,
+		.demod_addr = 0x64, /* 0xc8 >> 1 */
 		.norm = V4L2_STD_PAL,
 
 		.input = {{
@@ -793,7 +793,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = I2C_1_MUX_3,
 		.demod_i2c_master = I2C_1_MUX_3,
 		.has_dvb = 1,
-		.demod_addr = 0x0e,
+		.demod_addr = 0x59, /* 0xb2 >> 1 */
 		.norm = V4L2_STD_NTSC,
 
 		.input = {{
@@ -841,6 +841,166 @@ struct cx231xx_board cx231xx_boards[] = {
 			.gpio = NULL,
 		} },
 	},
+	[CX231XX_BOARD_EVROMEDIA_FULL_HYBRID_FULLHD] = {
+		.name = "Evromedia USB Full Hybrid Full HD",
+		.tuner_type = TUNER_ABSENT,
+		.demod_addr = 0x64, /* 0xc8 >> 1 */
+		.demod_i2c_master = I2C_1_MUX_3,
+		.has_dvb = 1,
+		.decoder = CX231XX_AVDECODER,
+		.norm = V4L2_STD_PAL,
+		.output_mode = OUT_MODE_VIP11,
+		.tuner_addr = 0x60, /* 0xc0 >> 1 */
+		.tuner_i2c_master = I2C_2,
+		.input = {{
+			.type = CX231XX_VMUX_TELEVISION,
+			.vmux = 0,
+			.amux = CX231XX_AMUX_VIDEO,
+		}, {
+			.type = CX231XX_VMUX_COMPOSITE1,
+			.vmux = CX231XX_VIN_2_1,
+			.amux = CX231XX_AMUX_LINE_IN,
+		}, {
+			.type = CX231XX_VMUX_SVIDEO,
+			.vmux = CX231XX_VIN_1_1 |
+				(CX231XX_VIN_1_2 << 8) |
+				CX25840_SVIDEO_ON,
+			.amux = CX231XX_AMUX_LINE_IN,
+		} },
+	},
+	[CX231XX_BOARD_ASTROMETA_T2HYBRID] = {
+		.name = "Astrometa T2hybrid",
+		.tuner_type = TUNER_ABSENT,
+		.has_dvb = 1,
+		.decoder = CX231XX_AVDECODER,
+		.output_mode = OUT_MODE_VIP11,
+		.agc_analog_digital_select_gpio = 0x01,
+		.ctl_pin_status_mask = 0xffffffc4,
+		.demod_addr = 0x18, /* 0x30 >> 1 */
+		.demod_i2c_master = I2C_1_MUX_1,
+		.gpio_pin_status_mask = 0xa,
+		.norm = V4L2_STD_NTSC,
+		.tuner_addr = 0x3a, /* 0x74 >> 1 */
+		.tuner_i2c_master = I2C_1_MUX_3,
+		.tuner_scl_gpio = 0x1a,
+		.tuner_sda_gpio = 0x1b,
+		.tuner_sif_gpio = 0x05,
+		.input = {{
+				.type = CX231XX_VMUX_TELEVISION,
+				.vmux = CX231XX_VIN_1_1,
+				.amux = CX231XX_AMUX_VIDEO,
+			}, {
+				.type = CX231XX_VMUX_COMPOSITE1,
+				.vmux = CX231XX_VIN_2_1,
+				.amux = CX231XX_AMUX_LINE_IN,
+			},
+		},
+	},
+	[CX231XX_BOARD_THE_IMAGING_SOURCE_DFG_USB2_PRO] = {
+		.name = "The Imaging Source DFG/USB2pro",
+		.tuner_type = TUNER_ABSENT,
+		.decoder = CX231XX_AVDECODER,
+		.output_mode = OUT_MODE_VIP11,
+		.demod_xfer_mode = 0,
+		.ctl_pin_status_mask = 0xFFFFFFC4,
+		.agc_analog_digital_select_gpio = 0x0c,
+		.gpio_pin_status_mask = 0x4001000,
+		.norm = V4L2_STD_PAL,
+		.no_alt_vanc = 1,
+		.external_av = 1,
+		.input = {{
+			.type = CX231XX_VMUX_COMPOSITE1,
+			.vmux = CX231XX_VIN_1_1,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_SVIDEO,
+			.vmux = CX231XX_VIN_2_1 |
+				(CX231XX_VIN_2_2 << 8) |
+				CX25840_SVIDEO_ON,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		} },
+	},
+	[CX231XX_BOARD_HAUPPAUGE_935C] = {
+		.name = "Hauppauge WinTV-HVR-935C",
+		.tuner_type = TUNER_ABSENT,
+		.tuner_addr = 0x60,
+		.tuner_gpio = RDE250_XCV_TUNER,
+		.tuner_sif_gpio = 0x05,
+		.tuner_scl_gpio = 0x1a,
+		.tuner_sda_gpio = 0x1b,
+		.decoder = CX231XX_AVDECODER,
+		.output_mode = OUT_MODE_VIP11,
+		.demod_xfer_mode = 0,
+		.ctl_pin_status_mask = 0xFFFFFFC4,
+		.agc_analog_digital_select_gpio = 0x0c,
+		.gpio_pin_status_mask = 0x4001000,
+		.tuner_i2c_master = I2C_1_MUX_3,
+		.demod_i2c_master = I2C_1_MUX_3,
+		.has_dvb = 1,
+		.demod_addr = 0x64, /* 0xc8 >> 1 */
+		.norm = V4L2_STD_PAL,
+
+		.input = {{
+			.type = CX231XX_VMUX_TELEVISION,
+			.vmux = CX231XX_VIN_3_1,
+			.amux = CX231XX_AMUX_VIDEO,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_COMPOSITE1,
+			.vmux = CX231XX_VIN_2_1,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_SVIDEO,
+			.vmux = CX231XX_VIN_1_1 |
+				(CX231XX_VIN_1_2 << 8) |
+				CX25840_SVIDEO_ON,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		} },
+	},
+	[CX231XX_BOARD_HAUPPAUGE_975] = {
+		.name = "Hauppauge WinTV-HVR-975",
+		.tuner_type = TUNER_ABSENT,
+		.tuner_addr = 0x60,
+		.tuner_gpio = RDE250_XCV_TUNER,
+		.tuner_sif_gpio = 0x05,
+		.tuner_scl_gpio = 0x1a,
+		.tuner_sda_gpio = 0x1b,
+		.decoder = CX231XX_AVDECODER,
+		.output_mode = OUT_MODE_VIP11,
+		.demod_xfer_mode = 0,
+		.ctl_pin_status_mask = 0xFFFFFFC4,
+		.agc_analog_digital_select_gpio = 0x0c,
+		.gpio_pin_status_mask = 0x4001000,
+		.tuner_i2c_master = I2C_1_MUX_3,
+		.demod_i2c_master = I2C_1_MUX_3,
+		.has_dvb = 1,
+		.demod_addr = 0x59, /* 0xb2 >> 1 */
+		.demod_addr2 = 0x64, /* 0xc8 >> 1 */
+		.norm = V4L2_STD_ALL,
+
+		.input = {{
+			.type = CX231XX_VMUX_TELEVISION,
+			.vmux = CX231XX_VIN_3_1,
+			.amux = CX231XX_AMUX_VIDEO,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_COMPOSITE1,
+			.vmux = CX231XX_VIN_2_1,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_SVIDEO,
+			.vmux = CX231XX_VIN_1_1 |
+				(CX231XX_VIN_1_2 << 8) |
+				CX25840_SVIDEO_ON,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		} },
+	},
 };
 const unsigned int cx231xx_bcount = ARRAY_SIZE(cx231xx_boards);
 
@@ -864,6 +1024,9 @@ struct usb_device_id cx231xx_id_table[] = {
 	 .driver_info = CX231XX_BOARD_CNXT_RDE_250},
 	{USB_DEVICE(0x0572, 0x58A0),
 	 .driver_info = CX231XX_BOARD_CNXT_RDU_250},
+	/* AverMedia DVD EZMaker 7 */
+	{USB_DEVICE(0x07ca, 0xc039),
+	 .driver_info = CX231XX_BOARD_CNXT_VIDEO_GRABBER},
 	{USB_DEVICE(0x2040, 0xb110),
 	 .driver_info = CX231XX_BOARD_HAUPPAUGE_USB2_FM_PAL},
 	{USB_DEVICE(0x2040, 0xb111),
@@ -872,6 +1035,10 @@ struct usb_device_id cx231xx_id_table[] = {
 	 .driver_info = CX231XX_BOARD_HAUPPAUGE_EXETER},
 	{USB_DEVICE(0x2040, 0xb123),
 	 .driver_info = CX231XX_BOARD_HAUPPAUGE_955Q},
+	{USB_DEVICE(0x2040, 0xb151),
+	 .driver_info = CX231XX_BOARD_HAUPPAUGE_935C},
+	{USB_DEVICE(0x2040, 0xb150),
+	 .driver_info = CX231XX_BOARD_HAUPPAUGE_975},
 	{USB_DEVICE(0x2040, 0xb130),
 	 .driver_info = CX231XX_BOARD_HAUPPAUGE_930C_HD_1113xx},
 	{USB_DEVICE(0x2040, 0xb131),
@@ -908,6 +1075,12 @@ struct usb_device_id cx231xx_id_table[] = {
 	 .driver_info = CX231XX_BOARD_OTG102},
 	{USB_DEVICE(USB_VID_TERRATEC, 0x00a6),
 	 .driver_info = CX231XX_BOARD_TERRATEC_GRABBY},
+	{USB_DEVICE(0x1b80, 0xd3b2),
+	.driver_info = CX231XX_BOARD_EVROMEDIA_FULL_HYBRID_FULLHD},
+	{USB_DEVICE(0x15f4, 0x0135),
+	.driver_info = CX231XX_BOARD_ASTROMETA_T2HYBRID},
+	{USB_DEVICE(0x199e, 0x8002),
+	 .driver_info = CX231XX_BOARD_THE_IMAGING_SOURCE_DFG_USB2_PRO},
 	{},
 };
 
@@ -984,6 +1157,11 @@ void cx231xx_pre_card_setup(struct cx231xx *dev)
 	dev_info(dev->dev, "Identified as %s (card=%d)\n",
 		dev->board.name, dev->model);
 
+	if (CX231XX_BOARD_ASTROMETA_T2HYBRID == dev->model) {
+		/* turn on demodulator chip */
+		cx231xx_set_gpio_value(dev, 0x03, 0x01);
+	}
+
 	/* set the direction for GPIO pins */
 	if (dev->board.tuner_gpio) {
 		cx231xx_set_gpio_direction(dev, dev->board.tuner_gpio->bit, 1);
@@ -1043,7 +1221,7 @@ static void cx231xx_config_tuner(struct cx231xx *dev)
 static int read_eeprom(struct cx231xx *dev, struct i2c_client *client,
 		       u8 *eedata, int len)
 {
-	int ret = 0;
+	int ret;
 	u8 start_offset = 0;
 	int len_todo = len;
 	u8 *eedata_cur = eedata;
@@ -1119,6 +1297,8 @@ void cx231xx_card_setup(struct cx231xx *dev)
 	case CX231XX_BOARD_HAUPPAUGE_930C_HD_1113xx:
 	case CX231XX_BOARD_HAUPPAUGE_930C_HD_1114xx:
 	case CX231XX_BOARD_HAUPPAUGE_955Q:
+	case CX231XX_BOARD_HAUPPAUGE_935C:
+	case CX231XX_BOARD_HAUPPAUGE_975:
 		{
 			struct eeprom {
 				struct tveeprom tvee;
@@ -1136,8 +1316,7 @@ void cx231xx_card_setup(struct cx231xx *dev)
 			e->client.addr = 0xa0 >> 1;
 
 			read_eeprom(dev, &e->client, e->eeprom, sizeof(e->eeprom));
-			tveeprom_hauppauge_analog(&e->client,
-						&e->tvee, e->eeprom + 0xc0);
+			tveeprom_hauppauge_analog(&e->tvee, e->eeprom + 0xc0);
 			kfree(e);
 			break;
 		}
@@ -1186,11 +1365,11 @@ static void cx231xx_unregister_media_device(struct cx231xx *dev)
 */
 void cx231xx_release_resources(struct cx231xx *dev)
 {
+	cx231xx_ir_exit(dev);
+
 	cx231xx_release_analog_resources(dev);
 
 	cx231xx_remove_from_devlist(dev);
-
-	cx231xx_ir_exit(dev);
 
 	/* Release I2C buses */
 	cx231xx_dev_uninit(dev);
@@ -1216,62 +1395,9 @@ static int cx231xx_media_device_init(struct cx231xx *dev,
 	if (!mdev)
 		return -ENOMEM;
 
-	mdev->dev = dev->dev;
-	strlcpy(mdev->model, dev->board.name, sizeof(mdev->model));
-	if (udev->serial)
-		strlcpy(mdev->serial, udev->serial, sizeof(mdev->serial));
-	strcpy(mdev->bus_info, udev->devpath);
-	mdev->hw_revision = le16_to_cpu(udev->descriptor.bcdDevice);
-	mdev->driver_version = LINUX_VERSION_CODE;
-
-	media_device_init(mdev);
+	media_device_usb_init(mdev, udev, dev->board.name);
 
 	dev->media_dev = mdev;
-#endif
-	return 0;
-}
-
-static int cx231xx_create_media_graph(struct cx231xx *dev)
-{
-#ifdef CONFIG_MEDIA_CONTROLLER
-	struct media_device *mdev = dev->media_dev;
-	struct media_entity *entity;
-	struct media_entity *tuner = NULL, *decoder = NULL;
-	int ret;
-
-	if (!mdev)
-		return 0;
-
-	media_device_for_each_entity(entity, mdev) {
-		switch (entity->function) {
-		case MEDIA_ENT_F_TUNER:
-			tuner = entity;
-			break;
-		case MEDIA_ENT_F_ATV_DECODER:
-			decoder = entity;
-			break;
-		}
-	}
-
-	/* Analog setup, using tuner as a link */
-
-	if (!decoder)
-		return 0;
-
-	if (tuner) {
-		ret = media_create_pad_link(tuner, TUNER_PAD_IF_OUTPUT, decoder, 0,
-					    MEDIA_LNK_FL_ENABLED);
-		if (ret < 0)
-			return ret;
-	}
-	ret = media_create_pad_link(decoder, 1, &dev->vdev.entity, 0,
-				    MEDIA_LNK_FL_ENABLED);
-	if (ret < 0)
-		return ret;
-	ret = media_create_pad_link(decoder, 2, &dev->vbi_dev.entity, 0,
-				    MEDIA_LNK_FL_ENABLED);
-	if (ret < 0)
-		return ret;
 #endif
 	return 0;
 }
@@ -1450,6 +1576,9 @@ static int cx231xx_init_v4l2(struct cx231xx *dev,
 
 	uif = udev->actconfig->interface[idx];
 
+	if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1)
+		return -ENODEV;
+
 	dev->video_mode.end_point_addr = uif->altsetting[0].endpoint[isoc_pipe].desc.bEndpointAddress;
 	dev->video_mode.num_alt = uif->num_altsetting;
 
@@ -1463,7 +1592,12 @@ static int cx231xx_init_v4l2(struct cx231xx *dev,
 		return -ENOMEM;
 
 	for (i = 0; i < dev->video_mode.num_alt; i++) {
-		u16 tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].desc.wMaxPacketSize);
+		u16 tmp;
+
+		if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1)
+			return -ENODEV;
+
+		tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].desc.wMaxPacketSize);
 		dev->video_mode.alt_max_pkt_size[i] = (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
 		dev_dbg(dev->dev,
 			"Alternate setting %i, max size= %i\n", i,
@@ -1479,6 +1613,9 @@ static int cx231xx_init_v4l2(struct cx231xx *dev,
 		return -ENODEV;
 	}
 	uif = udev->actconfig->interface[idx];
+
+	if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1)
+		return -ENODEV;
 
 	dev->vbi_mode.end_point_addr =
 	    uif->altsetting[0].endpoint[isoc_pipe].desc.
@@ -1496,8 +1633,12 @@ static int cx231xx_init_v4l2(struct cx231xx *dev,
 		return -ENOMEM;
 
 	for (i = 0; i < dev->vbi_mode.num_alt; i++) {
-		u16 tmp =
-		    le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
+		u16 tmp;
+
+		if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1)
+			return -ENODEV;
+
+		tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
 				desc.wMaxPacketSize);
 		dev->vbi_mode.alt_max_pkt_size[i] =
 		    (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
@@ -1517,6 +1658,9 @@ static int cx231xx_init_v4l2(struct cx231xx *dev,
 	}
 	uif = udev->actconfig->interface[idx];
 
+	if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1)
+		return -ENODEV;
+
 	dev->sliced_cc_mode.end_point_addr =
 	    uif->altsetting[0].endpoint[isoc_pipe].desc.
 			bEndpointAddress;
@@ -1531,7 +1675,12 @@ static int cx231xx_init_v4l2(struct cx231xx *dev,
 		return -ENOMEM;
 
 	for (i = 0; i < dev->sliced_cc_mode.num_alt; i++) {
-		u16 tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
+		u16 tmp;
+
+		if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1)
+			return -ENODEV;
+
+		tmp = le16_to_cpu(uif->altsetting[i].endpoint[isoc_pipe].
 				desc.wMaxPacketSize);
 		dev->sliced_cc_mode.alt_max_pkt_size[i] =
 		    (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
@@ -1652,7 +1801,7 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 	nr = dev->devno;
 
 	assoc_desc = udev->actconfig->intf_assoc[0];
-	if (assoc_desc->bFirstInterface != ifnum) {
+	if (!assoc_desc || assoc_desc->bFirstInterface != ifnum) {
 		dev_err(d, "Not found matching IAD interface\n");
 		retval = -ENODEV;
 		goto err_if;
@@ -1700,6 +1849,11 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 		}
 		uif = udev->actconfig->interface[idx];
 
+		if (uif->altsetting[0].desc.bNumEndpoints < isoc_pipe + 1) {
+			retval = -ENODEV;
+			goto err_video_alt;
+		}
+
 		dev->ts1_mode.end_point_addr =
 		    uif->altsetting[0].endpoint[isoc_pipe].
 				desc.bEndpointAddress;
@@ -1717,7 +1871,14 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 		}
 
 		for (i = 0; i < dev->ts1_mode.num_alt; i++) {
-			u16 tmp = le16_to_cpu(uif->altsetting[i].
+			u16 tmp;
+
+			if (uif->altsetting[i].desc.bNumEndpoints < isoc_pipe + 1) {
+				retval = -ENODEV;
+				goto err_video_alt;
+			}
+
+			tmp = le16_to_cpu(uif->altsetting[i].
 						endpoint[isoc_pipe].desc.
 						wMaxPacketSize);
 			dev->ts1_mode.alt_max_pkt_size[i] =
@@ -1739,15 +1900,14 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 	/* load other modules required */
 	request_modules(dev);
 
-	retval = cx231xx_create_media_graph(dev);
-	if (retval < 0)
-		goto done;
-
 #ifdef CONFIG_MEDIA_CONTROLLER
-	retval = media_device_register(dev->media_dev);
-#endif
+	/* Init entities at the Media Controller */
+	cx231xx_v4l2_create_entities(dev);
 
-done:
+	retval = v4l2_mc_create_media_graph(dev->media_dev);
+	if (!retval)
+		retval = media_device_register(dev->media_dev);
+#endif
 	if (retval < 0)
 		cx231xx_release_resources(dev);
 	return retval;

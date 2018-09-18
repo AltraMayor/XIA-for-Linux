@@ -13,12 +13,17 @@ MODULE_LICENSE("GPL v2");
 
 #define OUI_WEISS		0x001c6a
 #define OUI_LOUD		0x000ff2
+#define OUI_FOCUSRITE		0x00130e
+#define OUI_TCELECTRONIC	0x000166
+#define OUI_ALESIS		0x000595
+#define OUI_MAUDIO		0x000d6c
+#define OUI_MYTEK		0x001ee8
 
 #define DICE_CATEGORY_ID	0x04
 #define WEISS_CATEGORY_ID	0x00
 #define LOUD_CATEGORY_ID	0x10
 
-#define PROBE_DELAY_MS		(2 * MSEC_PER_SEC)
+#define MODEL_ALESIS_IO_BOTH	0x000001
 
 static int check_dice_category(struct fw_unit *unit)
 {
@@ -44,6 +49,7 @@ static int check_dice_category(struct fw_unit *unit)
 			break;
 		}
 	}
+
 	if (vendor == OUI_WEISS)
 		category = WEISS_CATEGORY_ID;
 	else if (vendor == OUI_LOUD)
@@ -57,65 +63,10 @@ static int check_dice_category(struct fw_unit *unit)
 	return 0;
 }
 
-static int highest_supported_mode_rate(struct snd_dice *dice,
-				       unsigned int mode, unsigned int *rate)
-{
-	unsigned int i, m;
-
-	for (i = ARRAY_SIZE(snd_dice_rates); i > 0; i--) {
-		*rate = snd_dice_rates[i - 1];
-		if (snd_dice_stream_get_rate_mode(dice, *rate, &m) < 0)
-			continue;
-		if (mode == m)
-			break;
-	}
-	if (i == 0)
-		return -EINVAL;
-
-	return 0;
-}
-
-static int dice_read_mode_params(struct snd_dice *dice, unsigned int mode)
-{
-	__be32 values[2];
-	unsigned int rate;
-	int err;
-
-	if (highest_supported_mode_rate(dice, mode, &rate) < 0) {
-		dice->tx_channels[mode] = 0;
-		dice->tx_midi_ports[mode] = 0;
-		dice->rx_channels[mode] = 0;
-		dice->rx_midi_ports[mode] = 0;
-		return 0;
-	}
-
-	err = snd_dice_transaction_set_rate(dice, rate);
-	if (err < 0)
-		return err;
-
-	err = snd_dice_transaction_read_tx(dice, TX_NUMBER_AUDIO,
-					   values, sizeof(values));
-	if (err < 0)
-		return err;
-
-	dice->tx_channels[mode]   = be32_to_cpu(values[0]);
-	dice->tx_midi_ports[mode] = be32_to_cpu(values[1]);
-
-	err = snd_dice_transaction_read_rx(dice, RX_NUMBER_AUDIO,
-					   values, sizeof(values));
-	if (err < 0)
-		return err;
-
-	dice->rx_channels[mode]   = be32_to_cpu(values[0]);
-	dice->rx_midi_ports[mode] = be32_to_cpu(values[1]);
-
-	return 0;
-}
-
-static int dice_read_params(struct snd_dice *dice)
+static int check_clock_caps(struct snd_dice *dice)
 {
 	__be32 value;
-	int mode, err;
+	int err;
 
 	/* some very old firmwares don't tell about their clock support */
 	if (dice->clock_caps > 0) {
@@ -131,12 +82,6 @@ static int dice_read_params(struct snd_dice *dice)
 				   CLOCK_CAP_RATE_48000 |
 				   CLOCK_CAP_SOURCE_ARX1 |
 				   CLOCK_CAP_SOURCE_INTERNAL;
-	}
-
-	for (mode = 2; mode >= 0; --mode) {
-		err = dice_read_mode_params(dice, mode);
-		if (err < 0)
-			return err;
 	}
 
 	return 0;
@@ -215,11 +160,19 @@ static void do_registration(struct work_struct *work)
 	if (err < 0)
 		goto error;
 
-	err = dice_read_params(dice);
+	err = check_clock_caps(dice);
 	if (err < 0)
 		goto error;
 
 	dice_card_strings(dice);
+
+	err = dice->detect_formats(dice);
+	if (err < 0)
+		goto error;
+
+	err = snd_dice_stream_init_duplex(dice);
+	if (err < 0)
+		goto error;
 
 	snd_dice_create_proc(dice);
 
@@ -249,36 +202,25 @@ static void do_registration(struct work_struct *work)
 
 	return;
 error:
+	snd_dice_stream_destroy_duplex(dice);
 	snd_dice_transaction_destroy(dice);
+	snd_dice_stream_destroy_duplex(dice);
 	snd_card_free(dice->card);
 	dev_info(&dice->unit->device,
 		 "Sound card registration failed: %d\n", err);
 }
 
-static void schedule_registration(struct snd_dice *dice)
-{
-	struct fw_card *fw_card = fw_parent_device(dice->unit)->card;
-	u64 now, delay;
-
-	now = get_jiffies_64();
-	delay = fw_card->reset_jiffies + msecs_to_jiffies(PROBE_DELAY_MS);
-
-	if (time_after64(delay, now))
-		delay -= now;
-	else
-		delay = 0;
-
-	mod_delayed_work(system_wq, &dice->dwork, delay);
-}
-
-static int dice_probe(struct fw_unit *unit, const struct ieee1394_device_id *id)
+static int dice_probe(struct fw_unit *unit,
+		      const struct ieee1394_device_id *entry)
 {
 	struct snd_dice *dice;
 	int err;
 
-	err = check_dice_category(unit);
-	if (err < 0)
-		return -ENODEV;
+	if (!entry->driver_data) {
+		err = check_dice_category(unit);
+		if (err < 0)
+			return -ENODEV;
+	}
 
 	/* Allocate this independent of sound card instance. */
 	dice = kzalloc(sizeof(struct snd_dice), GFP_KERNEL);
@@ -288,20 +230,21 @@ static int dice_probe(struct fw_unit *unit, const struct ieee1394_device_id *id)
 	dice->unit = fw_unit_get(unit);
 	dev_set_drvdata(&unit->device, dice);
 
+	if (!entry->driver_data) {
+		dice->detect_formats = snd_dice_stream_detect_current_formats;
+	} else {
+		dice->detect_formats =
+				(snd_dice_detect_formats_t)entry->driver_data;
+	}
+
 	spin_lock_init(&dice->lock);
 	mutex_init(&dice->mutex);
 	init_completion(&dice->clock_accepted);
 	init_waitqueue_head(&dice->hwdep_wait);
 
-	err = snd_dice_stream_init_duplex(dice);
-	if (err < 0) {
-		dice_free(dice);
-		return err;
-	}
-
 	/* Allocate and register this sound card later. */
 	INIT_DEFERRABLE_WORK(&dice->dwork, do_registration);
-	schedule_registration(dice);
+	snd_fw_schedule_registration(unit, &dice->dwork);
 
 	return 0;
 }
@@ -332,7 +275,7 @@ static void dice_bus_reset(struct fw_unit *unit)
 
 	/* Postpone a workqueue for deferred registration. */
 	if (!dice->registered)
-		schedule_registration(dice);
+		snd_fw_schedule_registration(unit, &dice->dwork);
 
 	/* The handler address register becomes initialized. */
 	snd_dice_transaction_reinit(dice);
@@ -351,6 +294,94 @@ static void dice_bus_reset(struct fw_unit *unit)
 #define DICE_INTERFACE	0x000001
 
 static const struct ieee1394_device_id dice_id_table[] = {
+	/* M-Audio Profire 2626 has a different value in version field. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_MAUDIO,
+		.model_id	= 0x000010,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_extension_formats,
+	},
+	/* M-Audio Profire 610 has a different value in version field. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_MAUDIO,
+		.model_id	= 0x000011,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_extension_formats,
+	},
+	/* TC Electronic Konnekt 24D. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000020,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* TC Electronic Konnekt 8. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000021,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* TC Electronic Studio Konnekt 48. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000022,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* TC Electronic Konnekt Live. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000023,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* TC Electronic Desktop Konnekt 6. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000024,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* TC Electronic Impact Twin. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000027,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* TC Electronic Digital Konnekt x32. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_TCELECTRONIC,
+		.model_id	= 0x000030,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_tcelectronic_formats,
+	},
+	/* Alesis iO14/iO26. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_ALESIS,
+		.model_id	= MODEL_ALESIS_IO_BOTH,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_alesis_formats,
+	},
+	/* Mytek Stereo 192 DSD-DAC. */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_MYTEK,
+		.model_id	= 0x000002,
+		.driver_data = (kernel_ulong_t)snd_dice_detect_mytek_formats,
+	},
 	{
 		.match_flags = IEEE1394_MATCH_VERSION,
 		.version     = DICE_INTERFACE,

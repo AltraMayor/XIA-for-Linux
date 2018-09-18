@@ -63,7 +63,7 @@ static int ad7780_set_mode(struct ad_sigma_delta *sigma_delta,
 			   enum ad_sigma_delta_mode mode)
 {
 	struct ad7780_state *st = ad_sigma_delta_to_ad7780(sigma_delta);
-	unsigned val;
+	unsigned int val;
 
 	switch (mode) {
 	case AD_SD_MODE_SINGLE:
@@ -128,7 +128,7 @@ static const struct ad_sigma_delta_info ad7780_sigma_delta_info = {
 };
 
 #define AD7780_CHANNEL(bits, wordsize) \
-	AD_SD_CHANNEL(1, 0, 0, bits, 32, wordsize - bits)
+	AD_SD_CHANNEL_NO_SAMP_FREQ(1, 0, 0, bits, 32, wordsize - bits)
 
 static const struct ad7780_chip_info ad7780_chip_info_tbl[] = {
 	[ID_AD7170] = {
@@ -154,8 +154,7 @@ static const struct ad7780_chip_info ad7780_chip_info_tbl[] = {
 };
 
 static const struct iio_info ad7780_info = {
-	.read_raw = &ad7780_read_raw,
-	.driver_module = THIS_MODULE,
+	.read_raw = ad7780_read_raw,
 };
 
 static int ad7780_probe(struct spi_device *spi)
@@ -173,14 +172,16 @@ static int ad7780_probe(struct spi_device *spi)
 
 	ad_sd_init(&st->sd, indio_dev, spi, &ad7780_sigma_delta_info);
 
-	st->reg = devm_regulator_get(&spi->dev, "vcc");
-	if (!IS_ERR(st->reg)) {
-		ret = regulator_enable(st->reg);
-		if (ret)
-			return ret;
+	st->reg = devm_regulator_get(&spi->dev, "avdd");
+	if (IS_ERR(st->reg))
+		return PTR_ERR(st->reg);
 
-		voltage_uv = regulator_get_voltage(st->reg);
+	ret = regulator_enable(st->reg);
+	if (ret) {
+		dev_err(&spi->dev, "Failed to enable specified AVdd supply\n");
+		return ret;
 	}
+	voltage_uv = regulator_get_voltage(st->reg);
 
 	st->chip_info =
 		&ad7780_chip_info_tbl[spi_get_device_id(spi)->driver_data];
@@ -222,8 +223,7 @@ static int ad7780_probe(struct spi_device *spi)
 error_cleanup_buffer_and_trigger:
 	ad_sd_cleanup_buffer_and_trigger(indio_dev);
 error_disable_reg:
-	if (!IS_ERR(st->reg))
-		regulator_disable(st->reg);
+	regulator_disable(st->reg);
 
 	return ret;
 }
@@ -236,8 +236,7 @@ static int ad7780_remove(struct spi_device *spi)
 	iio_device_unregister(indio_dev);
 	ad_sd_cleanup_buffer_and_trigger(indio_dev);
 
-	if (!IS_ERR(st->reg))
-		regulator_disable(st->reg);
+	regulator_disable(st->reg);
 
 	return 0;
 }

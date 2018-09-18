@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  S390 version
  *    Copyright IBM Corp. 1999, 2000
@@ -14,15 +15,16 @@
  */
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
-#include <linux/module.h>
+#include <linux/extable.h>
 #include <linux/ptrace.h>
 #include <linux/sched.h>
+#include <linux/sched/debug.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/uaccess.h>
+#include <linux/cpu.h>
 #include <asm/fpu/api.h>
 #include "entry.h"
-
-int show_unhandled_signals = 1;
 
 static inline void __user *get_trap_ip(struct pt_regs *regs)
 {
@@ -35,21 +37,6 @@ static inline void __user *get_trap_ip(struct pt_regs *regs)
 	return (void __user *) (address - (regs->int_code >> 16));
 }
 
-static inline void report_user_fault(struct pt_regs *regs, int signr)
-{
-	if ((task_pid_nr(current) > 1) && !show_unhandled_signals)
-		return;
-	if (!unhandled_signal(current, signr))
-		return;
-	if (!printk_ratelimit())
-		return;
-	printk("User process fault: interruption code %04x ilc:%d ",
-	       regs->int_code & 0xffff, regs->int_code >> 17);
-	print_vma_addr("in ", regs->psw.addr);
-	printk("\n");
-	show_regs(regs);
-}
-
 int is_valid_bugaddr(unsigned long addr)
 {
 	return 1;
@@ -57,15 +44,9 @@ int is_valid_bugaddr(unsigned long addr)
 
 void do_report_trap(struct pt_regs *regs, int si_signo, int si_code, char *str)
 {
-	siginfo_t info;
-
 	if (user_mode(regs)) {
-		info.si_signo = si_signo;
-		info.si_errno = 0;
-		info.si_code = si_code;
-		info.si_addr = get_trap_ip(regs);
-		force_sig_info(si_signo, &info, current);
-		report_user_fault(regs, si_signo);
+		force_sig_fault(si_signo, si_code, get_trap_ip(regs), current);
+		report_user_fault(regs, si_signo, 0);
         } else {
                 const struct exception_table_entry *fixup;
 		fixup = search_exception_tables(regs->psw.addr);
@@ -93,25 +74,19 @@ NOKPROBE_SYMBOL(do_trap);
 
 void do_per_trap(struct pt_regs *regs)
 {
-	siginfo_t info;
-
 	if (notify_die(DIE_SSTEP, "sstep", regs, 0, 0, SIGTRAP) == NOTIFY_STOP)
 		return;
 	if (!current->ptrace)
 		return;
-	info.si_signo = SIGTRAP;
-	info.si_errno = 0;
-	info.si_code = TRAP_HWBKPT;
-	info.si_addr =
-		(void __force __user *) current->thread.per_event.address;
-	force_sig_info(SIGTRAP, &info, current);
+	force_sig_fault(SIGTRAP, TRAP_HWBKPT,
+		(void __force __user *) current->thread.per_event.address, current);
 }
 NOKPROBE_SYMBOL(do_per_trap);
 
 void default_trap_handler(struct pt_regs *regs)
 {
 	if (user_mode(regs)) {
-		report_user_fault(regs, SIGSEGV);
+		report_user_fault(regs, SIGSEGV, 0);
 		do_exit(SIGSEGV);
 	} else
 		die(regs, "Unknown program exception");
@@ -178,7 +153,6 @@ void translation_exception(struct pt_regs *regs)
 
 void illegal_op(struct pt_regs *regs)
 {
-	siginfo_t info;
         __u8 opcode[6];
 	__u16 __user *location;
 	int is_uprobe_insn = 0;
@@ -190,13 +164,9 @@ void illegal_op(struct pt_regs *regs)
 		if (get_user(*((__u16 *) opcode), (__u16 __user *) location))
 			return;
 		if (*((__u16 *) opcode) == S390_BREAKPOINT_U16) {
-			if (current->ptrace) {
-				info.si_signo = SIGTRAP;
-				info.si_errno = 0;
-				info.si_code = TRAP_BRKPT;
-				info.si_addr = location;
-				force_sig_info(SIGTRAP, &info, current);
-			} else
+			if (current->ptrace)
+				force_sig_fault(SIGTRAP, TRAP_BRKPT, location, current);
+			else
 				signal = SIGILL;
 #ifdef CONFIG_UPROBES
 		} else if (*((__u16 *) opcode) == UPROBE_SWBP_INSN) {

@@ -1,36 +1,5 @@
-/*
- * drivers/net/ethernet/mellanox/mlxsw/core_hwmon.c
- * Copyright (c) 2015 Mellanox Technologies. All rights reserved.
- * Copyright (c) 2015 Jiri Pirko <jiri@mellanox.com>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the names of the copyright holders nor the names of its
- *    contributors may be used to endorse or promote products derived from
- *    this software without specific prior written permission.
- *
- * Alternatively, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2 as published by the Free
- * Software Foundation.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
+// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
+/* Copyright (c) 2015-2018 Mellanox Technologies. All rights reserved */
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -218,32 +187,32 @@ static void mlxsw_hwmon_attr_add(struct mlxsw_hwmon *mlxsw_hwmon,
 	switch (attr_type) {
 	case MLXSW_HWMON_ATTR_TYPE_TEMP:
 		mlxsw_hwmon_attr->dev_attr.show = mlxsw_hwmon_temp_show;
-		mlxsw_hwmon_attr->dev_attr.attr.mode = S_IRUGO;
+		mlxsw_hwmon_attr->dev_attr.attr.mode = 0444;
 		snprintf(mlxsw_hwmon_attr->name, sizeof(mlxsw_hwmon_attr->name),
 			 "temp%u_input", num + 1);
 		break;
 	case MLXSW_HWMON_ATTR_TYPE_TEMP_MAX:
 		mlxsw_hwmon_attr->dev_attr.show = mlxsw_hwmon_temp_max_show;
-		mlxsw_hwmon_attr->dev_attr.attr.mode = S_IRUGO;
+		mlxsw_hwmon_attr->dev_attr.attr.mode = 0444;
 		snprintf(mlxsw_hwmon_attr->name, sizeof(mlxsw_hwmon_attr->name),
 			 "temp%u_highest", num + 1);
 		break;
 	case MLXSW_HWMON_ATTR_TYPE_TEMP_RST:
 		mlxsw_hwmon_attr->dev_attr.store = mlxsw_hwmon_temp_rst_store;
-		mlxsw_hwmon_attr->dev_attr.attr.mode = S_IWUSR;
+		mlxsw_hwmon_attr->dev_attr.attr.mode = 0200;
 		snprintf(mlxsw_hwmon_attr->name, sizeof(mlxsw_hwmon_attr->name),
 			 "temp%u_reset_history", num + 1);
 		break;
 	case MLXSW_HWMON_ATTR_TYPE_FAN_RPM:
 		mlxsw_hwmon_attr->dev_attr.show = mlxsw_hwmon_fan_rpm_show;
-		mlxsw_hwmon_attr->dev_attr.attr.mode = S_IRUGO;
+		mlxsw_hwmon_attr->dev_attr.attr.mode = 0444;
 		snprintf(mlxsw_hwmon_attr->name, sizeof(mlxsw_hwmon_attr->name),
 			 "fan%u_input", num + 1);
 		break;
 	case MLXSW_HWMON_ATTR_TYPE_PWM:
 		mlxsw_hwmon_attr->dev_attr.show = mlxsw_hwmon_pwm_show;
 		mlxsw_hwmon_attr->dev_attr.store = mlxsw_hwmon_pwm_store;
-		mlxsw_hwmon_attr->dev_attr.attr.mode = S_IWUSR | S_IRUGO;
+		mlxsw_hwmon_attr->dev_attr.attr.mode = 0644;
 		snprintf(mlxsw_hwmon_attr->name, sizeof(mlxsw_hwmon_attr->name),
 			 "pwm%u", num + 1);
 		break;
@@ -262,7 +231,7 @@ static void mlxsw_hwmon_attr_add(struct mlxsw_hwmon *mlxsw_hwmon,
 
 static int mlxsw_hwmon_temp_init(struct mlxsw_hwmon *mlxsw_hwmon)
 {
-	char mtcap_pl[MLXSW_REG_MTCAP_LEN];
+	char mtcap_pl[MLXSW_REG_MTCAP_LEN] = {0};
 	char mtmp_pl[MLXSW_REG_MTMP_LEN];
 	u8 sensor_count;
 	int i;
@@ -295,7 +264,7 @@ static int mlxsw_hwmon_temp_init(struct mlxsw_hwmon *mlxsw_hwmon)
 
 static int mlxsw_hwmon_fans_init(struct mlxsw_hwmon *mlxsw_hwmon)
 {
-	char mfcr_pl[MLXSW_REG_MFCR_LEN];
+	char mfcr_pl[MLXSW_REG_MFCR_LEN] = {0};
 	enum mlxsw_reg_mfcr_pwm_frequency freq;
 	unsigned int type_index;
 	unsigned int num;

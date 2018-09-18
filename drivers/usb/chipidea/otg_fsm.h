@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2014 Freescale Semiconductor, Inc.
  *
  * Author: Jun Li
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __DRIVERS_USB_CHIPIDEA_OTG_FSM_H
@@ -61,6 +58,8 @@
 #define TB_SE0_SRP           (1000)	/* b_idle,minimum 1s, section:5.1.2 */
 /* SSEND time before SRP */
 #define TB_SSEND_SRP         (1500)	/* minimum 1.5 sec, section:5.1.2 */
+
+#define TB_AIDL_BDIS         (20)	/* 4ms ~ 150ms, section 5.2.1 */
 
 #if IS_ENABLED(CONFIG_USB_OTG_FSM)
 

@@ -54,7 +54,7 @@
 #include <pcmcia/ciscode.h>
 #include <pcmcia/ds.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 
 /*====================================================================*/
@@ -225,7 +225,6 @@ static const struct net_device_ops fjn_netdev_ops = {
 	.ndo_tx_timeout 	= fjn_tx_timeout,
 	.ndo_set_config 	= fjn_config,
 	.ndo_set_rx_mode	= set_rx_mode,
-	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 };
@@ -746,7 +745,7 @@ static irqreturn_t fjn_interrupt(int dummy, void *dev_id)
 	    lp->sent = lp->tx_queue ;
 	    lp->tx_queue = 0;
 	    lp->tx_queue_len = 0;
-	    dev->trans_start = jiffies;
+	    netif_trans_update(dev);
 	} else {
 	    lp->tx_started = 0;
 	}

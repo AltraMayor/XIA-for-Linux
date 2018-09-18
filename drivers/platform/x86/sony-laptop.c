@@ -68,7 +68,7 @@
 #include <linux/poll.h>
 #include <linux/miscdevice.h>
 #endif
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <acpi/video.h>
 
 #define dprintk(fmt, ...)			\
@@ -222,7 +222,7 @@ struct sony_laptop_keypress {
 /* Correspondance table between sonypi events
  * and input layer indexes in the keymap
  */
-static int sony_laptop_input_index[] = {
+static const int sony_laptop_input_index[] = {
 	-1,	/*  0 no event */
 	-1,	/*  1 SONYPI_EVENT_JOGDIAL_DOWN */
 	-1,	/*  2 SONYPI_EVENT_JOGDIAL_UP */
@@ -363,7 +363,7 @@ static int sony_laptop_input_keycode_map[] = {
 };
 
 /* release buttons after a short delay if pressed */
-static void do_sony_laptop_release_key(unsigned long unused)
+static void do_sony_laptop_release_key(struct timer_list *unused)
 {
 	struct sony_laptop_keypress kp;
 	unsigned long flags;
@@ -470,7 +470,7 @@ static int sony_laptop_setup_input(struct acpi_device *acpi_device)
 		goto err_dec_users;
 	}
 
-	setup_timer(&sony_laptop_input.release_key_timer,
+	timer_setup(&sony_laptop_input.release_key_timer,
 		    do_sony_laptop_release_key, 0);
 
 	/* input keys */
@@ -1446,6 +1446,9 @@ static void sony_nc_function_cleanup(struct platform_device *pd)
 {
 	unsigned int i, result, bitmask, handle;
 
+	if (!handles)
+		return;
+
 	/* get enabled events and disable them */
 	sony_nc_int_call(sony_nc_acpi_handle, "SN01", NULL, &bitmask);
 	sony_nc_int_call(sony_nc_acpi_handle, "SN03", &bitmask, &result);
@@ -1624,7 +1627,7 @@ static const struct rfkill_ops sony_rfkill_ops = {
 static int sony_nc_setup_rfkill(struct acpi_device *device,
 				enum sony_nc_rfkill nc_type)
 {
-	int err = 0;
+	int err;
 	struct rfkill *rfk;
 	enum rfkill_type type;
 	const char *name;
@@ -1657,17 +1660,19 @@ static int sony_nc_setup_rfkill(struct acpi_device *device,
 	if (!rfk)
 		return -ENOMEM;
 
-	if (sony_call_snc_handle(sony_rfkill_handle, 0x200, &result) < 0) {
+	err = sony_call_snc_handle(sony_rfkill_handle, 0x200, &result);
+	if (err < 0) {
 		rfkill_destroy(rfk);
-		return -1;
+		return err;
 	}
 	hwblock = !(result & 0x1);
 
-	if (sony_call_snc_handle(sony_rfkill_handle,
-				sony_rfkill_address[nc_type],
-				&result) < 0) {
+	err = sony_call_snc_handle(sony_rfkill_handle,
+				   sony_rfkill_address[nc_type],
+				   &result);
+	if (err < 0) {
 		rfkill_destroy(rfk);
-		return -1;
+		return err;
 	}
 	swblock = !(result & 0x2);
 
@@ -4029,7 +4034,7 @@ static struct attribute *spic_attributes[] = {
 	NULL
 };
 
-static struct attribute_group spic_attribute_group = {
+static const struct attribute_group spic_attribute_group = {
 	.attrs = spic_attributes
 };
 
@@ -4113,17 +4118,17 @@ static ssize_t sonypi_misc_read(struct file *file, char __user *buf,
 
 	if (ret > 0) {
 		struct inode *inode = file_inode(file);
-		inode->i_atime = current_fs_time(inode->i_sb);
+		inode->i_atime = current_time(inode);
 	}
 
 	return ret;
 }
 
-static unsigned int sonypi_misc_poll(struct file *file, poll_table *wait)
+static __poll_t sonypi_misc_poll(struct file *file, poll_table *wait)
 {
 	poll_wait(file, &sonypi_compat.fifo_proc_list, wait);
 	if (kfifo_len(&sonypi_compat.fifo))
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 	return 0;
 }
 
@@ -4877,7 +4882,7 @@ static struct acpi_driver sony_pic_driver = {
 	.drv.pm = &sony_pic_pm,
 };
 
-static struct dmi_system_id __initdata sonypi_dmi_table[] = {
+static const struct dmi_system_id sonypi_dmi_table[] __initconst = {
 	{
 		.ident = "Sony Vaio",
 		.matches = {

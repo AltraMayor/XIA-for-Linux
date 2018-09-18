@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #define DEBUG
 
 #include <linux/wait.h>
@@ -435,7 +436,7 @@ long spufs_run_spu(struct spu_context *ctx, u32 *npc, u32 *event)
 
 	/* Note: we don't need to force_sig SIGTRAP on single-step
 	 * since we have TIF_SINGLESTEP set, thus the kernel will do
-	 * it upon return from the syscall anyawy
+	 * it upon return from the syscall anyway.
 	 */
 	if (unlikely(status & SPU_STATUS_SINGLE_STEP))
 		ret = -ERESTARTSYS;

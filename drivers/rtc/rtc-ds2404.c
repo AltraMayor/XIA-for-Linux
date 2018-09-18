@@ -13,7 +13,7 @@
 #include <linux/rtc.h>
 #include <linux/types.h>
 #include <linux/bcd.h>
-#include <linux/rtc-ds2404.h>
+#include <linux/platform_data/rtc-ds2404.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/slab.h>
@@ -207,7 +207,7 @@ static int ds2404_read_time(struct device *dev, struct rtc_time *dt)
 	time = le32_to_cpu(time);
 
 	rtc_time_to_tm(time, dt);
-	return rtc_valid_tm(dt);
+	return 0;
 }
 
 static int ds2404_set_mmss(struct device *dev, unsigned long secs)

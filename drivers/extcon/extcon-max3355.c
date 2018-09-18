@@ -9,11 +9,12 @@
  * may be copied, distributed, and modified under those terms.
  */
 
-#include <linux/extcon.h>
+#include <linux/extcon-provider.h>
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 
 struct max3355_data {
@@ -39,16 +40,16 @@ static irqreturn_t max3355_id_irq(int irq, void *dev_id)
 		 * As we don't have event for USB peripheral cable attached,
 		 * we simulate USB peripheral attach here.
 		 */
-		extcon_set_cable_state_(data->edev, EXTCON_USB_HOST, false);
-		extcon_set_cable_state_(data->edev, EXTCON_USB, true);
+		extcon_set_state_sync(data->edev, EXTCON_USB_HOST, false);
+		extcon_set_state_sync(data->edev, EXTCON_USB, true);
 	} else {
 		/*
 		 * ID = 0 means USB HOST cable attached.
 		 * As we don't have event for USB peripheral cable detached,
 		 * we simulate USB peripheral detach here.
 		 */
-		extcon_set_cable_state_(data->edev, EXTCON_USB, false);
-		extcon_set_cable_state_(data->edev, EXTCON_USB_HOST, true);
+		extcon_set_state_sync(data->edev, EXTCON_USB, false);
+		extcon_set_state_sync(data->edev, EXTCON_USB_HOST, true);
 	}
 
 	return IRQ_HANDLED;

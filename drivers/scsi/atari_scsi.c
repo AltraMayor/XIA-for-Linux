@@ -14,55 +14,23 @@
  *
  */
 
-
-/**************************************************************************/
-/*                                                                        */
-/* Notes for Falcon SCSI:                                                 */
-/* ----------------------                                                 */
-/*                                                                        */
-/* Since the Falcon SCSI uses the ST-DMA chip, that is shared among       */
-/* several device drivers, locking and unlocking the access to this       */
-/* chip is required. But locking is not possible from an interrupt,       */
-/* since it puts the process to sleep if the lock is not available.       */
-/* This prevents "late" locking of the DMA chip, i.e. locking it just     */
-/* before using it, since in case of disconnection-reconnection           */
-/* commands, the DMA is started from the reselection interrupt.           */
-/*                                                                        */
-/* Two possible schemes for ST-DMA-locking would be:                      */
-/*  1) The lock is taken for each command separately and disconnecting    */
-/*     is forbidden (i.e. can_queue = 1).                                 */
-/*  2) The DMA chip is locked when the first command comes in and         */
-/*     released when the last command is finished and all queues are      */
-/*     empty.                                                             */
-/* The first alternative would result in bad performance, since the       */
-/* interleaving of commands would not be used. The second is unfair to    */
-/* other drivers using the ST-DMA, because the queues will seldom be      */
-/* totally empty if there is a lot of disk traffic.                       */
-/*                                                                        */
-/* For this reasons I decided to employ a more elaborate scheme:          */
-/*  - First, we give up the lock every time we can (for fairness), this    */
-/*    means every time a command finishes and there are no other commands */
-/*    on the disconnected queue.                                          */
-/*  - If there are others waiting to lock the DMA chip, we stop           */
-/*    issuing commands, i.e. moving them onto the issue queue.           */
-/*    Because of that, the disconnected queue will run empty in a         */
-/*    while. Instead we go to sleep on a 'fairness_queue'.                */
-/*  - If the lock is released, all processes waiting on the fairness      */
-/*    queue will be woken. The first of them tries to re-lock the DMA,     */
-/*    the others wait for the first to finish this task. After that,      */
-/*    they can all run on and do their commands...                        */
-/* This sounds complicated (and it is it :-(), but it seems to be a       */
-/* good compromise between fairness and performance: As long as no one     */
-/* else wants to work with the ST-DMA chip, SCSI can go along as          */
-/* usual. If now someone else comes, this behaviour is changed to a       */
-/* "fairness mode": just already initiated commands are finished and      */
-/* then the lock is released. The other one waiting will probably win     */
-/* the race for locking the DMA, since it was waiting for longer. And     */
-/* after it has finished, SCSI can go ahead again. Finally: I hope I      */
-/* have not produced any deadlock possibilities!                          */
-/*                                                                        */
-/**************************************************************************/
-
+/*
+ * Notes for Falcon SCSI DMA
+ *
+ * The 5380 device is one of several that all share the DMA chip. Hence
+ * "locking" and "unlocking" access to this chip is required.
+ *
+ * Two possible schemes for ST DMA acquisition by atari_scsi are:
+ * 1) The lock is taken for each command separately (i.e. can_queue == 1).
+ * 2) The lock is taken when the first command arrives and released
+ * when the last command is finished (i.e. can_queue > 1).
+ *
+ * The first alternative limits SCSI bus utilization, since interleaving
+ * commands is not possible. The second gives better performance but is
+ * unfair to other drivers needing to use the ST DMA chip. In order to
+ * allow the IDE and floppy drivers equal access to the ST DMA chip
+ * the default is can_queue == 1.
+ */
 
 #include <linux/module.h>
 #include <linux/types.h>
@@ -83,14 +51,14 @@
 
 #include <scsi/scsi_host.h>
 
-/* Definitions for the core NCR5380 driver. */
-
-#define REAL_DMA
-#define SUPPORT_TAGS
-#define MAX_TAGS                        32
 #define DMA_MIN_SIZE                    32
 
+/* Definitions for the core NCR5380 driver. */
+
 #define NCR5380_implementation_fields   /* none */
+
+static u8 (*atari_scsi_reg_read)(unsigned int);
+static void (*atari_scsi_reg_write)(unsigned int, u8);
 
 #define NCR5380_read(reg)               atari_scsi_reg_read(reg)
 #define NCR5380_write(reg, value)       atari_scsi_reg_write(reg, value)
@@ -99,14 +67,10 @@
 #define NCR5380_abort                   atari_scsi_abort
 #define NCR5380_info                    atari_scsi_info
 
-#define NCR5380_dma_read_setup(instance, data, count) \
-        atari_scsi_dma_setup(instance, data, count, 0)
-#define NCR5380_dma_write_setup(instance, data, count) \
-        atari_scsi_dma_setup(instance, data, count, 1)
-#define NCR5380_dma_residual(instance) \
-        atari_scsi_dma_residual(instance)
-#define NCR5380_dma_xfer_len(instance, cmd, phase) \
-        atari_dma_xfer_len(cmd->SCp.this_residual, cmd, !((phase) & SR_IO))
+#define NCR5380_dma_xfer_len            atari_scsi_dma_xfer_len
+#define NCR5380_dma_recv_setup          atari_scsi_dma_recv_setup
+#define NCR5380_dma_send_setup          atari_scsi_dma_send_setup
+#define NCR5380_dma_residual            atari_scsi_dma_residual
 
 #define NCR5380_acquire_dma_irq(instance)      falcon_get_lock(instance)
 #define NCR5380_release_dma_irq(instance)      falcon_release_lock()
@@ -159,14 +123,8 @@ static inline unsigned long SCSI_DMA_GETADR(void)
 	return adr;
 }
 
-#ifdef REAL_DMA
 static void atari_scsi_fetch_restbytes(void);
-#endif
 
-static unsigned char (*atari_scsi_reg_read)(unsigned char reg);
-static void (*atari_scsi_reg_write)(unsigned char reg, unsigned char value);
-
-#ifdef REAL_DMA
 static unsigned long	atari_dma_residual, atari_dma_startaddr;
 static short		atari_dma_active;
 /* pointer to the dribble buffer */
@@ -185,7 +143,6 @@ static char		*atari_dma_orig_addr;
 /* mask for address bits that can't be used with the ST-DMA */
 static unsigned long	atari_dma_stram_mask;
 #define STRAM_ADDR(a)	(((a) & atari_dma_stram_mask) == 0)
-#endif
 
 static int setup_can_queue = -1;
 module_param(setup_can_queue, int, 0);
@@ -193,15 +150,11 @@ static int setup_cmd_per_lun = -1;
 module_param(setup_cmd_per_lun, int, 0);
 static int setup_sg_tablesize = -1;
 module_param(setup_sg_tablesize, int, 0);
-static int setup_use_tagged_queuing = -1;
-module_param(setup_use_tagged_queuing, int, 0);
 static int setup_hostid = -1;
 module_param(setup_hostid, int, 0);
 static int setup_toshiba_delay = -1;
 module_param(setup_toshiba_delay, int, 0);
 
-
-#if defined(REAL_DMA)
 
 static int scsi_dma_is_ignored_buserr(unsigned char dma_stat)
 {
@@ -225,42 +178,8 @@ static int scsi_dma_is_ignored_buserr(unsigned char dma_stat)
 }
 
 
-#if 0
-/* Dead code... wasn't called anyway :-) and causes some trouble, because at
- * end-of-DMA, both SCSI ints are triggered simultaneously, so the NCR int has
- * to clear the DMA int pending bit before it allows other level 6 interrupts.
- */
-static void scsi_dma_buserr(int irq, void *dummy)
-{
-	unsigned char dma_stat = tt_scsi_dma.dma_ctrl;
-
-	/* Don't do anything if a NCR interrupt is pending. Probably it's just
-	 * masked... */
-	if (atari_irq_pending(IRQ_TT_MFP_SCSI))
-		return;
-
-	printk("Bad SCSI DMA interrupt! dma_addr=0x%08lx dma_stat=%02x dma_cnt=%08lx\n",
-	       SCSI_DMA_READ_P(dma_addr), dma_stat, SCSI_DMA_READ_P(dma_cnt));
-	if (dma_stat & 0x80) {
-		if (!scsi_dma_is_ignored_buserr(dma_stat))
-			printk("SCSI DMA bus error -- bad DMA programming!\n");
-	} else {
-		/* Under normal circumstances we never should get to this point,
-		 * since both interrupts are triggered simultaneously and the 5380
-		 * int has higher priority. When this irq is handled, that DMA
-		 * interrupt is cleared. So a warning message is printed here.
-		 */
-		printk("SCSI DMA intr ?? -- this shouldn't happen!\n");
-	}
-}
-#endif
-
-#endif
-
-
 static irqreturn_t scsi_tt_intr(int irq, void *dev)
 {
-#ifdef REAL_DMA
 	struct Scsi_Host *instance = dev;
 	struct NCR5380_hostdata *hostdata = shost_priv(instance);
 	int dma_stat;
@@ -342,8 +261,6 @@ static irqreturn_t scsi_tt_intr(int irq, void *dev)
 		tt_scsi_dma.dma_ctrl = 0;
 	}
 
-#endif /* REAL_DMA */
-
 	NCR5380_intr(irq, dev);
 
 	return IRQ_HANDLED;
@@ -352,7 +269,6 @@ static irqreturn_t scsi_tt_intr(int irq, void *dev)
 
 static irqreturn_t scsi_falcon_intr(int irq, void *dev)
 {
-#ifdef REAL_DMA
 	struct Scsi_Host *instance = dev;
 	struct NCR5380_hostdata *hostdata = shost_priv(instance);
 	int dma_stat;
@@ -405,15 +321,12 @@ static irqreturn_t scsi_falcon_intr(int irq, void *dev)
 		atari_dma_orig_addr = NULL;
 	}
 
-#endif /* REAL_DMA */
-
 	NCR5380_intr(irq, dev);
 
 	return IRQ_HANDLED;
 }
 
 
-#ifdef REAL_DMA
 static void atari_scsi_fetch_restbytes(void)
 {
 	int nr;
@@ -436,7 +349,6 @@ static void atari_scsi_fetch_restbytes(void)
 			*dst++ = *src++;
 	}
 }
-#endif /* REAL_DMA */
 
 
 /* This function releases the lock on the DMA chip if there is no
@@ -462,6 +374,10 @@ static void falcon_release_lock(void)
 static int falcon_get_lock(struct Scsi_Host *instance)
 {
 	if (IS_A_TT())
+		return 1;
+
+	if (stdma_is_locked_by(scsi_falcon_intr) &&
+	    instance->hostt->can_queue > 1)
 		return 1;
 
 	if (in_interrupt())
@@ -495,8 +411,7 @@ static int __init atari_scsi_setup(char *str)
 		setup_sg_tablesize = ints[3];
 	if (ints[0] >= 4)
 		setup_hostid = ints[4];
-	if (ints[0] >= 5)
-		setup_use_tagged_queuing = ints[5];
+	/* ints[5] (use_tagged_queuing) is ignored */
 	/* ints[6] (use_pdma) is ignored */
 	if (ints[0] >= 7)
 		setup_toshiba_delay = ints[7];
@@ -507,17 +422,14 @@ static int __init atari_scsi_setup(char *str)
 __setup("atascsi=", atari_scsi_setup);
 #endif /* !MODULE */
 
-
-#if defined(REAL_DMA)
-
-static unsigned long atari_scsi_dma_setup(struct Scsi_Host *instance,
+static unsigned long atari_scsi_dma_setup(struct NCR5380_hostdata *hostdata,
 					  void *data, unsigned long count,
 					  int dir)
 {
 	unsigned long addr = virt_to_phys(data);
 
-	dprintk(NDEBUG_DMA, "scsi%d: setting up dma, data = %p, phys = %lx, count = %ld, "
-		   "dir = %d\n", instance->host_no, data, addr, count, dir);
+	dprintk(NDEBUG_DMA, "scsi%d: setting up dma, data = %p, phys = %lx, count = %ld, dir = %d\n",
+	        hostdata->host->host_no, data, addr, count, dir);
 
 	if (!IS_A_TT() && !STRAM_ADDR(addr)) {
 		/* If we have a non-DMAable address on a Falcon, use the dribble
@@ -544,9 +456,6 @@ static unsigned long atari_scsi_dma_setup(struct Scsi_Host *instance,
 	 * because the hardware does bus snooping (fine!).
 	 */
 	dma_cache_maintenance(addr, count, dir);
-
-	if (count == 0)
-		printk(KERN_NOTICE "SCSI warning: DMA programmed for 0 bytes !\n");
 
 	if (IS_A_TT()) {
 		tt_scsi_dma.dma_ctrl = dir;
@@ -577,8 +486,19 @@ static unsigned long atari_scsi_dma_setup(struct Scsi_Host *instance,
 	return count;
 }
 
+static inline int atari_scsi_dma_recv_setup(struct NCR5380_hostdata *hostdata,
+                                            unsigned char *data, int count)
+{
+	return atari_scsi_dma_setup(hostdata, data, count, 0);
+}
 
-static long atari_scsi_dma_residual(struct Scsi_Host *instance)
+static inline int atari_scsi_dma_send_setup(struct NCR5380_hostdata *hostdata,
+                                            unsigned char *data, int count)
+{
+	return atari_scsi_dma_setup(hostdata, data, count, 1);
+}
+
+static int atari_scsi_dma_residual(struct NCR5380_hostdata *hostdata)
 {
 	return atari_dma_residual;
 }
@@ -619,10 +539,14 @@ static int falcon_classify_cmd(struct scsi_cmnd *cmd)
  * the overrun problem, so this question is academic :-)
  */
 
-static unsigned long atari_dma_xfer_len(unsigned long wanted_len,
-					struct scsi_cmnd *cmd, int write_flag)
+static int atari_scsi_dma_xfer_len(struct NCR5380_hostdata *hostdata,
+                                   struct scsi_cmnd *cmd)
 {
-	unsigned long	possible_len, limit;
+	int wanted_len = cmd->SCp.this_residual;
+	int possible_len, limit;
+
+	if (wanted_len < DMA_MIN_SIZE)
+		return 0;
 
 	if (IS_A_TT())
 		/* TT SCSI DMA can transfer arbitrary #bytes */
@@ -656,7 +580,7 @@ static unsigned long atari_dma_xfer_len(unsigned long wanted_len,
 	 * use the dribble buffer and thus can do only STRAM_BUFFER_SIZE bytes.
 	 */
 
-	if (write_flag) {
+	if (cmd->sc_data_direction == DMA_TO_DEVICE) {
 		/* Write operation can always use the DMA, but the transfer size must
 		 * be rounded up to the next multiple of 512 (atari_dma_setup() does
 		 * this).
@@ -696,14 +620,11 @@ static unsigned long atari_dma_xfer_len(unsigned long wanted_len,
 		possible_len = limit;
 
 	if (possible_len != wanted_len)
-		dprintk(NDEBUG_DMA, "Sorry, must cut DMA transfer size to %ld bytes "
-			   "instead of %ld\n", possible_len, wanted_len);
+		dprintk(NDEBUG_DMA, "DMA transfer now %d bytes instead of %d\n",
+		        possible_len, wanted_len);
 
 	return possible_len;
 }
-
-
-#endif	/* REAL_DMA */
 
 
 /* NCR5380 register access functions
@@ -713,50 +634,61 @@ static unsigned long atari_dma_xfer_len(unsigned long wanted_len,
  * NCR5380_write call these functions via function pointers.
  */
 
-static unsigned char atari_scsi_tt_reg_read(unsigned char reg)
+static u8 atari_scsi_tt_reg_read(unsigned int reg)
 {
 	return tt_scsi_regp[reg * 2];
 }
 
-static void atari_scsi_tt_reg_write(unsigned char reg, unsigned char value)
+static void atari_scsi_tt_reg_write(unsigned int reg, u8 value)
 {
 	tt_scsi_regp[reg * 2] = value;
 }
 
-static unsigned char atari_scsi_falcon_reg_read(unsigned char reg)
+static u8 atari_scsi_falcon_reg_read(unsigned int reg)
 {
-	dma_wd.dma_mode_status= (u_short)(0x88 + reg);
-	return (u_char)dma_wd.fdc_acces_seccount;
+	unsigned long flags;
+	u8 result;
+
+	reg += 0x88;
+	local_irq_save(flags);
+	dma_wd.dma_mode_status = (u_short)reg;
+	result = (u8)dma_wd.fdc_acces_seccount;
+	local_irq_restore(flags);
+	return result;
 }
 
-static void atari_scsi_falcon_reg_write(unsigned char reg, unsigned char value)
+static void atari_scsi_falcon_reg_write(unsigned int reg, u8 value)
 {
-	dma_wd.dma_mode_status = (u_short)(0x88 + reg);
+	unsigned long flags;
+
+	reg += 0x88;
+	local_irq_save(flags);
+	dma_wd.dma_mode_status = (u_short)reg;
 	dma_wd.fdc_acces_seccount = (u_short)value;
+	local_irq_restore(flags);
 }
 
 
-#include "atari_NCR5380.c"
+#include "NCR5380.c"
 
-static int atari_scsi_bus_reset(struct scsi_cmnd *cmd)
+static int atari_scsi_host_reset(struct scsi_cmnd *cmd)
 {
 	int rv;
 	unsigned long flags;
 
 	local_irq_save(flags);
 
-#ifdef REAL_DMA
 	/* Abort a maybe active DMA transfer */
 	if (IS_A_TT()) {
 		tt_scsi_dma.dma_ctrl = 0;
 	} else {
-		st_dma.dma_mode_status = 0x90;
+		if (stdma_is_locked_by(scsi_falcon_intr))
+			st_dma.dma_mode_status = 0x90;
 		atari_dma_active = 0;
 		atari_dma_orig_addr = NULL;
 	}
-#endif
 
-	rv = NCR5380_bus_reset(cmd);
+	rv = NCR5380_host_reset(cmd);
 
 	/* The 5380 raises its IRQ line while _RST is active but the ST DMA
 	 * "lock" has been released so this interrupt may end up handled by
@@ -779,8 +711,9 @@ static struct scsi_host_template atari_scsi_template = {
 	.info			= atari_scsi_info,
 	.queuecommand		= atari_scsi_queue_command,
 	.eh_abort_handler	= atari_scsi_abort,
-	.eh_bus_reset_handler	= atari_scsi_bus_reset,
+	.eh_host_reset_handler	= atari_scsi_host_reset,
 	.this_id		= 7,
+	.cmd_per_lun		= 2,
 	.use_clustering		= DISABLE_CLUSTERING,
 	.cmd_size		= NCR5380_CMD_SIZE,
 };
@@ -804,24 +737,11 @@ static int __init atari_scsi_probe(struct platform_device *pdev)
 		atari_scsi_reg_write = atari_scsi_falcon_reg_write;
 	}
 
-	/* The values for CMD_PER_LUN and CAN_QUEUE are somehow arbitrary.
-	 * Higher values should work, too; try it!
-	 * (But cmd_per_lun costs memory!)
-	 *
-	 * But there seems to be a bug somewhere that requires CAN_QUEUE to be
-	 * 2*CMD_PER_LUN. At least on a TT, no spurious timeouts seen since
-	 * changed CMD_PER_LUN...
-	 *
-	 * Note: The Falcon currently uses 8/1 setting due to unsolved problems
-	 * with cmd_per_lun != 1
-	 */
 	if (ATARIHW_PRESENT(TT_SCSI)) {
 		atari_scsi_template.can_queue    = 16;
-		atari_scsi_template.cmd_per_lun  = 8;
 		atari_scsi_template.sg_tablesize = SG_ALL;
 	} else {
-		atari_scsi_template.can_queue    = 8;
-		atari_scsi_template.cmd_per_lun  = 1;
+		atari_scsi_template.can_queue    = 1;
 		atari_scsi_template.sg_tablesize = SG_NONE;
 	}
 
@@ -850,24 +770,21 @@ static int __init atari_scsi_probe(struct platform_device *pdev)
 		}
 	}
 
-
-#ifdef REAL_DMA
 	/* If running on a Falcon and if there's TT-Ram (i.e., more than one
 	 * memory block, since there's always ST-Ram in a Falcon), then
 	 * allocate a STRAM_BUFFER_SIZE byte dribble buffer for transfers
 	 * from/to alternative Ram.
 	 */
 	if (ATARIHW_PRESENT(ST_SCSI) && !ATARIHW_PRESENT(EXTD_DMA) &&
-	    m68k_num_memory > 1) {
+	    m68k_realnum_memory > 1) {
 		atari_dma_buffer = atari_stram_alloc(STRAM_BUFFER_SIZE, "SCSI");
 		if (!atari_dma_buffer) {
 			pr_err(PFX "can't allocate ST-RAM double buffer\n");
 			return -ENOMEM;
 		}
 		atari_dma_phys_buffer = atari_stram_to_phys(atari_dma_buffer);
-		atari_dma_orig_addr = 0;
+		atari_dma_orig_addr = NULL;
 	}
-#endif
 
 	instance = scsi_host_alloc(&atari_scsi_template,
 	                           sizeof(struct NCR5380_hostdata));
@@ -879,9 +796,6 @@ static int __init atari_scsi_probe(struct platform_device *pdev)
 	instance->irq = irq->start;
 
 	host_flags |= IS_A_TT() ? 0 : FLAG_LATE_DMA_SETUP;
-#ifdef SUPPORT_TAGS
-	host_flags |= setup_use_tagged_queuing > 0 ? FLAG_TAGGED_QUEUING : 0;
-#endif
 	host_flags |= setup_toshiba_delay > 0 ? FLAG_TOSHIBA_DELAY : 0;
 
 	error = NCR5380_init(instance, host_flags);
@@ -897,7 +811,7 @@ static int __init atari_scsi_probe(struct platform_device *pdev)
 			goto fail_irq;
 		}
 		tt_mfp.active_edge |= 0x80;	/* SCSI int on L->H */
-#ifdef REAL_DMA
+
 		tt_scsi_dma.dma_ctrl = 0;
 		atari_dma_residual = 0;
 
@@ -919,17 +833,14 @@ static int __init atari_scsi_probe(struct platform_device *pdev)
 
 			hostdata->read_overruns = 4;
 		}
-#endif
 	} else {
 		/* Nothing to do for the interrupt: the ST-DMA is initialized
 		 * already.
 		 */
-#ifdef REAL_DMA
 		atari_dma_residual = 0;
 		atari_dma_active = 0;
 		atari_dma_stram_mask = (ATARIHW_PRESENT(EXTD_DMA) ? 0x00000000
 					: 0xff000000);
-#endif
 	}
 
 	NCR5380_maybe_reset_bus(instance);

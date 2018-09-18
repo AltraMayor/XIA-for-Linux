@@ -1064,7 +1064,7 @@ static int dma_tx_fragment(struct b43legacy_dmaring *ring,
 	meta->dmaaddr = map_descbuffer(ring, skb->data, skb->len, 1);
 	/* create a bounce buffer in zone_dma on mapping failure. */
 	if (b43legacy_dma_mapping_error(ring, meta->dmaaddr, skb->len, 1)) {
-		bounce_skb = alloc_skb(skb->len, GFP_ATOMIC | GFP_DMA);
+		bounce_skb = alloc_skb(skb->len, GFP_KERNEL | GFP_DMA);
 		if (!bounce_skb) {
 			ring->current_slot = old_top_slot;
 			ring->used_slots = old_used_slots;
@@ -1072,7 +1072,7 @@ static int dma_tx_fragment(struct b43legacy_dmaring *ring,
 			goto out_unmap_hdr;
 		}
 
-		memcpy(skb_put(bounce_skb, skb->len), skb->data, skb->len);
+		skb_put_data(bounce_skb, skb->data, skb->len);
 		memcpy(bounce_skb->cb, skb->cb, sizeof(skb->cb));
 		bounce_skb->dev = skb->dev;
 		skb_set_queue_mapping(bounce_skb, skb_get_queue_mapping(skb));

@@ -72,6 +72,7 @@ int iio_simple_dummy_write_event_config(struct iio_dev *indio_dev,
 				st->event_en = state;
 			else
 				return -EINVAL;
+			break;
 		default:
 			return -EINVAL;
 		}
@@ -158,7 +159,7 @@ static irqreturn_t iio_simple_dummy_get_timestamp(int irq, void *private)
 	struct iio_dev *indio_dev = private;
 	struct iio_dummy_state *st = iio_priv(indio_dev);
 
-	st->event_timestamp = iio_get_time_ns();
+	st->event_timestamp = iio_get_time_ns(indio_dev);
 	return IRQ_WAKE_THREAD;
 }
 

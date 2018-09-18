@@ -636,20 +636,12 @@ struct hifn_request_context {
 
 static inline u32 hifn_read_0(struct hifn_device *dev, u32 reg)
 {
-	u32 ret;
-
-	ret = readl(dev->bar[0] + reg);
-
-	return ret;
+	return readl(dev->bar[0] + reg);
 }
 
 static inline u32 hifn_read_1(struct hifn_device *dev, u32 reg)
 {
-	u32 ret;
-
-	ret = readl(dev->bar[1] + reg);
-
-	return ret;
+	return readl(dev->bar[1] + reg);
 }
 
 static inline void hifn_write_0(struct hifn_device *dev, u32 reg, u32 val)
@@ -2587,6 +2579,7 @@ err_out_unmap_bars:
 	for (i = 0; i < 3; ++i)
 		if (dev->bar[i])
 			iounmap(dev->bar[i]);
+	kfree(dev);
 
 err_out_free_regions:
 	pci_release_regions(pdev);

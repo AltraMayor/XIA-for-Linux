@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_SH_MOBILE_CEU_H__
 #define __ASM_SH_MOBILE_CEU_H__
 
@@ -21,7 +22,6 @@ struct sh_mobile_ceu_info {
 	unsigned long flags;
 	int max_width;
 	int max_height;
-	struct sh_mobile_ceu_companion *csi2;
 	struct v4l2_async_subdev **asd;	/* Flat array, arranged in groups */
 	unsigned int *asd_sizes;	/* 0-terminated array pf asd group sizes */
 };

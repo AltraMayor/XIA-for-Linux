@@ -223,10 +223,7 @@ static int ft_init_nodeacl(struct se_node_acl *nacl, const char *name)
 /*
  * local_port port_group (tpg) ops.
  */
-static struct se_portal_group *ft_add_tpg(
-	struct se_wwn *wwn,
-	struct config_group *group,
-	const char *name)
+static struct se_portal_group *ft_add_tpg(struct se_wwn *wwn, const char *name)
 {
 	struct ft_lport_wwn *ft_wwn;
 	struct ft_tpg *tpg;
@@ -442,7 +439,6 @@ static const struct target_core_fabric_ops ft_fabric_ops = {
 	.tpg_get_inst_index =		ft_tpg_get_inst_index,
 	.check_stop_free =		ft_check_stop_free,
 	.release_cmd =			ft_release_cmd,
-	.shutdown_session =		ft_sess_shutdown,
 	.close_session =		ft_sess_close,
 	.sess_get_index =		ft_sess_get_index,
 	.sess_get_initiator_sid =	NULL,

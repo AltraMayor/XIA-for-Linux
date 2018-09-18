@@ -121,7 +121,7 @@ static void bcm203x_complete(struct urb *urb)
 		}
 
 		data->state = BCM203X_LOAD_FIRMWARE;
-
+		/* fall through */
 	case BCM203X_LOAD_FIRMWARE:
 		if (data->fw_sent == data->fw_size) {
 			usb_fill_int_urb(urb, udev, usb_rcvintpipe(udev, BCM203X_IN_EP),
@@ -185,10 +185,8 @@ static int bcm203x_probe(struct usb_interface *intf, const struct usb_device_id 
 	data->state = BCM203X_LOAD_MINIDRV;
 
 	data->urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!data->urb) {
-		BT_ERR("Can't allocate URB");
+	if (!data->urb)
 		return -ENOMEM;
-	}
 
 	if (request_firmware(&firmware, "BCM2033-MD.hex", &udev->dev) < 0) {
 		BT_ERR("Mini driver request failed");

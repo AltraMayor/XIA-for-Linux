@@ -1,7 +1,7 @@
 /*
  * Intel MID GPIO driver
  *
- * Copyright (c) 2008-2014 Intel Corporation.
+ * Copyright (c) 2008-2014,2016 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -17,21 +17,20 @@
  * Moorestown platform Langwell chip.
  * Medfield platform Penwell chip.
  * Clovertrail platform Cloverview chip.
- * Merrifield platform Tangier chip.
  */
 
+#include <linux/delay.h>
+#include <linux/init.h>
+#include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/gpio/driver.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
-#include <linux/kernel.h>
-#include <linux/delay.h>
-#include <linux/stddef.h>
-#include <linux/interrupt.h>
-#include <linux/init.h>
-#include <linux/io.h>
-#include <linux/gpio/driver.h>
-#include <linux/slab.h>
 #include <linux/pm_runtime.h>
+#include <linux/slab.h>
+#include <linux/stddef.h>
 
 #define INTEL_MID_IRQ_TYPE_EDGE		(1 << 0)
 #define INTEL_MID_IRQ_TYPE_LEVEL	(1 << 1)
@@ -64,10 +63,6 @@ enum GPIO_REG {
 /* intel_mid gpio driver data */
 struct intel_mid_gpio_ddata {
 	u16 ngpio;		/* number of gpio pins */
-	u32 gplr_offset;	/* offset of first GPLR register from base */
-	u32 flis_base;		/* base address of FLIS registers */
-	u32 flis_len;		/* length of FLIS registers */
-	u32 (*get_flis_offset)(int gpio);
 	u32 chip_irq_type;	/* chip interrupt type */
 };
 
@@ -252,15 +247,6 @@ static const struct intel_mid_gpio_ddata gpio_cloverview_core = {
 	.chip_irq_type = INTEL_MID_IRQ_TYPE_EDGE,
 };
 
-static const struct intel_mid_gpio_ddata gpio_tangier = {
-	.ngpio = 192,
-	.gplr_offset = 4,
-	.flis_base = 0xff0c0000,
-	.flis_len = 0x8000,
-	.get_flis_offset = NULL,
-	.chip_irq_type = INTEL_MID_IRQ_TYPE_EDGE,
-};
-
 static const struct pci_device_id intel_gpio_ids[] = {
 	{
 		/* Lincroft */
@@ -287,11 +273,6 @@ static const struct pci_device_id intel_gpio_ids[] = {
 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x08f7),
 		.driver_data = (kernel_ulong_t)&gpio_cloverview_core,
 	},
-	{
-		/* Tangier */
-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1199),
-		.driver_data = (kernel_ulong_t)&gpio_tangier,
-	},
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, intel_gpio_ids);
@@ -314,7 +295,7 @@ static void intel_mid_irq_handler(struct irq_desc *desc)
 			mask = BIT(gpio);
 			/* Clear before handling so we can't lose an edge */
 			writel(mask, gedr);
-			generic_handle_irq(irq_find_mapping(gc->irqdomain,
+			generic_handle_irq(irq_find_mapping(gc->irq.domain,
 							    base + gpio));
 		}
 	}
@@ -340,7 +321,7 @@ static void intel_mid_irq_init_hw(struct intel_mid_gpio *priv)
 	}
 }
 
-static int intel_gpio_runtime_idle(struct device *dev)
+static int __maybe_unused intel_gpio_runtime_idle(struct device *dev)
 {
 	int err = pm_schedule_suspend(dev, 500);
 	return err ?: -EBUSY;
@@ -380,10 +361,8 @@ static int intel_gpio_probe(struct pci_dev *pdev,
 	pcim_iounmap_regions(pdev, 1 << 1);
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv) {
-		dev_err(&pdev->dev, "can't allocate chip data\n");
+	if (!priv)
 		return -ENOMEM;
-	}
 
 	priv->reg_base = pcim_iomap_table(pdev)[0];
 	priv->chip.label = dev_name(&pdev->dev);
@@ -401,7 +380,7 @@ static int intel_gpio_probe(struct pci_dev *pdev,
 	spin_lock_init(&priv->lock);
 
 	pci_set_drvdata(pdev, priv);
-	retval = gpiochip_add_data(&priv->chip, priv);
+	retval = devm_gpiochip_add_data(&pdev->dev, &priv->chip, priv);
 	if (retval) {
 		dev_err(&pdev->dev, "gpiochip_add error %d\n", retval);
 		return retval;
@@ -440,9 +419,4 @@ static struct pci_driver intel_gpio_driver = {
 	},
 };
 
-static int __init intel_gpio_init(void)
-{
-	return pci_register_driver(&intel_gpio_driver);
-}
-
-device_initcall(intel_gpio_init);
+builtin_pci_driver(intel_gpio_driver);

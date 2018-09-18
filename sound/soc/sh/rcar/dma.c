@@ -1,13 +1,10 @@
-/*
- * Renesas R-Car Audio DMAC support
- *
- * Copyright (C) 2015 Renesas Electronics Corp.
- * Copyright (c) 2015 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Renesas R-Car Audio DMAC support
+//
+// Copyright (C) 2015 Renesas Electronics Corp.
+// Copyright (c) 2015 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+
 #include <linux/delay.h>
 #include <linux/of_dma.h>
 #include "rsnd.h"
@@ -25,6 +22,8 @@
 
 struct rsnd_dmaen {
 	struct dma_chan		*chan;
+	dma_cookie_t		cookie;
+	unsigned int		dma_len;
 };
 
 struct rsnd_dmapp {
@@ -34,6 +33,8 @@ struct rsnd_dmapp {
 
 struct rsnd_dma {
 	struct rsnd_mod		mod;
+	struct rsnd_mod		*mod_from;
+	struct rsnd_mod		*mod_to;
 	dma_addr_t		src_addr;
 	dma_addr_t		dst_addr;
 	union {
@@ -53,35 +54,21 @@ struct rsnd_dma_ctrl {
 #define rsnd_dma_to_dmaen(dma)	(&(dma)->dma.en)
 #define rsnd_dma_to_dmapp(dma)	(&(dma)->dma.pp)
 
+/* for DEBUG */
+static struct rsnd_mod_ops mem_ops = {
+	.name = "mem",
+};
+
+static struct rsnd_mod mem = {
+};
+
 /*
  *		Audio DMAC
  */
 static void __rsnd_dmaen_complete(struct rsnd_mod *mod,
 				  struct rsnd_dai_stream *io)
 {
-	struct rsnd_priv *priv = rsnd_mod_to_priv(mod);
-	bool elapsed = false;
-	unsigned long flags;
-
-	/*
-	 * Renesas sound Gen1 needs 1 DMAC,
-	 * Gen2 needs 2 DMAC.
-	 * In Gen2 case, it are Audio-DMAC, and Audio-DMAC-peri-peri.
-	 * But, Audio-DMAC-peri-peri doesn't have interrupt,
-	 * and this driver is assuming that here.
-	 *
-	 * If Audio-DMAC-peri-peri has interrpt,
-	 * rsnd_dai_pointer_update() will be called twice,
-	 * ant it will breaks io->byte_pos
-	 */
-	spin_lock_irqsave(&priv->lock, flags);
-
 	if (rsnd_io_is_working(io))
-		elapsed = rsnd_dai_pointer_update(io, io->byte_per_period);
-
-	spin_unlock_irqrestore(&priv->lock, flags);
-
-	if (elapsed)
 		rsnd_dai_period_elapsed(io);
 }
 
@@ -90,75 +77,6 @@ static void rsnd_dmaen_complete(void *data)
 	struct rsnd_mod *mod = data;
 
 	rsnd_mod_interrupt(mod, __rsnd_dmaen_complete);
-}
-
-static int rsnd_dmaen_stop(struct rsnd_mod *mod,
-			   struct rsnd_dai_stream *io,
-			   struct rsnd_priv *priv)
-{
-	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
-	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
-
-	dmaengine_terminate_all(dmaen->chan);
-
-	return 0;
-}
-
-static int rsnd_dmaen_start(struct rsnd_mod *mod,
-			    struct rsnd_dai_stream *io,
-			    struct rsnd_priv *priv)
-{
-	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
-	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
-	struct snd_pcm_substream *substream = io->substream;
-	struct device *dev = rsnd_priv_to_dev(priv);
-	struct dma_async_tx_descriptor *desc;
-	int is_play = rsnd_io_is_play(io);
-
-	desc = dmaengine_prep_dma_cyclic(dmaen->chan,
-					 substream->runtime->dma_addr,
-					 snd_pcm_lib_buffer_bytes(substream),
-					 snd_pcm_lib_period_bytes(substream),
-					 is_play ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM,
-					 DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-
-	if (!desc) {
-		dev_err(dev, "dmaengine_prep_slave_sg() fail\n");
-		return -EIO;
-	}
-
-	desc->callback		= rsnd_dmaen_complete;
-	desc->callback_param	= rsnd_mod_get(dma);
-
-	if (dmaengine_submit(desc) < 0) {
-		dev_err(dev, "dmaengine_submit() fail\n");
-		return -EIO;
-	}
-
-	dma_async_issue_pending(dmaen->chan);
-
-	return 0;
-}
-
-struct dma_chan *rsnd_dma_request_channel(struct device_node *of_node,
-					  struct rsnd_mod *mod, char *name)
-{
-	struct dma_chan *chan;
-	struct device_node *np;
-	int i = 0;
-
-	for_each_child_of_node(of_node, np) {
-		if (i == rsnd_mod_id(mod))
-			break;
-		i++;
-	}
-
-	chan = of_dma_request_slave_channel(np, name);
-
-	of_node_put(np);
-	of_node_put(of_node);
-
-	return chan;
 }
 
 static struct dma_chan *rsnd_dmaen_request_channel(struct rsnd_dai_stream *io,
@@ -175,13 +93,31 @@ static struct dma_chan *rsnd_dmaen_request_channel(struct rsnd_dai_stream *io,
 		return rsnd_mod_dma_req(io, mod_to);
 }
 
-static int rsnd_dmaen_remove(struct rsnd_mod *mod,
-			      struct rsnd_dai_stream *io,
-			      struct rsnd_priv *priv)
+static int rsnd_dmaen_stop(struct rsnd_mod *mod,
+			   struct rsnd_dai_stream *io,
+			   struct rsnd_priv *priv)
 {
 	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
 	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
 
+	if (dmaen->chan)
+		dmaengine_terminate_all(dmaen->chan);
+
+	return 0;
+}
+
+static int rsnd_dmaen_nolock_stop(struct rsnd_mod *mod,
+				   struct rsnd_dai_stream *io,
+				   struct rsnd_priv *priv)
+{
+	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
+	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
+
+	/*
+	 * DMAEngine release uses mutex lock.
+	 * Thus, it shouldn't be called under spinlock.
+	 * Let's call it under nolock_start
+	 */
 	if (dmaen->chan)
 		dma_release_channel(dmaen->chan);
 
@@ -190,40 +126,48 @@ static int rsnd_dmaen_remove(struct rsnd_mod *mod,
 	return 0;
 }
 
-static int rsnd_dmaen_attach(struct rsnd_dai_stream *io,
-			   struct rsnd_dma *dma, int id,
-			   struct rsnd_mod *mod_from, struct rsnd_mod *mod_to)
+static int rsnd_dmaen_nolock_start(struct rsnd_mod *mod,
+			    struct rsnd_dai_stream *io,
+			    struct rsnd_priv *priv)
 {
-	struct rsnd_mod *mod = rsnd_mod_get(dma);
+	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
 	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
-	struct rsnd_priv *priv = rsnd_io_to_priv(io);
-	struct rsnd_dma_ctrl *dmac = rsnd_priv_to_dmac(priv);
 	struct device *dev = rsnd_priv_to_dev(priv);
-	struct dma_slave_config cfg = {};
-	int is_play = rsnd_io_is_play(io);
-	int ret;
 
 	if (dmaen->chan) {
 		dev_err(dev, "it already has dma channel\n");
 		return -EIO;
 	}
 
-	if (dev->of_node) {
-		dmaen->chan = rsnd_dmaen_request_channel(io, mod_from, mod_to);
-	} else {
-		dma_cap_mask_t mask;
-
-		dma_cap_zero(mask);
-		dma_cap_set(DMA_SLAVE, mask);
-
-		dmaen->chan = dma_request_channel(mask, shdma_chan_filter,
-						  (void *)(uintptr_t)id);
-	}
+	/*
+	 * DMAEngine request uses mutex lock.
+	 * Thus, it shouldn't be called under spinlock.
+	 * Let's call it under nolock_start
+	 */
+	dmaen->chan = rsnd_dmaen_request_channel(io,
+						 dma->mod_from,
+						 dma->mod_to);
 	if (IS_ERR_OR_NULL(dmaen->chan)) {
 		dmaen->chan = NULL;
 		dev_err(dev, "can't get dma channel\n");
-		goto rsnd_dma_channel_err;
+		return -EIO;
 	}
+
+	return 0;
+}
+
+static int rsnd_dmaen_start(struct rsnd_mod *mod,
+			    struct rsnd_dai_stream *io,
+			    struct rsnd_priv *priv)
+{
+	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
+	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
+	struct snd_pcm_substream *substream = io->substream;
+	struct device *dev = rsnd_priv_to_dev(priv);
+	struct dma_async_tx_descriptor *desc;
+	struct dma_slave_config cfg = {};
+	int is_play = rsnd_io_is_play(io);
+	int ret;
 
 	cfg.direction	= is_play ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM;
 	cfg.src_addr	= dma->src_addr;
@@ -237,30 +181,117 @@ static int rsnd_dmaen_attach(struct rsnd_dai_stream *io,
 
 	ret = dmaengine_slave_config(dmaen->chan, &cfg);
 	if (ret < 0)
-		goto rsnd_dma_attach_err;
+		return ret;
+
+	desc = dmaengine_prep_dma_cyclic(dmaen->chan,
+					 substream->runtime->dma_addr,
+					 snd_pcm_lib_buffer_bytes(substream),
+					 snd_pcm_lib_period_bytes(substream),
+					 is_play ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM,
+					 DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+
+	if (!desc) {
+		dev_err(dev, "dmaengine_prep_slave_sg() fail\n");
+		return -EIO;
+	}
+
+	desc->callback		= rsnd_dmaen_complete;
+	desc->callback_param	= rsnd_mod_get(dma);
+
+	dmaen->dma_len		= snd_pcm_lib_buffer_bytes(substream);
+
+	dmaen->cookie = dmaengine_submit(desc);
+	if (dmaen->cookie < 0) {
+		dev_err(dev, "dmaengine_submit() fail\n");
+		return -EIO;
+	}
+
+	dma_async_issue_pending(dmaen->chan);
+
+	return 0;
+}
+
+struct dma_chan *rsnd_dma_request_channel(struct device_node *of_node,
+					  struct rsnd_mod *mod, char *name)
+{
+	struct dma_chan *chan = NULL;
+	struct device_node *np;
+	int i = 0;
+
+	for_each_child_of_node(of_node, np) {
+		if (i == rsnd_mod_id(mod) && (!chan))
+			chan = of_dma_request_slave_channel(np, name);
+		i++;
+	}
+
+	/* It should call of_node_put(), since, it is rsnd_xxx_of_node() */
+	of_node_put(of_node);
+
+	return chan;
+}
+
+static int rsnd_dmaen_attach(struct rsnd_dai_stream *io,
+			   struct rsnd_dma *dma,
+			   struct rsnd_mod *mod_from, struct rsnd_mod *mod_to)
+{
+	struct rsnd_priv *priv = rsnd_io_to_priv(io);
+	struct rsnd_dma_ctrl *dmac = rsnd_priv_to_dmac(priv);
+	struct dma_chan *chan;
+
+	/* try to get DMAEngine channel */
+	chan = rsnd_dmaen_request_channel(io, mod_from, mod_to);
+	if (IS_ERR_OR_NULL(chan)) {
+		/*
+		 * DMA failed. try to PIO mode
+		 * see
+		 *	rsnd_ssi_fallback()
+		 *	rsnd_rdai_continuance_probe()
+		 */
+		return -EAGAIN;
+	}
+
+	/*
+	 * use it for IPMMU if needed
+	 * see
+	 *	rsnd_preallocate_pages()
+	 */
+	io->dmac_dev = chan->device->dev;
+
+	dma_release_channel(chan);
 
 	dmac->dmaen_num++;
 
 	return 0;
+}
 
-rsnd_dma_attach_err:
-	rsnd_dmaen_remove(mod, io, priv);
-rsnd_dma_channel_err:
+static int rsnd_dmaen_pointer(struct rsnd_mod *mod,
+			      struct rsnd_dai_stream *io,
+			      snd_pcm_uframes_t *pointer)
+{
+	struct snd_pcm_runtime *runtime = rsnd_io_to_runtime(io);
+	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
+	struct rsnd_dmaen *dmaen = rsnd_dma_to_dmaen(dma);
+	struct dma_tx_state state;
+	enum dma_status status;
+	unsigned int pos = 0;
 
-	/*
-	 * DMA failed. try to PIO mode
-	 * see
-	 *	rsnd_ssi_fallback()
-	 *	rsnd_rdai_continuance_probe()
-	 */
-	return -EAGAIN;
+	status = dmaengine_tx_status(dmaen->chan, dmaen->cookie, &state);
+	if (status == DMA_IN_PROGRESS || status == DMA_PAUSED) {
+		if (state.residue > 0 && state.residue <= dmaen->dma_len)
+			pos = dmaen->dma_len - state.residue;
+	}
+	*pointer = bytes_to_frames(runtime, pos);
+
+	return 0;
 }
 
 static struct rsnd_mod_ops rsnd_dmaen_ops = {
 	.name	= "audmac",
+	.nolock_start = rsnd_dmaen_nolock_start,
+	.nolock_stop  = rsnd_dmaen_nolock_stop,
 	.start	= rsnd_dmaen_start,
 	.stop	= rsnd_dmaen_stop,
-	.remove	= rsnd_dmaen_remove,
+	.pointer= rsnd_dmaen_pointer,
 };
 
 /*
@@ -316,11 +347,15 @@ static u32 rsnd_dmapp_get_id(struct rsnd_dai_stream *io,
 		size = ARRAY_SIZE(gen2_id_table_cmd);
 	}
 
-	if (!entry)
-		return 0xFF;
+	if ((!entry) || (size <= id)) {
+		struct device *dev = rsnd_priv_to_dev(rsnd_io_to_priv(io));
 
-	if (size <= id)
-		return 0xFF;
+		dev_err(dev, "unknown connection (%s[%d])\n",
+			rsnd_mod_name(mod), rsnd_mod_id(mod));
+
+		/* use non-prohibited SRS number as error */
+		return 0x00; /* SSI00 */
+	}
 
 	return entry[id];
 }
@@ -357,6 +392,20 @@ static u32 rsnd_dmapp_read(struct rsnd_dma *dma, u32 reg)
 	return ioread32(rsnd_dmapp_addr(dmac, dma, reg));
 }
 
+static void rsnd_dmapp_bset(struct rsnd_dma *dma, u32 data, u32 mask, u32 reg)
+{
+	struct rsnd_mod *mod = rsnd_mod_get(dma);
+	struct rsnd_priv *priv = rsnd_mod_to_priv(mod);
+	struct rsnd_dma_ctrl *dmac = rsnd_priv_to_dmac(priv);
+	void __iomem *addr = rsnd_dmapp_addr(dmac, dma, reg);
+	u32 val = ioread32(addr);
+
+	val &= ~mask;
+	val |= (data & mask);
+
+	iowrite32(val, addr);
+}
+
 static int rsnd_dmapp_stop(struct rsnd_mod *mod,
 			   struct rsnd_dai_stream *io,
 			   struct rsnd_priv *priv)
@@ -364,10 +413,10 @@ static int rsnd_dmapp_stop(struct rsnd_mod *mod,
 	struct rsnd_dma *dma = rsnd_mod_to_dma(mod);
 	int i;
 
-	rsnd_dmapp_write(dma, 0, PDMACHCR);
+	rsnd_dmapp_bset(dma, 0,  PDMACHCR_DE, PDMACHCR);
 
 	for (i = 0; i < 1024; i++) {
-		if (0 == rsnd_dmapp_read(dma, PDMACHCR))
+		if (0 == (rsnd_dmapp_read(dma, PDMACHCR) & PDMACHCR_DE))
 			return 0;
 		udelay(1);
 	}
@@ -390,7 +439,7 @@ static int rsnd_dmapp_start(struct rsnd_mod *mod,
 }
 
 static int rsnd_dmapp_attach(struct rsnd_dai_stream *io,
-			     struct rsnd_dma *dma, int id,
+			     struct rsnd_dma *dma,
 			     struct rsnd_mod *mod_from, struct rsnd_mod *mod_to)
 {
 	struct rsnd_dmapp *dmapp = rsnd_dma_to_dmapp(dma);
@@ -473,8 +522,8 @@ rsnd_gen2_dma_addr(struct rsnd_dai_stream *io,
 		dma_addr_t in_addr;
 	} dma_addrs[3][2][3] = {
 		/* SRC */
+		/* Capture */
 		{{{ 0,				0 },
-		  /* Capture */
 		  { RDMA_SRC_O_N(src, id),	RDMA_SRC_I_P(src, id) },
 		  { RDMA_CMD_O_N(src, id),	RDMA_SRC_I_P(src, id) } },
 		 /* Playback */
@@ -616,25 +665,25 @@ static void rsnd_dma_of_path(struct rsnd_mod *this,
 		rsnd_mod_name(this), rsnd_mod_id(this));
 	for (i = 0; i <= idx; i++) {
 		dev_dbg(dev, "  %s[%d]%s\n",
-		       rsnd_mod_name(mod[i]), rsnd_mod_id(mod[i]),
-		       (mod[i] == *mod_from) ? " from" :
-		       (mod[i] == *mod_to)   ? " to" : "");
+			rsnd_mod_name(mod[i] ? mod[i] : &mem),
+			rsnd_mod_id  (mod[i] ? mod[i] : &mem),
+			(mod[i] == *mod_from) ? " from" :
+			(mod[i] == *mod_to)   ? " to" : "");
 	}
 }
 
-struct rsnd_mod *rsnd_dma_attach(struct rsnd_dai_stream *io,
-				 struct rsnd_mod *mod, int id)
+static int rsnd_dma_alloc(struct rsnd_dai_stream *io, struct rsnd_mod *mod,
+			  struct rsnd_mod **dma_mod)
 {
-	struct rsnd_mod *dma_mod;
 	struct rsnd_mod *mod_from = NULL;
 	struct rsnd_mod *mod_to = NULL;
 	struct rsnd_priv *priv = rsnd_io_to_priv(io);
 	struct rsnd_dma_ctrl *dmac = rsnd_priv_to_dmac(priv);
-	struct rsnd_dma *dma;
 	struct device *dev = rsnd_priv_to_dev(priv);
+	struct rsnd_dma *dma;
 	struct rsnd_mod_ops *ops;
 	enum rsnd_mod_type type;
-	int (*attach)(struct rsnd_dai_stream *io, struct rsnd_dma *dma, int id,
+	int (*attach)(struct rsnd_dai_stream *io, struct rsnd_dma *dma,
 		      struct rsnd_mod *mod_from, struct rsnd_mod *mod_to);
 	int is_play = rsnd_io_is_play(io);
 	int ret, dma_id;
@@ -646,18 +695,11 @@ struct rsnd_mod *rsnd_dma_attach(struct rsnd_dai_stream *io,
 	 *	rsnd_rdai_continuance_probe()
 	 */
 	if (!dmac)
-		return ERR_PTR(-EAGAIN);
-
-	dma = devm_kzalloc(dev, sizeof(*dma), GFP_KERNEL);
-	if (!dma)
-		return ERR_PTR(-ENOMEM);
+		return -EAGAIN;
 
 	rsnd_dma_of_path(mod, io, is_play, &mod_from, &mod_to);
 
-	dma->src_addr = rsnd_dma_addr(io, mod_from, is_play, 1);
-	dma->dst_addr = rsnd_dma_addr(io, mod_to,   is_play, 0);
-
-	/* for Gen2 */
+	/* for Gen2 or later */
 	if (mod_from && mod_to) {
 		ops	= &rsnd_dmapp_ops;
 		attach	= rsnd_dmapp_attach;
@@ -678,27 +720,47 @@ struct rsnd_mod *rsnd_dma_attach(struct rsnd_dai_stream *io,
 		type	= RSND_MOD_AUDMA;
 	}
 
-	dma_mod = rsnd_mod_get(dma);
+	dma = devm_kzalloc(dev, sizeof(*dma), GFP_KERNEL);
+	if (!dma)
+		return -ENOMEM;
 
-	ret = rsnd_mod_init(priv, dma_mod,
-			    ops, NULL, type, dma_id);
+	*dma_mod = rsnd_mod_get(dma);
+
+	ret = rsnd_mod_init(priv, *dma_mod, ops, NULL,
+			    rsnd_mod_get_status, type, dma_id);
 	if (ret < 0)
-		return ERR_PTR(ret);
+		return ret;
 
 	dev_dbg(dev, "%s[%d] %s[%d] -> %s[%d]\n",
-		rsnd_mod_name(dma_mod), rsnd_mod_id(dma_mod),
-		rsnd_mod_name(mod_from), rsnd_mod_id(mod_from),
-		rsnd_mod_name(mod_to),   rsnd_mod_id(mod_to));
+		rsnd_mod_name(*dma_mod), rsnd_mod_id(*dma_mod),
+		rsnd_mod_name(mod_from ? mod_from : &mem),
+		rsnd_mod_id  (mod_from ? mod_from : &mem),
+		rsnd_mod_name(mod_to   ? mod_to   : &mem),
+		rsnd_mod_id  (mod_to   ? mod_to   : &mem));
 
-	ret = attach(io, dma, id, mod_from, mod_to);
+	ret = attach(io, dma, mod_from, mod_to);
 	if (ret < 0)
-		return ERR_PTR(ret);
+		return ret;
 
-	ret = rsnd_dai_connect(dma_mod, io, type);
-	if (ret < 0)
-		return ERR_PTR(ret);
+	dma->src_addr = rsnd_dma_addr(io, mod_from, is_play, 1);
+	dma->dst_addr = rsnd_dma_addr(io, mod_to,   is_play, 0);
+	dma->mod_from = mod_from;
+	dma->mod_to   = mod_to;
 
-	return rsnd_mod_get(dma);
+	return 0;
+}
+
+int rsnd_dma_attach(struct rsnd_dai_stream *io, struct rsnd_mod *mod,
+		    struct rsnd_mod **dma_mod)
+{
+	if (!(*dma_mod)) {
+		int ret = rsnd_dma_alloc(io, mod, dma_mod);
+
+		if (ret < 0)
+			return ret;
+	}
+
+	return rsnd_dai_connect(*dma_mod, io, (*dma_mod)->type);
 }
 
 int rsnd_dma_probe(struct rsnd_priv *priv)
@@ -715,7 +777,7 @@ int rsnd_dma_probe(struct rsnd_priv *priv)
 		return 0;
 
 	/*
-	 * for Gen2
+	 * for Gen2 or later
 	 */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "audmapp");
 	dmac = devm_kzalloc(dev, sizeof(*dmac), GFP_KERNEL);
@@ -731,5 +793,6 @@ int rsnd_dma_probe(struct rsnd_priv *priv)
 
 	priv->dma = dmac;
 
-	return 0;
+	/* dummy mem mod for debug */
+	return rsnd_mod_init(NULL, &mem, &mem_ops, NULL, NULL, 0, 0);
 }

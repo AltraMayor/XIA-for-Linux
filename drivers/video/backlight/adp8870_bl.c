@@ -18,7 +18,7 @@
 #include <linux/workqueue.h>
 #include <linux/slab.h>
 
-#include <linux/i2c/adp8870.h>
+#include <linux/platform_data/adp8870.h>
 #define ADP8870_EXT_FEATURES
 #define ADP8870_USE_LEDS
 
@@ -246,7 +246,7 @@ static int adp8870_led_probe(struct i2c_client *client)
 	struct led_info *cur_led;
 	int ret, i;
 
-	led = devm_kzalloc(&client->dev, pdata->num_leds * sizeof(*led),
+	led = devm_kcalloc(&client->dev, pdata->num_leds, sizeof(*led),
 				GFP_KERNEL);
 	if (led == NULL)
 		return -ENOMEM;

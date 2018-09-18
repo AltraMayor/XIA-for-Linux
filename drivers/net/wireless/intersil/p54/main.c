@@ -27,7 +27,7 @@
 #include "lmac.h"
 
 static bool modparam_nohwcrypt;
-module_param_named(nohwcrypt, modparam_nohwcrypt, bool, S_IRUGO);
+module_param_named(nohwcrypt, modparam_nohwcrypt, bool, 0444);
 MODULE_PARM_DESC(nohwcrypt, "Disable hardware encryption.");
 MODULE_AUTHOR("Michael Wu <flamingice@sourmilk.net>");
 MODULE_DESCRIPTION("Softmac Prism54 common code");
@@ -477,7 +477,7 @@ static void p54_bss_info_changed(struct ieee80211_hw *dev,
 		p54_set_edcf(priv);
 	}
 	if (changed & BSS_CHANGED_BASIC_RATES) {
-		if (dev->conf.chandef.chan->band == IEEE80211_BAND_5GHZ)
+		if (dev->conf.chandef.chan->band == NL80211_BAND_5GHZ)
 			priv->basic_rate_mask = (info->basic_rates << 4);
 		else
 			priv->basic_rate_mask = info->basic_rates;
@@ -829,7 +829,7 @@ void p54_free_common(struct ieee80211_hw *dev)
 	struct p54_common *priv = dev->priv;
 	unsigned int i;
 
-	for (i = 0; i < IEEE80211_NUM_BANDS; i++)
+	for (i = 0; i < NUM_NL80211_BANDS; i++)
 		kfree(priv->band_table[i]);
 
 	kfree(priv->iq_autocal);
@@ -852,12 +852,11 @@ void p54_unregister_common(struct ieee80211_hw *dev)
 {
 	struct p54_common *priv = dev->priv;
 
-#ifdef CONFIG_P54_LEDS
-	p54_unregister_leds(priv);
-#endif /* CONFIG_P54_LEDS */
-
 	if (priv->registered) {
 		priv->registered = false;
+#ifdef CONFIG_P54_LEDS
+		p54_unregister_leds(priv);
+#endif /* CONFIG_P54_LEDS */
 		ieee80211_unregister_hw(dev);
 	}
 

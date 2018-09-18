@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_POWERPC_BOOK3S_32_HASH_H
 #define _ASM_POWERPC_BOOK3S_32_HASH_H
 #ifdef __KERNEL__
@@ -38,9 +39,6 @@
 #define _PMD_PRESENT	0
 #define _PMD_PRESENT_MASK (PAGE_MASK)
 #define _PMD_BAD	(~PAGE_MASK)
-
-/* Hash table based platforms need atomic updates of the linux PTE */
-#define PTE_ATOMIC_UPDATES	1
 
 #endif /* __KERNEL__ */
 #endif /* _ASM_POWERPC_BOOK3S_32_HASH_H */

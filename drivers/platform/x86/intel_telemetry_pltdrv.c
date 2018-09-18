@@ -16,18 +16,13 @@
  * It used the PUNIT and PMC IPC interfaces for configuring the counters.
  * The accumulated results are fetched from SRAM.
  */
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/device.h>
-#include <linux/debugfs.h>
-#include <linux/seq_file.h>
+
 #include <linux/io.h>
-#include <linux/uaccess.h>
-#include <linux/pci.h>
-#include <linux/suspend.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 
 #include <asm/cpu_device_id.h>
+#include <asm/intel-family.h>
 #include <asm/intel_pmc_ipc.h>
 #include <asm/intel_punit_ipc.h>
 #include <asm/intel_telemetry.h>
@@ -45,7 +40,6 @@
 #define TELEM_SAMPLING_DEFAULT_PERIOD	0xD
 
 #define TELEM_MAX_EVENTS_SRAM		28
-#define TELEM_MAX_OS_ALLOCATED_EVENTS	20
 #define TELEM_SSRAM_STARTTIME_OFFSET	8
 #define TELEM_SSRAM_EVTLOG_OFFSET	16
 
@@ -82,7 +76,7 @@
 #define TELEM_SET_VERBOSITY_BITS(x, y)	((x) |= ((y) << 27))
 
 #define TELEM_CPU(model, data) \
-	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_MWAIT, (unsigned long)&data }
+	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (unsigned long)&data }
 
 enum telemetry_action {
 	TELEM_UPDATE = 0,
@@ -152,6 +146,30 @@ static struct telemetry_evtmap
 	{"PC2_AND_MEM_SHALLOW_IDLE_RES",	0x1D40},
 };
 
+static struct telemetry_evtmap
+	telemetry_glk_pss_default_events[TELEM_MAX_OS_ALLOCATED_EVENTS] = {
+	{"IA_CORE0_C6_RES",			0x0400},
+	{"IA_CORE0_C6_CTR",			0x0000},
+	{"IA_MODULE0_C7_RES",			0x0410},
+	{"IA_MODULE0_C7_CTR",			0x000C},
+	{"IA_C0_RES",				0x0805},
+	{"PCS_LTR",				0x2801},
+	{"PSTATES",				0x2802},
+	{"SOC_S0I3_RES",			0x0407},
+	{"SOC_S0I3_CTR",			0x0008},
+	{"PCS_S0I3_CTR",			0x0007},
+	{"PCS_C1E_RES",				0x0414},
+	{"PCS_IDLE_STATUS",			0x2806},
+	{"IA_PERF_LIMITS",			0x280B},
+	{"GT_PERF_LIMITS",			0x280C},
+	{"PCS_WAKEUP_S0IX_CTR",			0x0025},
+	{"PCS_IDLE_BLOCKED",			0x2C00},
+	{"PCS_S0IX_BLOCKED",			0x2C01},
+	{"PCS_S0IX_WAKE_REASONS",		0x2C02},
+	{"PCS_LTR_BLOCKING",			0x2C03},
+	{"PC2_AND_MEM_SHALLOW_IDLE_RES",	0x1D40},
+};
+
 /* APL specific Data */
 static struct telemetry_plt_config telem_apl_config = {
 	.pss_config = {
@@ -162,8 +180,19 @@ static struct telemetry_plt_config telem_apl_config = {
 	},
 };
 
+/* GLK specific Data */
+static struct telemetry_plt_config telem_glk_config = {
+	.pss_config = {
+		.telem_evts = telemetry_glk_pss_default_events,
+	},
+	.ioss_config = {
+		.telem_evts = telemetry_apl_ioss_default_events,
+	},
+};
+
 static const struct x86_cpu_id telemetry_cpu_ids[] = {
-	TELEM_CPU(0x5c, telem_apl_config),
+	TELEM_CPU(INTEL_FAM6_ATOM_GOLDMONT, telem_apl_config),
+	TELEM_CPU(INTEL_FAM6_ATOM_GEMINI_LAKE, telem_glk_config),
 	{}
 };
 
@@ -221,7 +250,7 @@ static int telemetry_check_evtid(enum telemetry_unit telem_unit,
 		break;
 
 	default:
-		pr_err("Unknown Telemetry action Specified %d\n", action);
+		pr_err("Unknown Telemetry action specified %d\n", action);
 		return -EINVAL;
 	}
 
@@ -624,7 +653,7 @@ static int telemetry_setup(struct platform_device *pdev)
 	ret = telemetry_setup_evtconfig(pss_evtconfig, ioss_evtconfig,
 					TELEM_RESET);
 	if (ret) {
-		dev_err(&pdev->dev, "TELEMTRY Setup Failed\n");
+		dev_err(&pdev->dev, "TELEMETRY Setup Failed\n");
 		return ret;
 	}
 	return 0;
@@ -650,7 +679,7 @@ static int telemetry_plt_update_events(struct telemetry_evtconfig pss_evtconfig,
 	ret = telemetry_setup_evtconfig(pss_evtconfig, ioss_evtconfig,
 					TELEM_UPDATE);
 	if (ret)
-		pr_err("TELEMTRY Config Failed\n");
+		pr_err("TELEMETRY Config Failed\n");
 
 	return ret;
 }
@@ -659,7 +688,7 @@ static int telemetry_plt_update_events(struct telemetry_evtconfig pss_evtconfig,
 static int telemetry_plt_set_sampling_period(u8 pss_period, u8 ioss_period)
 {
 	u32 telem_ctrl = 0;
-	int ret;
+	int ret = 0;
 
 	mutex_lock(&(telm_conf->telem_lock));
 	if (ioss_period) {
@@ -787,7 +816,7 @@ static int telemetry_plt_reset_events(void)
 	ret = telemetry_setup_evtconfig(pss_evtconfig, ioss_evtconfig,
 					TELEM_RESET);
 	if (ret)
-		pr_err("TELEMTRY Reset Failed\n");
+		pr_err("TELEMETRY Reset Failed\n");
 
 	return ret;
 }
@@ -850,7 +879,7 @@ static int telemetry_plt_add_events(u8 num_pss_evts, u8 num_ioss_evts,
 	ret = telemetry_setup_evtconfig(pss_evtconfig, ioss_evtconfig,
 					TELEM_ADD);
 	if (ret)
-		pr_err("TELEMTRY ADD Failed\n");
+		pr_err("TELEMETRY ADD Failed\n");
 
 	return ret;
 }
@@ -1030,8 +1059,19 @@ static int telemetry_plt_set_trace_verbosity(enum telemetry_unit telem_unit,
 	switch (telem_unit) {
 	case TELEM_PSS:
 		ret = intel_punit_ipc_command(
+				IPC_PUNIT_BIOS_READ_TELE_TRACE_CTRL,
+				0, 0, NULL, &temp);
+		if (ret) {
+			pr_err("PSS TRACE_CTRL Read Failed\n");
+			goto out;
+		}
+
+		TELEM_CLEAR_VERBOSITY_BITS(temp);
+		TELEM_SET_VERBOSITY_BITS(temp, verbosity);
+
+		ret = intel_punit_ipc_command(
 				IPC_PUNIT_BIOS_WRITE_TELE_TRACE_CTRL,
-				0, 0, &verbosity, NULL);
+				0, 0, &temp, NULL);
 		if (ret) {
 			pr_err("PSS TRACE_CTRL Verbosity Set Failed\n");
 			goto out;
@@ -1070,7 +1110,7 @@ out:
 	return ret;
 }
 
-static struct telemetry_core_ops telm_pltops = {
+static const struct telemetry_core_ops telm_pltops = {
 	.get_trace_verbosity = telemetry_plt_get_trace_verbosity,
 	.set_trace_verbosity = telemetry_plt_set_trace_verbosity,
 	.set_sampling_period = telemetry_plt_set_sampling_period,
@@ -1149,7 +1189,7 @@ static int telemetry_pltdrv_probe(struct platform_device *pdev)
 
 	ret = telemetry_set_pltdata(&telm_pltops, telm_conf);
 	if (ret) {
-		dev_err(&pdev->dev, "TELEMTRY Set Pltops Failed.\n");
+		dev_err(&pdev->dev, "TELEMETRY Set Pltops Failed.\n");
 		goto out;
 	}
 
@@ -1164,7 +1204,7 @@ out:
 		iounmap(telm_conf->pss_config.regmap);
 	if (telm_conf->ioss_config.regmap)
 		iounmap(telm_conf->ioss_config.regmap);
-	dev_err(&pdev->dev, "TELEMTRY Setup Failed.\n");
+	dev_err(&pdev->dev, "TELEMETRY Setup Failed.\n");
 
 	return ret;
 }
@@ -1188,7 +1228,6 @@ static struct platform_driver telemetry_soc_driver = {
 
 static int __init telemetry_module_init(void)
 {
-	pr_info(DRIVER_NAME ": version %s loaded\n", DRIVER_VERSION);
 	return platform_driver_register(&telemetry_soc_driver);
 }
 

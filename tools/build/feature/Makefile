@@ -1,51 +1,79 @@
-FILES=					\
-	test-all.bin			\
-	test-backtrace.bin		\
-	test-bionic.bin			\
-	test-dwarf.bin			\
-	test-fortify-source.bin		\
-	test-sync-compare-and-swap.bin	\
-	test-glibc.bin			\
-	test-gtk2.bin			\
-	test-gtk2-infobar.bin		\
-	test-hello.bin			\
-	test-libaudit.bin		\
-	test-libbfd.bin			\
-	test-liberty.bin		\
-	test-liberty-z.bin		\
-	test-cplus-demangle.bin		\
-	test-libelf.bin			\
-	test-libelf-getphdrnum.bin	\
-	test-libelf-mmap.bin		\
-	test-libnuma.bin		\
-	test-numa_num_possible_cpus.bin	\
-	test-libperl.bin		\
-	test-libpython.bin		\
-	test-libpython-version.bin	\
-	test-libslang.bin		\
-	test-libunwind.bin		\
-	test-libunwind-debug-frame.bin	\
-	test-pthread-attr-setaffinity-np.bin	\
-	test-stackprotector-all.bin	\
-	test-timerfd.bin		\
-	test-libdw-dwarf-unwind.bin	\
-	test-libbabeltrace.bin		\
-	test-compile-32.bin		\
-	test-compile-x32.bin		\
-	test-zlib.bin			\
-	test-lzma.bin			\
-	test-bpf.bin			\
-	test-get_cpuid.bin
+# SPDX-License-Identifier: GPL-2.0
+FILES=                                          \
+         test-all.bin                           \
+         test-backtrace.bin                     \
+         test-bionic.bin                        \
+         test-dwarf.bin                         \
+         test-dwarf_getlocations.bin            \
+         test-fortify-source.bin                \
+         test-sync-compare-and-swap.bin         \
+         test-glibc.bin                         \
+         test-gtk2.bin                          \
+         test-gtk2-infobar.bin                  \
+         test-hello.bin                         \
+         test-libaudit.bin                      \
+         test-libbfd.bin                        \
+         test-disassembler-four-args.bin        \
+         test-reallocarray.bin			\
+         test-liberty.bin                       \
+         test-liberty-z.bin                     \
+         test-cplus-demangle.bin                \
+         test-libelf.bin                        \
+         test-libelf-getphdrnum.bin             \
+         test-libelf-gelf_getnote.bin           \
+         test-libelf-getshdrstrndx.bin          \
+         test-libelf-mmap.bin                   \
+         test-libnuma.bin                       \
+         test-numa_num_possible_cpus.bin        \
+         test-libperl.bin                       \
+         test-libpython.bin                     \
+         test-libpython-version.bin             \
+         test-libslang.bin                      \
+         test-libcrypto.bin                     \
+         test-libunwind.bin                     \
+         test-libunwind-debug-frame.bin         \
+         test-libunwind-x86.bin                 \
+         test-libunwind-x86_64.bin              \
+         test-libunwind-arm.bin                 \
+         test-libunwind-aarch64.bin             \
+         test-libunwind-debug-frame-arm.bin     \
+         test-libunwind-debug-frame-aarch64.bin \
+         test-pthread-attr-setaffinity-np.bin   \
+         test-pthread-barrier.bin		\
+         test-stackprotector-all.bin            \
+         test-timerfd.bin                       \
+         test-libdw-dwarf-unwind.bin            \
+         test-libbabeltrace.bin                 \
+         test-compile-32.bin                    \
+         test-compile-x32.bin                   \
+         test-zlib.bin                          \
+         test-lzma.bin                          \
+         test-bpf.bin                           \
+         test-get_cpuid.bin                     \
+         test-sdt.bin                           \
+         test-cxx.bin                           \
+         test-jvmti.bin				\
+         test-sched_getcpu.bin			\
+         test-setns.bin				\
+         test-libopencsd.bin			\
+         test-clang.bin				\
+         test-llvm.bin				\
+         test-llvm-version.bin
 
 FILES := $(addprefix $(OUTPUT),$(FILES))
 
-CC := $(CROSS_COMPILE)gcc -MD
-PKG_CONFIG := $(CROSS_COMPILE)pkg-config
+CC ?= $(CROSS_COMPILE)gcc
+CXX ?= $(CROSS_COMPILE)g++
+PKG_CONFIG ?= $(CROSS_COMPILE)pkg-config
+LLVM_CONFIG ?= llvm-config
 
 all: $(FILES)
 
-__BUILD = $(CC) $(CFLAGS) -Wall -Werror -o $@ $(patsubst %.bin,%.c,$(@F)) $(LDFLAGS)
+__BUILD = $(CC) $(CFLAGS) -MD -Wall -Werror -o $@ $(patsubst %.bin,%.c,$(@F)) $(LDFLAGS)
   BUILD = $(__BUILD) > $(@:.bin=.make.output) 2>&1
+
+__BUILDXX = $(CXX) $(CXXFLAGS) -MD -Wall -Werror -o $@ $(patsubst %.bin,%.cpp,$(@F)) $(LDFLAGS)
+  BUILDXX = $(__BUILDXX) > $(@:.bin=.make.output) 2>&1
 
 ###############################
 
@@ -57,6 +85,9 @@ $(OUTPUT)test-hello.bin:
 
 $(OUTPUT)test-pthread-attr-setaffinity-np.bin:
 	$(BUILD) -D_GNU_SOURCE -lpthread
+
+$(OUTPUT)test-pthread-barrier.bin:
+	$(BUILD) -lpthread
 
 $(OUTPUT)test-stackprotector-all.bin:
 	$(BUILD) -fstack-protector-all
@@ -73,6 +104,16 @@ $(OUTPUT)test-libelf.bin:
 $(OUTPUT)test-glibc.bin:
 	$(BUILD)
 
+$(OUTPUT)test-sched_getcpu.bin:
+	$(BUILD)
+
+$(OUTPUT)test-setns.bin:
+	$(BUILD)
+
+$(OUTPUT)test-libopencsd.bin:
+	$(BUILD) # -lopencsd_c_api -lopencsd provided by
+		 # $(FEATURE_CHECK_LDFLAGS-libopencsd)
+
 DWARFLIBS := -ldw
 ifeq ($(findstring -static,${LDFLAGS}),-static)
 DWARFLIBS += -lelf -lebl -lz -llzma -lbz2
@@ -81,10 +122,19 @@ endif
 $(OUTPUT)test-dwarf.bin:
 	$(BUILD) $(DWARFLIBS)
 
+$(OUTPUT)test-dwarf_getlocations.bin:
+	$(BUILD) $(DWARFLIBS)
+
 $(OUTPUT)test-libelf-mmap.bin:
 	$(BUILD) -lelf
 
 $(OUTPUT)test-libelf-getphdrnum.bin:
+	$(BUILD) -lelf
+
+$(OUTPUT)test-libelf-gelf_getnote.bin:
+	$(BUILD) -lelf
+
+$(OUTPUT)test-libelf-getshdrstrndx.bin:
 	$(BUILD) -lelf
 
 $(OUTPUT)test-libnuma.bin:
@@ -98,12 +148,32 @@ $(OUTPUT)test-libunwind.bin:
 
 $(OUTPUT)test-libunwind-debug-frame.bin:
 	$(BUILD) -lelf
+$(OUTPUT)test-libunwind-x86.bin:
+	$(BUILD) -lelf -lunwind-x86
+
+$(OUTPUT)test-libunwind-x86_64.bin:
+	$(BUILD) -lelf -lunwind-x86_64
+
+$(OUTPUT)test-libunwind-arm.bin:
+	$(BUILD) -lelf -lunwind-arm
+
+$(OUTPUT)test-libunwind-aarch64.bin:
+	$(BUILD) -lelf -lunwind-aarch64
+
+$(OUTPUT)test-libunwind-debug-frame-arm.bin:
+	$(BUILD) -lelf -lunwind-arm
+
+$(OUTPUT)test-libunwind-debug-frame-aarch64.bin:
+	$(BUILD) -lelf -lunwind-aarch64
 
 $(OUTPUT)test-libaudit.bin:
 	$(BUILD) -laudit
 
 $(OUTPUT)test-libslang.bin:
 	$(BUILD) -I/usr/include/slang -lslang
+
+$(OUTPUT)test-libcrypto.bin:
+	$(BUILD) -lcrypto
 
 $(OUTPUT)test-gtk2.bin:
 	$(BUILD) $(shell $(PKG_CONFIG) --libs --cflags gtk+-2.0 2>/dev/null)
@@ -124,13 +194,19 @@ $(OUTPUT)test-libperl.bin:
 	$(BUILD) $(FLAGS_PERL_EMBED)
 
 $(OUTPUT)test-libpython.bin:
-	$(BUILD)
+	$(BUILD) $(FLAGS_PYTHON_EMBED)
 
 $(OUTPUT)test-libpython-version.bin:
 	$(BUILD)
 
 $(OUTPUT)test-libbfd.bin:
 	$(BUILD) -DPACKAGE='"perf"' -lbfd -lz -liberty -ldl
+
+$(OUTPUT)test-disassembler-four-args.bin:
+	$(BUILD) -DPACKAGE='"perf"' -lbfd -lopcodes
+
+$(OUTPUT)test-reallocarray.bin:
+	$(BUILD)
 
 $(OUTPUT)test-liberty.bin:
 	$(CC) $(CFLAGS) -Wall -Werror -o $@ test-libbfd.c -DPACKAGE='"perf"' $(LDFLAGS) -lbfd -ldl -liberty
@@ -173,6 +249,39 @@ $(OUTPUT)test-get_cpuid.bin:
 
 $(OUTPUT)test-bpf.bin:
 	$(BUILD)
+
+$(OUTPUT)test-sdt.bin:
+	$(BUILD)
+
+$(OUTPUT)test-cxx.bin:
+	$(BUILDXX) -std=gnu++11
+
+$(OUTPUT)test-jvmti.bin:
+	$(BUILD)
+
+$(OUTPUT)test-llvm.bin:
+	$(BUILDXX) -std=gnu++11 				\
+		-I$(shell $(LLVM_CONFIG) --includedir) 		\
+		-L$(shell $(LLVM_CONFIG) --libdir)		\
+		$(shell $(LLVM_CONFIG) --libs Core BPF)		\
+		$(shell $(LLVM_CONFIG) --system-libs)		\
+		> $(@:.bin=.make.output) 2>&1
+
+$(OUTPUT)test-llvm-version.bin:
+	$(BUILDXX) -std=gnu++11 				\
+		-I$(shell $(LLVM_CONFIG) --includedir)		\
+		> $(@:.bin=.make.output) 2>&1
+
+$(OUTPUT)test-clang.bin:
+	$(BUILDXX) -std=gnu++11 				\
+		-I$(shell $(LLVM_CONFIG) --includedir) 		\
+		-L$(shell $(LLVM_CONFIG) --libdir)		\
+		-Wl,--start-group -lclangBasic -lclangDriver	\
+		  -lclangFrontend -lclangEdit -lclangLex	\
+		  -lclangAST -Wl,--end-group 			\
+		$(shell $(LLVM_CONFIG) --libs Core option)	\
+		$(shell $(LLVM_CONFIG) --system-libs)		\
+		> $(@:.bin=.make.output) 2>&1
 
 -include $(OUTPUT)*.d
 

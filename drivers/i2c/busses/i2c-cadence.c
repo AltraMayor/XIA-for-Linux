@@ -124,6 +124,8 @@
 
 /**
  * struct cdns_i2c - I2C device private data structure
+ *
+ * @dev:		Pointer to device structure
  * @membase:		Base address of the I2C device
  * @adap:		I2C adapter instance
  * @p_msg:		Message pointer
@@ -171,7 +173,7 @@ struct cdns_platform_data {
 					     clk_rate_change_nb)
 
 /**
- * cdns_i2c_clear_bus_hold() - Clear bus hold bit
+ * cdns_i2c_clear_bus_hold - Clear bus hold bit
  * @id:	Pointer to driver data struct
  *
  * Helper to clear the controller's bus hold bit.
@@ -403,14 +405,14 @@ static void cdns_i2c_mrecv(struct cdns_i2c *id)
 		cdns_i2c_writereg(id->recv_count, CDNS_I2C_XFER_SIZE_OFFSET);
 	}
 
+	/* Set the slave address in address register - triggers operation */
+	cdns_i2c_writereg(id->p_msg->addr & CDNS_I2C_ADDR_MASK,
+						CDNS_I2C_ADDR_OFFSET);
 	/* Clear the bus hold flag if bytes to receive is less than FIFO size */
 	if (!id->bus_hold_flag &&
 		((id->p_msg->flags & I2C_M_RECV_LEN) != I2C_M_RECV_LEN) &&
 		(id->recv_count <= CDNS_I2C_FIFO_DEPTH))
 			cdns_i2c_clear_bus_hold(id);
-	/* Set the slave address in address register - triggers operation */
-	cdns_i2c_writereg(id->p_msg->addr & CDNS_I2C_ADDR_MASK,
-						CDNS_I2C_ADDR_OFFSET);
 	cdns_i2c_writereg(CDNS_I2C_ENABLED_INTR_MASK, CDNS_I2C_IER_OFFSET);
 }
 
@@ -765,7 +767,7 @@ static int cdns_i2c_setclk(unsigned long clk_in, struct cdns_i2c *id)
  * depending on the scaling direction.
  *
  * Return:	NOTIFY_STOP if the rate change should be aborted, NOTIFY_OK
- *		to acknowedge the change, NOTIFY_DONE if the notification is
+ *		to acknowledge the change, NOTIFY_DONE if the notification is
  *		considered irrelevant.
  */
 static int cdns_i2c_clk_notifier_cb(struct notifier_block *nb, unsigned long
@@ -815,8 +817,8 @@ static int cdns_i2c_clk_notifier_cb(struct notifier_block *nb, unsigned long
 }
 
 /**
- * cdns_i2c_suspend - Suspend method for the driver
- * @_dev:	Address of the platform_device structure
+ * cdns_i2c_runtime_suspend -  Runtime suspend method for the driver
+ * @dev:	Address of the platform_device structure
  *
  * Put the driver into low power mode.
  *
@@ -824,8 +826,7 @@ static int cdns_i2c_clk_notifier_cb(struct notifier_block *nb, unsigned long
  */
 static int __maybe_unused cdns_i2c_runtime_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct cdns_i2c *xi2c = platform_get_drvdata(pdev);
+	struct cdns_i2c *xi2c = dev_get_drvdata(dev);
 
 	clk_disable(xi2c->clk);
 
@@ -833,17 +834,16 @@ static int __maybe_unused cdns_i2c_runtime_suspend(struct device *dev)
 }
 
 /**
- * cdns_i2c_resume - Resume from suspend
- * @_dev:	Address of the platform_device structure
+ * cdns_i2c_runtime_resume - Runtime resume
+ * @dev:	Address of the platform_device structure
  *
- * Resume operation after suspend.
+ * Runtime resume callback.
  *
  * Return: 0 on success and error value on error
  */
 static int __maybe_unused cdns_i2c_runtime_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct cdns_i2c *xi2c = platform_get_drvdata(pdev);
+	struct cdns_i2c *xi2c = dev_get_drvdata(dev);
 	int ret;
 
 	ret = clk_enable(xi2c->clk);
@@ -960,12 +960,6 @@ static int cdns_i2c_probe(struct platform_device *pdev)
 		goto err_clk_dis;
 	}
 
-	ret = i2c_add_adapter(&id->adap);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "reg adap failed: %d\n", ret);
-		goto err_clk_dis;
-	}
-
 	/*
 	 * Cadence I2C controller has a bug wherein it generates
 	 * invalid read transaction after HW timeout in master receiver mode.
@@ -974,6 +968,10 @@ static int cdns_i2c_probe(struct platform_device *pdev)
 	 * is written to this register to reduce the chances of error.
 	 */
 	cdns_i2c_writereg(CDNS_I2C_TIMEOUT_MAX, CDNS_I2C_TIME_OUT_OFFSET);
+
+	ret = i2c_add_adapter(&id->adap);
+	if (ret < 0)
+		goto err_clk_dis;
 
 	dev_info(&pdev->dev, "%u kHz mmio %08lx irq %d\n",
 		 id->i2c_clk / 1000, (unsigned long)r_mem->start, id->irq);

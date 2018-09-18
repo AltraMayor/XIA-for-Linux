@@ -2,7 +2,7 @@
  *  Ralink MT7620A SoC PCI support
  *
  *  Copyright (C) 2007-2013 Bruce Chang (Mediatek)
- *  Copyright (C) 2013-2016 John Crispin <blogic@openwrt.org>
+ *  Copyright (C) 2013-2016 John Crispin <john@phrozen.org>
  *
  *  This program is free software; you can redistribute it and/or modify it
  *  under the terms of the GNU General Public License version 2 as published
@@ -15,7 +15,6 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_pci.h>
@@ -34,14 +33,13 @@
 #define RALINK_GPIOMODE			0x60
 
 #define PPLL_CFG1			0x9c
-#define PDRV_SW_SET			BIT(23)
 
 #define PPLL_DRV			0xa0
-#define PDRV_SW_SET			(1<<31)
-#define LC_CKDRVPD			(1<<19)
-#define LC_CKDRVOHZ			(1<<18)
-#define LC_CKDRVHZ			(1<<17)
-#define LC_CKTEST			(1<<16)
+#define PDRV_SW_SET			BIT(31)
+#define LC_CKDRVPD			BIT(19)
+#define LC_CKDRVOHZ			BIT(18)
+#define LC_CKDRVHZ			BIT(17)
+#define LC_CKTEST			BIT(16)
 
 /* PCI Bridge registers */
 #define RALINK_PCI_PCICFG_ADDR		0x00
@@ -67,7 +65,7 @@
 #define PCIEPHY0_CFG			0x90
 
 #define RALINK_PCIEPHY_P0_CTL_OFFSET	0x7498
-#define RALINK_PCIE0_CLK_EN		(1 << 26)
+#define RALINK_PCIE0_CLK_EN		BIT(26)
 
 #define BUSY				0x80000000
 #define WAITRETRY_MAX			10
@@ -122,7 +120,7 @@ static int wait_pciephy_busy(void)
 		else
 			break;
 		if (retry++ > WAITRETRY_MAX) {
-			printk(KERN_WARN "PCIE-PHY retry failed.\n");
+			pr_warn("PCIE-PHY retry failed.\n");
 			return -1;
 		}
 	}
@@ -292,7 +290,7 @@ static int mt7620_pci_probe(struct platform_device *pdev)
 							  IORESOURCE_MEM, 1);
 	u32 val = 0;
 
-	rstpcie0 = devm_reset_control_get(&pdev->dev, "pcie0");
+	rstpcie0 = devm_reset_control_get_exclusive(&pdev->dev, "pcie0");
 	if (IS_ERR(rstpcie0))
 		return PTR_ERR(rstpcie0);
 
@@ -317,6 +315,7 @@ static int mt7620_pci_probe(struct platform_device *pdev)
 		break;
 
 	case MT762X_SOC_MT7628AN:
+	case MT762X_SOC_MT7688:
 		if (mt7628_pci_hw_init(pdev))
 			return -1;
 		break;
@@ -362,7 +361,7 @@ static int mt7620_pci_probe(struct platform_device *pdev)
 	return 0;
 }
 
-int __init pcibios_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+int pcibios_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
 	u16 cmd;
 	u32 val;
@@ -407,13 +406,11 @@ static const struct of_device_id mt7620_pci_ids[] = {
 	{ .compatible = "mediatek,mt7620-pci" },
 	{},
 };
-MODULE_DEVICE_TABLE(of, mt7620_pci_ids);
 
 static struct platform_driver mt7620_pci_driver = {
 	.probe = mt7620_pci_probe,
 	.driver = {
 		.name = "mt7620-pci",
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(mt7620_pci_ids),
 	},
 };

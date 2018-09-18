@@ -154,7 +154,7 @@ static void iser_dump_page_vec(struct iser_page_vec *page_vec)
 {
 	int i;
 
-	iser_err("page vec npages %d data length %d\n",
+	iser_err("page vec npages %d data length %lld\n",
 		 page_vec->npages, page_vec->fake_mr.length);
 	for (i = 0; i < page_vec->npages; i++)
 		iser_err("vec[%d]: %llx\n", i, page_vec->pages[i]);
@@ -199,7 +199,11 @@ iser_reg_dma(struct iser_device *device, struct iser_data_buf *mem,
 	 * FIXME: rework the registration code path to differentiate
 	 * rkey/lkey use cases
 	 */
-	reg->rkey = device->mr ? device->mr->rkey : 0;
+
+	if (device->pd->flags & IB_PD_UNSAFE_GLOBAL_RKEY)
+		reg->rkey = device->pd->unsafe_global_rkey;
+	else
+		reg->rkey = 0;
 	reg->sge.addr = ib_sg_dma_address(device->ib_device, &sg[0]);
 	reg->sge.length = ib_sg_dma_len(device->ib_device, &sg[0]);
 
@@ -236,7 +240,7 @@ int iser_fast_reg_fmr(struct iscsi_iser_task *iser_task,
 	page_vec->npages = 0;
 	page_vec->fake_mr.page_size = SIZE_4K;
 	plen = ib_sg_to_pages(&page_vec->fake_mr, mem->sg,
-			      mem->size, iser_set_page);
+			      mem->size, NULL, iser_set_page);
 	if (unlikely(plen < mem->size)) {
 		iser_err("page vec too short to hold this SG\n");
 		iser_data_buf_dump(mem, device->ib_device);
@@ -307,7 +311,7 @@ iser_set_dif_domain(struct scsi_cmnd *sc, struct ib_sig_attrs *sig_attrs,
 {
 	domain->sig_type = IB_SIG_TYPE_T10_DIF;
 	domain->sig.dif.pi_interval = scsi_prot_interval(sc);
-	domain->sig.dif.ref_tag = scsi_prot_ref_tag(sc);
+	domain->sig.dif.ref_tag = t10_pi_ref_tag(sc->request);
 	/*
 	 * At the moment we hard code those, but in the future
 	 * we will take them from sc.
@@ -358,9 +362,9 @@ iser_set_prot_checks(struct scsi_cmnd *sc, u8 *mask)
 {
 	*mask = 0;
 	if (sc->prot_flags & SCSI_PROT_REF_CHECK)
-		*mask |= ISER_CHECK_REFTAG;
+		*mask |= IB_SIG_CHECK_REFTAG;
 	if (sc->prot_flags & SCSI_PROT_GUARD_CHECK)
-		*mask |= ISER_CHECK_GUARD;
+		*mask |= IB_SIG_CHECK_GUARD;
 }
 
 static inline void
@@ -401,7 +405,8 @@ iser_reg_sig_mr(struct iscsi_iser_task *iser_task,
 
 	ib_update_fast_reg_key(mr, ib_inc_rkey(mr->rkey));
 
-	wr = sig_handover_wr(iser_tx_next_wr(tx_desc));
+	wr = container_of(iser_tx_next_wr(tx_desc), struct ib_sig_handover_wr,
+			  wr);
 	wr->wr.opcode = IB_WR_REG_SIG_MR;
 	wr->wr.wr_cqe = cqe;
 	wr->wr.sg_list = &data_reg->sge;
@@ -446,14 +451,14 @@ static int iser_fast_reg_mr(struct iscsi_iser_task *iser_task,
 
 	ib_update_fast_reg_key(mr, ib_inc_rkey(mr->rkey));
 
-	n = ib_map_mr_sg(mr, mem->sg, mem->size, SIZE_4K);
+	n = ib_map_mr_sg(mr, mem->sg, mem->size, NULL, SIZE_4K);
 	if (unlikely(n != mem->size)) {
 		iser_err("failed to map sg (%d/%d)\n",
 			 n, mem->size);
 		return n < 0 ? n : -EINVAL;
 	}
 
-	wr = reg_wr(iser_tx_next_wr(tx_desc));
+	wr = container_of(iser_tx_next_wr(tx_desc), struct ib_reg_wr, wr);
 	wr->wr.opcode = IB_WR_REG_MR;
 	wr->wr.wr_cqe = cqe;
 	wr->wr.send_flags = 0;

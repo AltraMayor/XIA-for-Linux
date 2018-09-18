@@ -194,7 +194,7 @@ int gen_pool_add_virt(struct gen_pool *pool, unsigned long virt, phys_addr_t phy
 	chunk->phys_addr = phys;
 	chunk->start_addr = virt;
 	chunk->end_addr = virt + size - 1;
-	atomic_set(&chunk->avail, size);
+	atomic_long_set(&chunk->avail, size);
 
 	spin_lock(&pool->lock);
 	list_add_rcu(&chunk->next_chunk, &pool->chunks);
@@ -292,7 +292,7 @@ unsigned long gen_pool_alloc_algo(struct gen_pool *pool, size_t size,
 	struct gen_pool_chunk *chunk;
 	unsigned long addr = 0;
 	int order = pool->min_alloc_order;
-	int nbits, start_bit = 0, end_bit, remain;
+	int nbits, start_bit, end_bit, remain;
 
 #ifndef CONFIG_ARCH_HAVE_NMI_SAFE_CMPXCHG
 	BUG_ON(in_nmi());
@@ -304,9 +304,10 @@ unsigned long gen_pool_alloc_algo(struct gen_pool *pool, size_t size,
 	nbits = (size + (1UL << order) - 1) >> order;
 	rcu_read_lock();
 	list_for_each_entry_rcu(chunk, &pool->chunks, next_chunk) {
-		if (size > atomic_read(&chunk->avail))
+		if (size > atomic_long_read(&chunk->avail))
 			continue;
 
+		start_bit = 0;
 		end_bit = chunk_size(chunk) >> order;
 retry:
 		start_bit = algo(chunk->bits, end_bit, start_bit,
@@ -323,7 +324,7 @@ retry:
 
 		addr = chunk->start_addr + ((unsigned long)start_bit << order);
 		size = nbits << order;
-		atomic_sub(size, &chunk->avail);
+		atomic_long_sub(size, &chunk->avail);
 		break;
 	}
 	rcu_read_unlock();
@@ -389,7 +390,7 @@ void gen_pool_free(struct gen_pool *pool, unsigned long addr, size_t size)
 			remain = bitmap_clear_ll(chunk->bits, start_bit, nbits);
 			BUG_ON(remain);
 			size = nbits << order;
-			atomic_add(size, &chunk->avail);
+			atomic_long_add(size, &chunk->avail);
 			rcu_read_unlock();
 			return;
 		}
@@ -463,7 +464,7 @@ size_t gen_pool_avail(struct gen_pool *pool)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(chunk, &pool->chunks, next_chunk)
-		avail += atomic_read(&chunk->avail);
+		avail += atomic_long_read(&chunk->avail);
 	rcu_read_unlock();
 	return avail;
 }

@@ -8,6 +8,12 @@ Required properties:
 
 - reg : The I2C address of the device.
 
+Optional properties:
+
+- clocks: The phandle of the master clock to the CODEC.
+
+- clock-names: Should be "mclk".
+
 Pins on the device (for linking into audio routes) for RT5616:
 
   * IN1P
@@ -20,7 +26,7 @@ Pins on the device (for linking into audio routes) for RT5616:
 
 Example:
 
-codec: rt5616@1b {
+rt5616: codec@1b {
 	compatible = "realtek,rt5616";
 	reg = <0x1b>;
 };

@@ -21,23 +21,20 @@
  * /sys/kernel/debug/telemetry/ioss_race_verbosity: Write and Change Tracing
  *				Verbosity via firmware
  */
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/device.h>
 #include <linux/debugfs.h>
-#include <linux/seq_file.h>
-#include <linux/io.h>
-#include <linux/uaccess.h>
+#include <linux/device.h>
+#include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/seq_file.h>
 #include <linux/suspend.h>
 
 #include <asm/cpu_device_id.h>
+#include <asm/intel-family.h>
 #include <asm/intel_pmc_ipc.h>
-#include <asm/intel_punit_ipc.h>
 #include <asm/intel_telemetry.h>
 
-#define DRIVER_NAME	"telemetry_soc_debugfs"
-#define DRIVER_VERSION	"1.0.0"
+#define DRIVER_NAME			"telemetry_soc_debugfs"
+#define DRIVER_VERSION			"1.0.0"
 
 /* ApolloLake SoC Event-IDs */
 #define TELEM_APL_PSS_PSTATES_ID	0x2802
@@ -75,10 +72,8 @@
 #define TELEM_IOSS_DX_D0IX_EVTS		25
 #define TELEM_IOSS_PG_EVTS		30
 
-#define TELEM_EVT_LEN(x) (sizeof(x)/sizeof((x)[0]))
-
 #define TELEM_DEBUGFS_CPU(model, data) \
-	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_MWAIT, (unsigned long)&data}
+	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (unsigned long)&data}
 
 #define TELEM_CHECK_AND_PARSE_EVTS(EVTID, EVTNUM, BUF, EVTLOG, EVTDAT, MASK) { \
 	if (evtlog[index].telem_evtid == (EVTID)) { \
@@ -96,17 +91,11 @@
 	} \
 }
 
-#ifdef CONFIG_PM_SLEEP
 static u8 suspend_prep_ok;
 static u32 suspend_shlw_ctr_temp, suspend_deep_ctr_temp;
 static u64 suspend_shlw_res_temp, suspend_deep_res_temp;
-#endif
 
 struct telemetry_susp_stats {
-	u32 shlw_swake_ctr;
-	u32 deep_swake_ctr;
-	u64 shlw_swake_res;
-	u64 deep_swake_res;
 	u32 shlw_ctr;
 	u32 deep_ctr;
 	u64 shlw_res;
@@ -255,7 +244,6 @@ static struct telem_ioss_pg_info telem_apl_ioss_pg_data[] = {
 	{"PRTC",	25},
 };
 
-
 struct telemetry_debugfs_conf {
 	struct telemetry_susp_stats suspend_stats;
 	struct dentry *telemetry_dbg_dir;
@@ -305,13 +293,13 @@ static struct telemetry_debugfs_conf telem_apl_debugfs_conf = {
 	.ioss_d0ix_data = telem_apl_ioss_d0ix_data,
 	.ioss_pg_data = telem_apl_ioss_pg_data,
 
-	.pss_idle_evts = TELEM_EVT_LEN(telem_apl_pss_idle_data),
-	.pcs_idle_blkd_evts = TELEM_EVT_LEN(telem_apl_pcs_idle_blkd_data),
-	.pcs_s0ix_blkd_evts = TELEM_EVT_LEN(telem_apl_pcs_s0ix_blkd_data),
-	.pss_ltr_evts = TELEM_EVT_LEN(telem_apl_pss_ltr_data),
-	.pss_wakeup_evts = TELEM_EVT_LEN(telem_apl_pss_wakeup),
-	.ioss_d0ix_evts = TELEM_EVT_LEN(telem_apl_ioss_d0ix_data),
-	.ioss_pg_evts = TELEM_EVT_LEN(telem_apl_ioss_pg_data),
+	.pss_idle_evts = ARRAY_SIZE(telem_apl_pss_idle_data),
+	.pcs_idle_blkd_evts = ARRAY_SIZE(telem_apl_pcs_idle_blkd_data),
+	.pcs_s0ix_blkd_evts = ARRAY_SIZE(telem_apl_pcs_s0ix_blkd_data),
+	.pss_ltr_evts = ARRAY_SIZE(telem_apl_pss_ltr_data),
+	.pss_wakeup_evts = ARRAY_SIZE(telem_apl_pss_wakeup),
+	.ioss_d0ix_evts = ARRAY_SIZE(telem_apl_ioss_d0ix_data),
+	.ioss_pg_evts = ARRAY_SIZE(telem_apl_ioss_pg_data),
 
 	.pstates_id = TELEM_APL_PSS_PSTATES_ID,
 	.pss_idle_id = TELEM_APL_PSS_IDLE_ID,
@@ -331,7 +319,8 @@ static struct telemetry_debugfs_conf telem_apl_debugfs_conf = {
 };
 
 static const struct x86_cpu_id telemetry_debugfs_cpu_ids[] = {
-	TELEM_DEBUGFS_CPU(0x5c, telem_apl_debugfs_conf),
+	TELEM_DEBUGFS_CPU(INTEL_FAM6_ATOM_GOLDMONT, telem_apl_debugfs_conf),
+	TELEM_DEBUGFS_CPU(INTEL_FAM6_ATOM_GEMINI_LAKE, telem_apl_debugfs_conf),
 	{}
 };
 
@@ -389,7 +378,6 @@ static int telem_pss_states_show(struct seq_file *s, void *unused)
 			TELEM_APL_MASK_PCS_STATE;
 		}
 
-
 		TELEM_CHECK_AND_PARSE_EVTS(conf->pss_idle_id,
 					   conf->pss_idle_evts - 1,
 					   pss_idle, evtlog[index].telem_evtlog,
@@ -408,7 +396,6 @@ static int telem_pss_states_show(struct seq_file *s, void *unused)
 					   evtlog[index].telem_evtlog,
 					   conf->pcs_s0ix_blkd_data,
 					   TELEM_MASK_BYTE);
-
 
 		TELEM_CHECK_AND_PARSE_EVTS(conf->pss_wakeup_id,
 					   conf->pss_wakeup_evts,
@@ -501,7 +488,6 @@ static const struct file_operations telem_pss_ops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
-
 
 static int telem_ioss_states_show(struct seq_file *s, void *unused)
 {
@@ -602,19 +588,15 @@ static int telem_soc_states_show(struct seq_file *s, void *unused)
 
 	seq_printf(s, "S0IX Shallow\t\t\t %10u\t %10llu\n",
 		   s0ix_shlw_ctr -
-		   conf->suspend_stats.shlw_ctr -
-		   conf->suspend_stats.shlw_swake_ctr,
+		   conf->suspend_stats.shlw_ctr,
 		   (u64)((s0ix_shlw_res -
-		   conf->suspend_stats.shlw_res -
-		   conf->suspend_stats.shlw_swake_res)*10/192));
+		   conf->suspend_stats.shlw_res)*10/192));
 
 	seq_printf(s, "S0IX Deep\t\t\t %10u\t %10llu\n",
 		   s0ix_deep_ctr -
-		   conf->suspend_stats.deep_ctr -
-		   conf->suspend_stats.deep_swake_ctr,
+		   conf->suspend_stats.deep_ctr,
 		   (u64)((s0ix_deep_res -
-		   conf->suspend_stats.deep_res -
-		   conf->suspend_stats.deep_swake_res)*10/192));
+		   conf->suspend_stats.deep_res)*10/192));
 
 	seq_printf(s, "Suspend(With S0ixShallow)\t %10u\t %10llu\n",
 		   conf->suspend_stats.shlw_ctr,
@@ -624,14 +606,8 @@ static int telem_soc_states_show(struct seq_file *s, void *unused)
 		   conf->suspend_stats.deep_ctr,
 		   (u64)(conf->suspend_stats.deep_res*10)/192);
 
-	seq_printf(s, "Suspend(With Shallow-Wakes)\t %10u\t %10llu\n",
-		   conf->suspend_stats.shlw_swake_ctr +
-		   conf->suspend_stats.deep_swake_ctr,
-		   (u64)((conf->suspend_stats.shlw_swake_res +
-		   conf->suspend_stats.deep_swake_res)*10/192));
-
-	seq_printf(s, "S0IX+Suspend Total\t\t %10u\t %10llu\n", s0ix_total_ctr,
-				(u64)(s0ix_total_res*10/192));
+	seq_printf(s, "TOTAL S0IX\t\t\t %10u\t %10llu\n", s0ix_total_ctr,
+		   (u64)(s0ix_total_res*10/192));
 	seq_puts(s, "\n-------------------------------------------------\n");
 	seq_puts(s, "\t\tDEVICE STATES\n");
 	seq_puts(s, "-------------------------------------------------\n");
@@ -711,6 +687,24 @@ static const struct file_operations telem_socstate_ops = {
 	.release	= single_release,
 };
 
+static int telem_s0ix_res_get(void *data, u64 *val)
+{
+	u64 s0ix_total_res;
+	int ret;
+
+	ret = intel_pmc_s0ix_counter_read(&s0ix_total_res);
+	if (ret) {
+		pr_err("Failed to read S0ix residency");
+		return ret;
+	}
+
+	*val = s0ix_total_res;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(telem_s0ix_fops, telem_s0ix_res_get, NULL, "%llu\n");
+
 static int telem_pss_trc_verb_show(struct seq_file *s, void *unused)
 {
 	u32 verbosity;
@@ -757,7 +751,6 @@ static const struct file_operations telem_pss_trc_verb_ops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
-
 
 static int telem_ioss_trc_verb_show(struct seq_file *s, void *unused)
 {
@@ -806,7 +799,6 @@ static const struct file_operations telem_ioss_trc_verb_ops = {
 	.release	= single_release,
 };
 
-#ifdef CONFIG_PM_SLEEP
 static int pm_suspend_prep_cb(void)
 {
 	struct telemetry_evtlog evtlog[TELEM_MAX_OS_ALLOCATED_EVENTS];
@@ -877,41 +869,49 @@ static int pm_suspend_exit_cb(void)
 		goto out;
 	}
 
+	/*
+	 * Due to some design limitations in the firmware, sometimes the
+	 * counters do not get updated by the time we reach here. As a
+	 * workaround, we try to see if this was a genuine case of sleep
+	 * failure or not by cross-checking from PMC GCR registers directly.
+	 */
+	if (suspend_shlw_ctr_exit == suspend_shlw_ctr_temp &&
+	    suspend_deep_ctr_exit == suspend_deep_ctr_temp) {
+		ret = intel_pmc_gcr_read64(PMC_GCR_TELEM_SHLW_S0IX_REG,
+					  &suspend_shlw_res_exit);
+		if (ret < 0)
+			goto out;
+
+		ret = intel_pmc_gcr_read64(PMC_GCR_TELEM_DEEP_S0IX_REG,
+					  &suspend_deep_res_exit);
+		if (ret < 0)
+			goto out;
+
+		if (suspend_shlw_res_exit > suspend_shlw_res_temp)
+			suspend_shlw_ctr_exit++;
+
+		if (suspend_deep_res_exit > suspend_deep_res_temp)
+			suspend_deep_ctr_exit++;
+	}
+
 	suspend_shlw_ctr_exit -= suspend_shlw_ctr_temp;
 	suspend_deep_ctr_exit -= suspend_deep_ctr_temp;
 	suspend_shlw_res_exit -= suspend_shlw_res_temp;
 	suspend_deep_res_exit -= suspend_deep_res_temp;
 
-	if (suspend_shlw_ctr_exit == 1) {
+	if (suspend_shlw_ctr_exit != 0) {
 		conf->suspend_stats.shlw_ctr +=
 		suspend_shlw_ctr_exit;
 
 		conf->suspend_stats.shlw_res +=
 		suspend_shlw_res_exit;
 	}
-	/* Shallow Wakes Case */
-	else if (suspend_shlw_ctr_exit > 1) {
-		conf->suspend_stats.shlw_swake_ctr +=
-		suspend_shlw_ctr_exit;
 
-		conf->suspend_stats.shlw_swake_res +=
-		suspend_shlw_res_exit;
-	}
-
-	if (suspend_deep_ctr_exit == 1) {
+	if (suspend_deep_ctr_exit != 0) {
 		conf->suspend_stats.deep_ctr +=
 		suspend_deep_ctr_exit;
 
 		conf->suspend_stats.deep_res +=
-		suspend_deep_res_exit;
-	}
-
-	/* Shallow Wakes Case */
-	else if (suspend_deep_ctr_exit > 1) {
-		conf->suspend_stats.deep_swake_ctr +=
-		suspend_deep_ctr_exit;
-
-		conf->suspend_stats.deep_swake_res +=
 		suspend_deep_res_exit;
 	}
 
@@ -936,12 +936,11 @@ static int pm_notification(struct notifier_block *this,
 static struct notifier_block pm_notifier = {
 	.notifier_call = pm_notification,
 };
-#endif /* CONFIG_PM_SLEEP */
 
 static int __init telemetry_debugfs_init(void)
 {
 	const struct x86_cpu_id *id;
-	int err = -ENOMEM;
+	int err;
 	struct dentry *f;
 
 	/* Only APL supported for now */
@@ -959,14 +958,12 @@ static int __init telemetry_debugfs_init(void)
 	if (err < 0)
 		return -EINVAL;
 
-
-#ifdef CONFIG_PM_SLEEP
 	register_pm_notifier(&pm_notifier);
-#endif /* CONFIG_PM_SLEEP */
 
+	err = -ENOMEM;
 	debugfs_conf->telemetry_dbg_dir = debugfs_create_dir("telemetry", NULL);
 	if (!debugfs_conf->telemetry_dbg_dir)
-		return -ENOMEM;
+		goto out_pm;
 
 	f = debugfs_create_file("pss_info", S_IFREG | S_IRUGO,
 				debugfs_conf->telemetry_dbg_dir, NULL,
@@ -992,6 +989,14 @@ static int __init telemetry_debugfs_init(void)
 		goto out;
 	}
 
+	f = debugfs_create_file("s0ix_residency_usec", S_IFREG | S_IRUGO,
+				debugfs_conf->telemetry_dbg_dir,
+				NULL, &telem_s0ix_fops);
+	if (!f) {
+		pr_err("s0ix_residency_usec debugfs register failed\n");
+		goto out;
+	}
+
 	f = debugfs_create_file("pss_trace_verbosity", S_IFREG | S_IRUGO,
 				debugfs_conf->telemetry_dbg_dir, NULL,
 				&telem_pss_trc_verb_ops);
@@ -1013,6 +1018,8 @@ static int __init telemetry_debugfs_init(void)
 out:
 	debugfs_remove_recursive(debugfs_conf->telemetry_dbg_dir);
 	debugfs_conf->telemetry_dbg_dir = NULL;
+out_pm:
+	unregister_pm_notifier(&pm_notifier);
 
 	return err;
 }
@@ -1021,6 +1028,7 @@ static void __exit telemetry_debugfs_exit(void)
 {
 	debugfs_remove_recursive(debugfs_conf->telemetry_dbg_dir);
 	debugfs_conf->telemetry_dbg_dir = NULL;
+	unregister_pm_notifier(&pm_notifier);
 }
 
 late_initcall(telemetry_debugfs_init);

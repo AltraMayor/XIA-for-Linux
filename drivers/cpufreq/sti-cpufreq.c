@@ -65,8 +65,8 @@ static int sti_cpufreq_fetch_major(void) {
 	ret = of_property_read_u32_index(np, "st,syscfg",
 					 MAJOR_ID_INDEX, &major_offset);
 	if (ret) {
-		dev_err(dev, "No major number offset provided in %s [%d]\n",
-			np->full_name, ret);
+		dev_err(dev, "No major number offset provided in %pOF [%d]\n",
+			np, ret);
 		return ret;
 	}
 
@@ -92,8 +92,8 @@ static int sti_cpufreq_fetch_minor(void)
 					 MINOR_ID_INDEX, &minor_offset);
 	if (ret) {
 		dev_err(dev,
-			"No minor number offset provided %s [%d]\n",
-			np->full_name, ret);
+			"No minor number offset provided %pOF [%d]\n",
+			np, ret);
 		return ret;
 	}
 
@@ -160,10 +160,11 @@ static int sti_cpufreq_set_opp_info(void)
 	int pcode, substrate, major, minor;
 	int ret;
 	char name[MAX_PCODE_NAME_LEN];
+	struct opp_table *opp_table;
 
 	reg_fields = sti_cpufreq_match();
 	if (!reg_fields) {
-		dev_err(dev, "This SoC doesn't support voltage scaling");
+		dev_err(dev, "This SoC doesn't support voltage scaling\n");
 		return -ENODEV;
 	}
 
@@ -211,20 +212,20 @@ use_defaults:
 
 	snprintf(name, MAX_PCODE_NAME_LEN, "pcode%d", pcode);
 
-	ret = dev_pm_opp_set_prop_name(dev, name);
-	if (ret) {
+	opp_table = dev_pm_opp_set_prop_name(dev, name);
+	if (IS_ERR(opp_table)) {
 		dev_err(dev, "Failed to set prop name\n");
-		return ret;
+		return PTR_ERR(opp_table);
 	}
 
 	version[0] = BIT(major);
 	version[1] = BIT(minor);
 	version[2] = BIT(substrate);
 
-	ret = dev_pm_opp_set_supported_hw(dev, version, VERSION_ELEMENTS);
-	if (ret) {
+	opp_table = dev_pm_opp_set_supported_hw(dev, version, VERSION_ELEMENTS);
+	if (IS_ERR(opp_table)) {
 		dev_err(dev, "Failed to set supported hardware\n");
-		return ret;
+		return PTR_ERR(opp_table);
 	}
 
 	dev_dbg(dev, "pcode: %d major: %d minor: %d substrate: %d\n",
@@ -235,7 +236,7 @@ use_defaults:
 	return 0;
 }
 
-static int sti_cpufreq_fetch_syscon_regsiters(void)
+static int sti_cpufreq_fetch_syscon_registers(void)
 {
 	struct device *dev = ddata.cpu;
 	struct device_node *np = dev->of_node;
@@ -259,6 +260,10 @@ static int sti_cpufreq_init(void)
 {
 	int ret;
 
+	if ((!of_machine_is_compatible("st,stih407")) &&
+		(!of_machine_is_compatible("st,stih410")))
+		return -ENODEV;
+
 	ddata.cpu = get_cpu_device(0);
 	if (!ddata.cpu) {
 		dev_err(ddata.cpu, "Failed to get device for CPU0\n");
@@ -270,7 +275,7 @@ static int sti_cpufreq_init(void)
 		goto skip_voltage_scaling;
 	}
 
-	ret = sti_cpufreq_fetch_syscon_regsiters();
+	ret = sti_cpufreq_fetch_syscon_registers();
 	if (ret)
 		goto skip_voltage_scaling;
 

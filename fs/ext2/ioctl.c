@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * linux/fs/ext2/ioctl.c
  *
@@ -14,7 +15,7 @@
 #include <linux/compat.h>
 #include <linux/mount.h>
 #include <asm/current.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 
 long ext2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -29,7 +30,6 @@ long ext2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case EXT2_IOC_GETFLAGS:
-		ext2_get_inode_flags(ei);
 		flags = ei->i_flags & EXT2_FL_USER_VISIBLE;
 		return put_user(flags, (int __user *) arg);
 	case EXT2_IOC_SETFLAGS: {
@@ -79,7 +79,7 @@ long ext2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		ei->i_flags = flags;
 
 		ext2_set_inode_flags(inode);
-		inode->i_ctime = CURRENT_TIME_SEC;
+		inode->i_ctime = current_time(inode);
 		inode_unlock(inode);
 
 		mark_inode_dirty(inode);
@@ -103,7 +103,7 @@ setflags_out:
 		}
 
 		inode_lock(inode);
-		inode->i_ctime = CURRENT_TIME_SEC;
+		inode->i_ctime = current_time(inode);
 		inode->i_generation = generation;
 		inode_unlock(inode);
 

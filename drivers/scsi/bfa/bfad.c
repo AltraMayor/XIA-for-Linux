@@ -27,7 +27,7 @@
 #include <linux/fs.h>
 #include <linux/pci.h>
 #include <linux/firmware.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/fcntl.h>
 
 #include "bfad_drv.h"
@@ -64,9 +64,9 @@ int		max_rport_logins = BFA_FCS_MAX_RPORT_LOGINS;
 u32	bfi_image_cb_size, bfi_image_ct_size, bfi_image_ct2_size;
 u32	*bfi_image_cb, *bfi_image_ct, *bfi_image_ct2;
 
-#define BFAD_FW_FILE_CB		"cbfw-3.2.3.0.bin"
-#define BFAD_FW_FILE_CT		"ctfw-3.2.3.0.bin"
-#define BFAD_FW_FILE_CT2	"ct2fw-3.2.3.0.bin"
+#define BFAD_FW_FILE_CB		"cbfw-3.2.5.1.bin"
+#define BFAD_FW_FILE_CT		"ctfw-3.2.5.1.bin"
+#define BFAD_FW_FILE_CT2	"ct2fw-3.2.5.1.bin"
 
 static u32 *bfad_load_fwimg(struct pci_dev *pdev);
 static void bfad_free_fwimg(void);
@@ -610,13 +610,12 @@ bfad_hal_mem_alloc(struct bfad_s *bfad)
 	/* Iterate through the KVA meminfo queue */
 	list_for_each(km_qe, &kva_info->qe) {
 		kva_elem = (struct bfa_mem_kva_s *) km_qe;
-		kva_elem->kva = vmalloc(kva_elem->mem_len);
+		kva_elem->kva = vzalloc(kva_elem->mem_len);
 		if (kva_elem->kva == NULL) {
 			bfad_hal_mem_release(bfad);
 			rc = BFA_STATUS_ENOMEM;
 			goto ext;
 		}
-		memset(kva_elem->kva, 0, kva_elem->mem_len);
 	}
 
 	/* Iterate through the DMA meminfo queue */
@@ -692,9 +691,9 @@ ext:
 }
 
 void
-bfad_bfa_tmo(unsigned long data)
+bfad_bfa_tmo(struct timer_list *t)
 {
-	struct bfad_s	      *bfad = (struct bfad_s *) data;
+	struct bfad_s	      *bfad = from_timer(bfad, t, hal_tmo);
 	unsigned long	flags;
 	struct list_head	       doneq;
 
@@ -719,9 +718,7 @@ bfad_bfa_tmo(unsigned long data)
 void
 bfad_init_timer(struct bfad_s *bfad)
 {
-	init_timer(&bfad->hal_tmo);
-	bfad->hal_tmo.function = bfad_bfa_tmo;
-	bfad->hal_tmo.data = (unsigned long)bfad;
+	timer_setup(&bfad->hal_tmo, bfad_bfa_tmo, 0);
 
 	mod_timer(&bfad->hal_tmo,
 		  jiffies + msecs_to_jiffies(BFA_TIMER_FREQ));
@@ -983,20 +980,20 @@ bfad_start_ops(struct bfad_s *bfad) {
 
 	/* Fill the driver_info info to fcs*/
 	memset(&driver_info, 0, sizeof(driver_info));
-	strncpy(driver_info.version, BFAD_DRIVER_VERSION,
-		sizeof(driver_info.version) - 1);
+	strlcpy(driver_info.version, BFAD_DRIVER_VERSION,
+		sizeof(driver_info.version));
 	if (host_name)
-		strncpy(driver_info.host_machine_name, host_name,
-			sizeof(driver_info.host_machine_name) - 1);
+		strlcpy(driver_info.host_machine_name, host_name,
+			sizeof(driver_info.host_machine_name));
 	if (os_name)
-		strncpy(driver_info.host_os_name, os_name,
-			sizeof(driver_info.host_os_name) - 1);
+		strlcpy(driver_info.host_os_name, os_name,
+			sizeof(driver_info.host_os_name));
 	if (os_patch)
-		strncpy(driver_info.host_os_patch, os_patch,
-			sizeof(driver_info.host_os_patch) - 1);
+		strlcpy(driver_info.host_os_patch, os_patch,
+			sizeof(driver_info.host_os_patch));
 
-	strncpy(driver_info.os_device_name, bfad->pci_name,
-		sizeof(driver_info.os_device_name) - 1);
+	strlcpy(driver_info.os_device_name, bfad->pci_name,
+		sizeof(driver_info.os_device_name));
 
 	/* FCS driver info init */
 	spin_lock_irqsave(&bfad->bfad_lock, flags);

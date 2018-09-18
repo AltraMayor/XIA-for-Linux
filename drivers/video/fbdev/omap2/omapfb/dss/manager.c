@@ -28,7 +28,7 @@
 #include <linux/platform_device.h>
 #include <linux/jiffies.h>
 
-#include <video/omapdss.h>
+#include <video/omapfb_dss.h>
 
 #include "dss.h"
 #include "dss_features.h"
@@ -42,8 +42,8 @@ int dss_init_overlay_managers(void)
 
 	num_managers = dss_feat_get_num_mgrs();
 
-	managers = kzalloc(sizeof(struct omap_overlay_manager) * num_managers,
-			GFP_KERNEL);
+	managers = kcalloc(num_managers, sizeof(struct omap_overlay_manager),
+			   GFP_KERNEL);
 
 	BUG_ON(managers == NULL);
 
@@ -69,7 +69,6 @@ int dss_init_overlay_managers(void)
 			break;
 		}
 
-		mgr->caps = 0;
 		mgr->supported_displays =
 			dss_feat_get_supported_displays(mgr->id);
 		mgr->supported_outputs =

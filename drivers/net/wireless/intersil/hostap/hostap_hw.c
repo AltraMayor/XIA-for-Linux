@@ -32,7 +32,7 @@
 
 
 #include <asm/delay.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <linux/slab.h>
 #include <linux/netdevice.h>
@@ -43,7 +43,7 @@
 #include <linux/delay.h>
 #include <linux/random.h>
 #include <linux/wait.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/rtnetlink.h>
 #include <linux/wireless.h>
 #include <net/iw_handler.h>
@@ -151,13 +151,6 @@ static int prism2_get_ram_size(local_info_t *local);
 #define HFA384X_MAGIC 0x8A32
 #endif
 
-
-static u16 hfa384x_read_reg(struct net_device *dev, u16 reg)
-{
-	return HFA384X_INW(reg);
-}
-
-
 static void hfa384x_read_regs(struct net_device *dev,
 			      struct hfa384x_regs *regs)
 {
@@ -190,7 +183,7 @@ static inline void __hostap_cmd_queue_free(local_info_t *local,
 		}
 	}
 
-	if (atomic_dec_and_test(&entry->usecnt) && entry->del_req)
+	if (refcount_dec_and_test(&entry->usecnt) && entry->del_req)
 		kfree(entry);
 }
 
@@ -228,7 +221,7 @@ static void prism2_clear_cmd_queue(local_info_t *local)
 	spin_lock_irqsave(&local->cmdlock, flags);
 	list_for_each_safe(ptr, n, &local->cmd_queue) {
 		entry = list_entry(ptr, struct hostap_cmd_queue, list);
-		atomic_inc(&entry->usecnt);
+		refcount_inc(&entry->usecnt);
 		printk(KERN_DEBUG "%s: removed pending cmd_queue entry "
 		       "(type=%d, cmd=0x%04x, param0=0x%04x)\n",
 		       local->dev->name, entry->type, entry->cmd,
@@ -350,7 +343,7 @@ static int hfa384x_cmd(struct net_device *dev, u16 cmd, u16 param0,
 	if (entry == NULL)
 		return -ENOMEM;
 
-	atomic_set(&entry->usecnt, 1);
+	refcount_set(&entry->usecnt, 1);
 	entry->type = CMD_SLEEP;
 	entry->cmd = cmd;
 	entry->param0 = param0;
@@ -516,7 +509,7 @@ static int hfa384x_cmd_callback(struct net_device *dev, u16 cmd, u16 param0,
 	if (entry == NULL)
 		return -ENOMEM;
 
-	atomic_set(&entry->usecnt, 1);
+	refcount_set(&entry->usecnt, 1);
 	entry->type = CMD_CALLBACK;
 	entry->cmd = cmd;
 	entry->param0 = param0;
@@ -666,7 +659,7 @@ static void prism2_cmd_ev(struct net_device *dev)
 	if (!list_empty(&local->cmd_queue)) {
 		entry = list_entry(local->cmd_queue.next,
 				   struct hostap_cmd_queue, list);
-		atomic_inc(&entry->usecnt);
+		refcount_inc(&entry->usecnt);
 		list_del_init(&entry->list);
 		local->cmd_queue_len--;
 
@@ -718,7 +711,7 @@ static void prism2_cmd_ev(struct net_device *dev)
 			entry = NULL;
 		}
 		if (entry)
-			atomic_inc(&entry->usecnt);
+			refcount_inc(&entry->usecnt);
 	}
 	spin_unlock(&local->cmdlock);
 
@@ -836,25 +829,30 @@ static int hfa384x_get_rid(struct net_device *dev, u16 rid, void *buf, int len,
 	spin_lock_bh(&local->baplock);
 
 	res = hfa384x_setup_bap(dev, BAP0, rid, 0);
-	if (!res)
-		res = hfa384x_from_bap(dev, BAP0, &rec, sizeof(rec));
+	if (res)
+		goto unlock;
+
+	res = hfa384x_from_bap(dev, BAP0, &rec, sizeof(rec));
+	if (res)
+		goto unlock;
 
 	if (le16_to_cpu(rec.len) == 0) {
 		/* RID not available */
 		res = -ENODATA;
+		goto unlock;
 	}
 
 	rlen = (le16_to_cpu(rec.len) - 1) * 2;
-	if (!res && exact_len && rlen != len) {
+	if (exact_len && rlen != len) {
 		printk(KERN_DEBUG "%s: hfa384x_get_rid - RID len mismatch: "
 		       "rid=0x%04x, len=%d (expected %d)\n",
 		       dev->name, rid, rlen, len);
 		res = -ENODATA;
 	}
 
-	if (!res)
-		res = hfa384x_from_bap(dev, BAP0, buf, len);
+	res = hfa384x_from_bap(dev, BAP0, buf, len);
 
+unlock:
 	spin_unlock_bh(&local->baplock);
 	mutex_unlock(&local->rid_bap_mtx);
 
@@ -1789,7 +1787,7 @@ static int prism2_transmit(struct net_device *dev, int idx)
 		netif_wake_queue(dev);
 		return -1;
 	}
-	dev->trans_start = jiffies;
+	netif_trans_update(dev);
 
 	/* Since we did not wait for command completion, the card continues
 	 * to process on the background and we will finish handling when
@@ -2000,7 +1998,7 @@ static void prism2_rx(local_info_t *local)
 		goto rx_dropped;
 	}
 	skb->dev = dev;
-	memcpy(skb_put(skb, hdr_len), &rxdesc, hdr_len);
+	skb_put_data(skb, &rxdesc, hdr_len);
 
 	if (len > 0)
 		res = hfa384x_from_bap(dev, BAP0, skb_put(skb, len), len);
@@ -2204,9 +2202,9 @@ static void hostap_tx_callback(local_info_t *local,
 		return;
 	}
 
-	memcpy(skb_put(skb, hdrlen), (void *) &txdesc->frame_control, hdrlen);
+	skb_put_data(skb, (void *)&txdesc->frame_control, hdrlen);
 	if (payload)
-		memcpy(skb_put(skb, len), payload, len);
+		skb_put_data(skb, payload, len);
 
 	skb->dev = local->dev;
 	skb_reset_mac_header(skb);
@@ -2357,8 +2355,7 @@ static void prism2_txexc(local_info_t *local)
 		struct sk_buff *skb;
 		skb = dev_alloc_skb(sizeof(txdesc));
 		if (skb) {
-			memcpy(skb_put(skb, sizeof(txdesc)), &txdesc,
-			       sizeof(txdesc));
+			skb_put_data(skb, &txdesc, sizeof(txdesc));
 			skb_queue_tail(&local->sta_tx_exc_list, skb);
 			tasklet_schedule(&local->sta_tx_exc_tasklet);
 		}
@@ -2455,7 +2452,7 @@ static void prism2_info(local_info_t *local)
 		goto out;
 	}
 
-	memcpy(skb_put(skb, sizeof(info)), &info, sizeof(info));
+	skb_put_data(skb, &info, sizeof(info));
 	if (left > 0 && hfa384x_from_bap(dev, BAP0, skb_put(skb, left), left))
 	{
 		spin_unlock(&local->baplock);
@@ -2790,9 +2787,9 @@ static void prism2_check_sta_fw_version(local_info_t *local)
 }
 
 
-static void hostap_passive_scan(unsigned long data)
+static void hostap_passive_scan(struct timer_list *t)
 {
-	local_info_t *local = (local_info_t *) data;
+	local_info_t *local = from_timer(local, t, passive_scan_timer);
 	struct net_device *dev = local->dev;
 	u16 chan;
 
@@ -2865,10 +2862,10 @@ static void handle_comms_qual_update(struct work_struct *work)
  * used to monitor that local->last_tick_timer is being updated. If not,
  * interrupt busy-loop is assumed and driver tries to recover by masking out
  * some events. */
-static void hostap_tick_timer(unsigned long data)
+static void hostap_tick_timer(struct timer_list *t)
 {
 	static unsigned long last_inquire = 0;
-	local_info_t *local = (local_info_t *) data;
+	local_info_t *local = from_timer(local, t, tick_timer);
 	local->last_tick_timer = jiffies;
 
 	/* Inquire CommTallies every 10 seconds to keep the statistics updated
@@ -2893,7 +2890,12 @@ static void hostap_tick_timer(unsigned long data)
 }
 
 
-#ifndef PRISM2_NO_PROCFS_DEBUG
+#if !defined(PRISM2_NO_PROCFS_DEBUG) && defined(CONFIG_PROC_FS)
+static u16 hfa384x_read_reg(struct net_device *dev, u16 reg)
+{
+	return HFA384X_INW(reg);
+}
+
 static int prism2_registers_proc_show(struct seq_file *m, void *v)
 {
 	local_info_t *local = m->private;
@@ -2947,21 +2949,7 @@ static int prism2_registers_proc_show(struct seq_file *m, void *v)
 
 	return 0;
 }
-
-static int prism2_registers_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, prism2_registers_proc_show, PDE_DATA(inode));
-}
-
-static const struct file_operations prism2_registers_proc_fops = {
-	.open		= prism2_registers_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-#endif /* PRISM2_NO_PROCFS_DEBUG */
-
+#endif
 
 struct set_tim_data {
 	struct list_head list;
@@ -3221,13 +3209,8 @@ while (0)
 
 	lib80211_crypt_info_init(&local->crypt_info, dev->name, &local->lock);
 
-	init_timer(&local->passive_scan_timer);
-	local->passive_scan_timer.data = (unsigned long) local;
-	local->passive_scan_timer.function = hostap_passive_scan;
-
-	init_timer(&local->tick_timer);
-	local->tick_timer.data = (unsigned long) local;
-	local->tick_timer.function = hostap_tick_timer;
+	timer_setup(&local->passive_scan_timer, hostap_passive_scan, 0);
+	timer_setup(&local->tick_timer, hostap_tick_timer, 0);
 	local->tick_timer.expires = jiffies + 2 * HZ;
 	add_timer(&local->tick_timer);
 
@@ -3280,8 +3263,8 @@ static int hostap_hw_ready(struct net_device *dev)
 		}
 		hostap_init_proc(local);
 #ifndef PRISM2_NO_PROCFS_DEBUG
-		proc_create_data("registers", 0, local->proc,
-				 &prism2_registers_proc_fops, local);
+		proc_create_single_data("registers", 0, local->proc,
+				 prism2_registers_proc_show, local);
 #endif /* PRISM2_NO_PROCFS_DEBUG */
 		hostap_init_ap_proc(local);
 		return 0;

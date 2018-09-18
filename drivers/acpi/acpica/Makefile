@@ -1,8 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for ACPICA Core interpreter
 #
 
-ccflags-y			:= -Os -DBUILDING_ACPICA
+ccflags-y			:= -Os -D_LINUX -DBUILDING_ACPICA
 ccflags-$(CONFIG_ACPI_DEBUG)	+= -DACPI_DEBUG_OUTPUT
 
 # use acpi.o to put all files here into acpi.o modparam namespace
@@ -18,6 +19,7 @@ acpi-y :=		\
 	dsmthdat.o	\
 	dsobject.o	\
 	dsopcode.o	\
+	dspkginit.o	\
 	dsutils.o	\
 	dswexec.o	\
 	dswload.o	\
@@ -43,6 +45,7 @@ acpi-y +=		\
 	evxfregn.o
 
 acpi-y +=		\
+	exconcat.o	\
 	exconfig.o	\
 	exconvrt.o	\
 	excreate.o	\
@@ -149,6 +152,7 @@ acpi-y +=		\
 acpi-y +=		\
 	utaddress.o	\
 	utalloc.o	\
+	utascii.o	\
 	utbuffer.o	\
 	utcopy.o	\
 	utexcep.o	\
@@ -170,9 +174,12 @@ acpi-y +=		\
 	utosi.o		\
 	utownerid.o	\
 	utpredef.o	\
+	utresdecode.o	\
 	utresrc.o	\
 	utstate.o	\
 	utstring.o	\
+	utstrsuppt.o	\
+	utstrtoul64.o	\
 	utxface.o	\
 	utxfinit.o	\
 	utxferror.o	\

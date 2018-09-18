@@ -25,7 +25,7 @@
 #include <linux/spinlock.h>
 #include <linux/platform_device.h>
 #include <linux/pci.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/mfd/rdc321x.h>
 #include <linux/slab.h>
 
@@ -194,23 +194,13 @@ static int rdc321x_gpio_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "registering %d GPIOs\n",
 					rdc321x_gpio_dev->chip.ngpio);
-	return gpiochip_add_data(&rdc321x_gpio_dev->chip, rdc321x_gpio_dev);
-}
-
-static int rdc321x_gpio_remove(struct platform_device *pdev)
-{
-	struct rdc321x_gpio *rdc321x_gpio_dev = platform_get_drvdata(pdev);
-
-	gpiochip_remove(&rdc321x_gpio_dev->chip);
-
-	return 0;
+	return devm_gpiochip_add_data(&pdev->dev, &rdc321x_gpio_dev->chip,
+				      rdc321x_gpio_dev);
 }
 
 static struct platform_driver rdc321x_gpio_driver = {
 	.driver.name	= "rdc321x-gpio",
-	.driver.owner	= THIS_MODULE,
 	.probe		= rdc321x_gpio_probe,
-	.remove		= rdc321x_gpio_remove,
 };
 
 module_platform_driver(rdc321x_gpio_driver);

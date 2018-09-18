@@ -13,11 +13,11 @@
 
 #include <uapi/linux/time.h>
 #include <asm/vgtod.h>
-#include <asm/hpet.h>
 #include <asm/vvar.h>
 #include <asm/unistd.h>
 #include <asm/msr.h>
 #include <asm/pvclock.h>
+#include <asm/mshyperv.h>
 #include <linux/math64.h>
 #include <linux/time.h>
 #include <linux/kernel.h>
@@ -28,18 +28,13 @@ extern int __vdso_clock_gettime(clockid_t clock, struct timespec *ts);
 extern int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz);
 extern time_t __vdso_time(time_t *t);
 
-#ifdef CONFIG_HPET_TIMER
-extern u8 hpet_page
-	__attribute__((visibility("hidden")));
-
-static notrace cycle_t vread_hpet(void)
-{
-	return *(const volatile u32 *)(&hpet_page + HPET_COUNTER);
-}
-#endif
-
 #ifdef CONFIG_PARAVIRT_CLOCK
 extern u8 pvclock_page
+	__attribute__((visibility("hidden")));
+#endif
+
+#ifdef CONFIG_HYPERV_TSCPAGE
+extern u8 hvclock_page
 	__attribute__((visibility("hidden")));
 #endif
 
@@ -103,13 +98,12 @@ static notrace const struct pvclock_vsyscall_time_info *get_pvti0(void)
 	return (const struct pvclock_vsyscall_time_info *)&pvclock_page;
 }
 
-static notrace cycle_t vread_pvclock(int *mode)
+static notrace u64 vread_pvclock(int *mode)
 {
 	const struct pvclock_vcpu_time_info *pvti = &get_pvti0()->pvti;
-	cycle_t ret;
-	u64 tsc, pvti_tsc;
-	u64 last, delta, pvti_system_time;
-	u32 version, pvti_tsc_to_system_mul, pvti_tsc_shift;
+	u64 ret;
+	u64 last;
+	u32 version;
 
 	/*
 	 * Note: The kernel and hypervisor must guarantee that cpu ID
@@ -134,29 +128,15 @@ static notrace cycle_t vread_pvclock(int *mode)
 	 */
 
 	do {
-		version = pvti->version;
-
-		smp_rmb();
+		version = pvclock_read_begin(pvti);
 
 		if (unlikely(!(pvti->flags & PVCLOCK_TSC_STABLE_BIT))) {
 			*mode = VCLOCK_NONE;
 			return 0;
 		}
 
-		tsc = rdtsc_ordered();
-		pvti_tsc_to_system_mul = pvti->tsc_to_system_mul;
-		pvti_tsc_shift = pvti->tsc_shift;
-		pvti_system_time = pvti->system_time;
-		pvti_tsc = pvti->tsc_timestamp;
-
-		/* Make sure that the version double-check is last. */
-		smp_rmb();
-	} while (unlikely((version & 1) || version != pvti->version));
-
-	delta = tsc - pvti_tsc;
-	ret = pvti_system_time +
-		pvclock_scale_delta(delta, pvti_tsc_to_system_mul,
-				    pvti_tsc_shift);
+		ret = __pvclock_read_cycles(pvti, rdtsc_ordered());
+	} while (pvclock_read_retry(pvti, version));
 
 	/* refer to vread_tsc() comment for rationale */
 	last = gtod->cycle_last;
@@ -167,10 +147,24 @@ static notrace cycle_t vread_pvclock(int *mode)
 	return last;
 }
 #endif
-
-notrace static cycle_t vread_tsc(void)
+#ifdef CONFIG_HYPERV_TSCPAGE
+static notrace u64 vread_hvclock(int *mode)
 {
-	cycle_t ret = (cycle_t)rdtsc_ordered();
+	const struct ms_hyperv_tsc_page *tsc_pg =
+		(const struct ms_hyperv_tsc_page *)&hvclock_page;
+	u64 current_tick = hv_read_tsc_page(tsc_pg);
+
+	if (current_tick != U64_MAX)
+		return current_tick;
+
+	*mode = VCLOCK_NONE;
+	return 0;
+}
+#endif
+
+notrace static u64 vread_tsc(void)
+{
+	u64 ret = (u64)rdtsc_ordered();
 	u64 last = gtod->cycle_last;
 
 	if (likely(ret >= last))
@@ -178,7 +172,7 @@ notrace static cycle_t vread_tsc(void)
 
 	/*
 	 * GCC likes to generate cmov here, but this branch is extremely
-	 * predictable (it's just a funciton of time and the likely is
+	 * predictable (it's just a function of time and the likely is
 	 * very likely) and there's a data dependence, so force GCC
 	 * to generate a branch instead.  I don't barrier() because
 	 * we don't actually need a barrier, and if this function
@@ -195,13 +189,13 @@ notrace static inline u64 vgetsns(int *mode)
 
 	if (gtod->vclock_mode == VCLOCK_TSC)
 		cycles = vread_tsc();
-#ifdef CONFIG_HPET_TIMER
-	else if (gtod->vclock_mode == VCLOCK_HPET)
-		cycles = vread_hpet();
-#endif
 #ifdef CONFIG_PARAVIRT_CLOCK
 	else if (gtod->vclock_mode == VCLOCK_PVCLOCK)
 		cycles = vread_pvclock(mode);
+#endif
+#ifdef CONFIG_HYPERV_TSCPAGE
+	else if (gtod->vclock_mode == VCLOCK_HVCLOCK)
+		cycles = vread_hvclock(mode);
 #endif
 	else
 		return 0;
@@ -324,11 +318,11 @@ int gettimeofday(struct timeval *, struct timezone *)
 notrace time_t __vdso_time(time_t *t)
 {
 	/* This is atomic on x86 so we don't need any locks. */
-	time_t result = ACCESS_ONCE(gtod->wall_time_sec);
+	time_t result = READ_ONCE(gtod->wall_time_sec);
 
 	if (t)
 		*t = result;
 	return result;
 }
-int time(time_t *t)
+time_t time(time_t *t)
 	__attribute__((weak, alias("__vdso_time")));

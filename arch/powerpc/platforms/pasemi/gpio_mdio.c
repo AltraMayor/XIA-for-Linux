@@ -256,7 +256,7 @@ static int gpio_mdio_probe(struct platform_device *ofdev)
 	err = of_mdiobus_register(new_bus, np);
 
 	if (err != 0) {
-		printk(KERN_ERR "%s: Cannot register as MDIO bus, err %d\n",
+		pr_err("%s: Cannot register as MDIO bus, err %d\n",
 				new_bus->name, err);
 		goto out_free_irq;
 	}
@@ -306,7 +306,7 @@ static struct platform_driver gpio_mdio_driver =
 	},
 };
 
-int gpio_mdio_init(void)
+static int gpio_mdio_init(void)
 {
 	struct device_node *np;
 
@@ -326,7 +326,7 @@ int gpio_mdio_init(void)
 }
 module_init(gpio_mdio_init);
 
-void gpio_mdio_exit(void)
+static void gpio_mdio_exit(void)
 {
 	platform_driver_unregister(&gpio_mdio_driver);
 	if (gpio_regs)

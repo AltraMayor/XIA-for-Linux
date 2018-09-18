@@ -19,11 +19,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
- *
  * TODO:
  * - fault interrupt handling
  * - hardware strobe
@@ -95,7 +90,7 @@ static int adp1653_get_fault(struct adp1653_flash *flash)
 	int rval;
 
 	fault = i2c_smbus_read_byte_data(client, ADP1653_REG_FAULT);
-	if (IS_ERR_VALUE(fault))
+	if (fault < 0)
 		return fault;
 
 	flash->fault |= fault;
@@ -105,13 +100,13 @@ static int adp1653_get_fault(struct adp1653_flash *flash)
 
 	/* Clear faults. */
 	rval = i2c_smbus_write_byte_data(client, ADP1653_REG_OUT_SEL, 0);
-	if (IS_ERR_VALUE(rval))
+	if (rval < 0)
 		return rval;
 
 	flash->led_mode->val = V4L2_FLASH_LED_MODE_NONE;
 
 	rval = adp1653_update_hw(flash);
-	if (IS_ERR_VALUE(rval))
+	if (rval)
 		return rval;
 
 	return flash->fault;
@@ -158,7 +153,7 @@ static int adp1653_get_ctrl(struct v4l2_ctrl *ctrl)
 	int rval;
 
 	rval = adp1653_get_fault(flash);
-	if (IS_ERR_VALUE(rval))
+	if (rval)
 		return rval;
 
 	ctrl->cur.val = 0;
@@ -184,7 +179,7 @@ static int adp1653_set_ctrl(struct v4l2_ctrl *ctrl)
 	int rval;
 
 	rval = adp1653_get_fault(flash);
-	if (IS_ERR_VALUE(rval))
+	if (rval)
 		return rval;
 	if ((rval & (ADP1653_REG_FAULT_FLT_SCP |
 		     ADP1653_REG_FAULT_FLT_OT |
@@ -466,9 +461,9 @@ static int adp1653_of_init(struct i2c_client *client,
 	of_node_put(child);
 
 	pd->enable_gpio = devm_gpiod_get(&client->dev, "enable", GPIOD_OUT_LOW);
-	if (!pd->enable_gpio) {
+	if (IS_ERR(pd->enable_gpio)) {
 		dev_err(&client->dev, "Error getting GPIO\n");
-		return -EINVAL;
+		return PTR_ERR(pd->enable_gpio);
 	}
 
 	return 0;

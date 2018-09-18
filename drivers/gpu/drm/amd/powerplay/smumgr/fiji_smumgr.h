@@ -23,55 +23,27 @@
 #ifndef _FIJI_SMUMANAGER_H_
 #define _FIJI_SMUMANAGER_H_
 
-enum AVFS_BTC_STATUS {
-	AVFS_BTC_BOOT = 0,
-	AVFS_BTC_BOOT_STARTEDSMU,
-	AVFS_LOAD_VIRUS,
-	AVFS_BTC_VIRUS_LOADED,
-	AVFS_BTC_VIRUS_FAIL,
-	AVFS_BTC_STARTED,
-	AVFS_BTC_FAILED,
-	AVFS_BTC_RESTOREVFT_FAILED,
-	AVFS_BTC_SAVEVFT_FAILED,
-	AVFS_BTC_DPMTABLESETUP_FAILED,
-	AVFS_BTC_COMPLETED_UNSAVED,
-	AVFS_BTC_COMPLETED_SAVED,
-	AVFS_BTC_COMPLETED_RESTORED,
-	AVFS_BTC_DISABLED,
-	AVFS_BTC_NOTSUPPORTED,
-	AVFS_BTC_SMUMSG_ERROR
-};
+#include "smu73_discrete.h"
+#include <pp_endian.h>
+#include "smu7_smumgr.h"
 
-struct fiji_smu_avfs {
-	enum AVFS_BTC_STATUS AvfsBtcStatus;
-	uint32_t           AvfsBtcParam;
-};
 
-struct fiji_buffer_entry {
-	uint32_t data_size;
-	uint32_t mc_addr_low;
-	uint32_t mc_addr_high;
-	void *kaddr;
-	unsigned long  handle;
+struct fiji_pt_defaults {
+	uint8_t   SviLoadLineEn;
+	uint8_t   SviLoadLineVddC;
+	uint8_t   TDC_VDDC_ThrottleReleaseLimitPerc;
+	uint8_t   TDC_MAWt;
+	uint8_t   TdcWaterfallCtl;
+	uint8_t   DTEAmbientTempBase;
 };
 
 struct fiji_smumgr {
-	uint8_t        *header;
-	uint8_t        *mec_image;
-	uint32_t        soft_regs_start;
-	struct fiji_smu_avfs avfs;
-	uint32_t        acpi_optimization;
-
-	struct fiji_buffer_entry header_buffer;
+	struct smu7_smumgr                   smu7_data;
+	struct SMU73_Discrete_DpmTable       smc_state_table;
+	struct SMU73_Discrete_Ulv            ulv_setting;
+	struct SMU73_Discrete_PmFuses  power_tune_table;
+	const struct fiji_pt_defaults  *power_tune_defaults;
 };
-
-int fiji_smum_init(struct pp_smumgr *smumgr);
-int fiji_read_smc_sram_dword(struct pp_smumgr *smumgr, uint32_t smcAddress,
-		uint32_t *value, uint32_t limit);
-int fiji_write_smc_sram_dword(struct pp_smumgr *smumgr, uint32_t smc_addr,
-		uint32_t value, uint32_t limit);
-int fiji_copy_bytes_to_smc(struct pp_smumgr *smumgr, uint32_t smcStartAddress,
-		const uint8_t *src,	uint32_t byteCount, uint32_t limit);
 
 #endif
 

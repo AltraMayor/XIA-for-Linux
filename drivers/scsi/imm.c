@@ -77,9 +77,10 @@ static void imm_wakeup(void *ref)
 
 	spin_lock_irqsave(&arbitration_lock, flags);
 	if (dev->wanted) {
-		parport_claim(dev->dev);
-		got_it(dev);
-		dev->wanted = 0;
+		if (parport_claim(dev->dev) == 0) {
+			got_it(dev);
+			dev->wanted = 0;
+		}
 	}
 	spin_unlock_irqrestore(&arbitration_lock, flags);
 }
@@ -891,7 +892,7 @@ static int imm_engine(imm_struct *dev, struct scsi_cmnd *cmd)
 			/* Check for optional message byte */
 			if (imm_wait(dev) == (unsigned char) 0xb8)
 				imm_in(dev, &h, 1);
-			cmd->result = (DID_OK << 16) + (l & STATUS_MASK);
+			cmd->result = (DID_OK << 16) | (l & STATUS_MASK);
 		}
 		if ((dev->mode == IMM_NIBBLE) || (dev->mode == IMM_PS2)) {
 			w_ctr(ppb, 0x4);
@@ -1105,7 +1106,6 @@ static struct scsi_host_template imm_template = {
 	.name			= "Iomega VPI2 (imm) interface",
 	.queuecommand		= imm_queuecommand,
 	.eh_abort_handler	= imm_abort,
-	.eh_bus_reset_handler	= imm_reset,
 	.eh_host_reset_handler	= imm_reset,
 	.bios_param		= imm_biosparam,
 	.this_id		= 7,

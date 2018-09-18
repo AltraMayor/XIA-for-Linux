@@ -1,30 +1,5 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2006 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 1999 - 2006 Intel Corporation. */
 
 #include "e1000.h"
 #include <net/ip6_checksum.h>
@@ -114,8 +89,8 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent);
 static void e1000_remove(struct pci_dev *pdev);
 static int e1000_alloc_queues(struct e1000_adapter *adapter);
 static int e1000_sw_init(struct e1000_adapter *adapter);
-static int e1000_open(struct net_device *netdev);
-static int e1000_close(struct net_device *netdev);
+int e1000_open(struct net_device *netdev);
+int e1000_close(struct net_device *netdev);
 static void e1000_configure_tx(struct e1000_adapter *adapter);
 static void e1000_configure_rx(struct e1000_adapter *adapter);
 static void e1000_setup_rctl(struct e1000_adapter *adapter);
@@ -131,7 +106,6 @@ static void e1000_watchdog(struct work_struct *work);
 static void e1000_82547_tx_fifo_stall_task(struct work_struct *work);
 static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 				    struct net_device *netdev);
-static struct net_device_stats *e1000_get_stats(struct net_device *netdev);
 static int e1000_change_mtu(struct net_device *netdev, int new_mtu);
 static int e1000_set_mac(struct net_device *netdev, void *p);
 static irqreturn_t e1000_intr(int irq, void *data);
@@ -521,8 +495,6 @@ void e1000_down(struct e1000_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	u32 rctl, tctl;
 
-	netif_carrier_off(netdev);
-
 	/* disable receives in the hardware */
 	rctl = er32(RCTL);
 	ew32(RCTL, rctl & ~E1000_RCTL_EN);
@@ -537,6 +509,15 @@ void e1000_down(struct e1000_adapter *adapter)
 	/* flush both disables and wait for them to finish */
 	E1000_WRITE_FLUSH();
 	msleep(10);
+
+	/* Set the carrier off after transmits have been disabled in the
+	 * hardware, to avoid race conditions with e1000_watchdog() (which
+	 * may be running concurrently to us, checking for the carrier
+	 * bit to decide whether it should enable transmits again). Such
+	 * a race condition would result into transmission being disabled
+	 * in the hardware until the next IFF_DOWN+IFF_UP cycle.
+	 */
+	netif_carrier_off(netdev);
 
 	napi_disable(&adapter->napi);
 
@@ -846,7 +827,6 @@ static const struct net_device_ops e1000_netdev_ops = {
 	.ndo_open		= e1000_open,
 	.ndo_stop		= e1000_close,
 	.ndo_start_xmit		= e1000_xmit_frame,
-	.ndo_get_stats		= e1000_get_stats,
 	.ndo_set_rx_mode	= e1000_set_rx_mode,
 	.ndo_set_mac_address	= e1000_set_mac,
 	.ndo_tx_timeout		= e1000_tx_timeout,
@@ -940,7 +920,7 @@ static int e1000_init_hw_struct(struct e1000_adapter *adapter,
 static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
-	struct e1000_adapter *adapter;
+	struct e1000_adapter *adapter = NULL;
 	struct e1000_hw *hw;
 
 	static int cards_found;
@@ -950,6 +930,7 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	u16 tmp = 0;
 	u16 eeprom_apme_mask = E1000_EEPROM_APME;
 	int bars, need_ioport;
+	bool disable_dev = false;
 
 	/* do not allocate ioport bars when not needed */
 	need_ioport = e1000_is_need_ioport(pdev);
@@ -1084,6 +1065,10 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (hw->device_id != E1000_DEV_ID_82545EM_COPPER ||
 	    hw->subsystem_vendor_id != PCI_VENDOR_ID_VMWARE)
 		netdev->priv_flags |= IFF_UNICAST_FLT;
+
+	/* MTU range: 46 - 16110 */
+	netdev->min_mtu = ETH_ZLEN - ETH_HLEN;
+	netdev->max_mtu = MAX_JUMBO_FRAME_SIZE - (ETH_HLEN + ETH_FCS_LEN);
 
 	adapter->en_mng_pt = e1000_enable_mng_pass_thru(hw);
 
@@ -1250,11 +1235,13 @@ err_mdio_ioremap:
 	iounmap(hw->ce4100_gbe_mdio_base_virt);
 	iounmap(hw->hw_addr);
 err_ioremap:
+	disable_dev = !test_and_set_bit(__E1000_DISABLED, &adapter->flags);
 	free_netdev(netdev);
 err_alloc_etherdev:
 	pci_release_selected_regions(pdev, bars);
 err_pci_reg:
-	pci_disable_device(pdev);
+	if (!adapter || disable_dev)
+		pci_disable_device(pdev);
 	return err;
 }
 
@@ -1272,6 +1259,7 @@ static void e1000_remove(struct pci_dev *pdev)
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
+	bool disable_dev;
 
 	e1000_down_and_stop(adapter);
 	e1000_release_manageability(adapter);
@@ -1290,9 +1278,11 @@ static void e1000_remove(struct pci_dev *pdev)
 		iounmap(hw->flash_address);
 	pci_release_selected_regions(pdev, adapter->bars);
 
+	disable_dev = !test_and_set_bit(__E1000_DISABLED, &adapter->flags);
 	free_netdev(netdev);
 
-	pci_disable_device(pdev);
+	if (disable_dev)
+		pci_disable_device(pdev);
 }
 
 /**
@@ -1360,7 +1350,7 @@ static int e1000_alloc_queues(struct e1000_adapter *adapter)
  * handler is registered with the OS, the watchdog task is started,
  * and the stack is notified that the interface is ready.
  **/
-static int e1000_open(struct net_device *netdev)
+int e1000_open(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -1437,7 +1427,7 @@ err_setup_tx:
  * needs to be disabled.  A global MAC reset is issued to stop the
  * hardware, and all transmit and receive resources are freed.
  **/
-static int e1000_close(struct net_device *netdev)
+int e1000_close(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
@@ -3106,7 +3096,7 @@ static int e1000_maybe_stop_tx(struct net_device *netdev,
 	return __e1000_maybe_stop_tx(netdev, size);
 }
 
-#define TXD_USE_COUNT(S, X) (((S) >> (X)) + 1)
+#define TXD_USE_COUNT(S, X) (((S) + ((1 << (X)) - 1)) >> (X))
 static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 				    struct net_device *netdev)
 {
@@ -3256,12 +3246,29 @@ static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 			     nr_frags, mss);
 
 	if (count) {
+		/* The descriptors needed is higher than other Intel drivers
+		 * due to a number of workarounds.  The breakdown is below:
+		 * Data descriptors: MAX_SKB_FRAGS + 1
+		 * Context Descriptor: 1
+		 * Keep head from touching tail: 2
+		 * Workarounds: 3
+		 */
+		int desc_needed = MAX_SKB_FRAGS + 7;
+
 		netdev_sent_queue(netdev, skb->len);
 		skb_tx_timestamp(skb);
 
 		e1000_tx_queue(adapter, tx_ring, tx_flags, count);
+
+		/* 82544 potentially requires twice as many data descriptors
+		 * in order to guarantee buffers don't end on evenly-aligned
+		 * dwords
+		 */
+		if (adapter->pcix_82544)
+			desc_needed += MAX_SKB_FRAGS + 1;
+
 		/* Make sure there is space in the ring for the next send. */
-		e1000_maybe_stop_tx(netdev, tx_ring, MAX_SKB_FRAGS + 2);
+		e1000_maybe_stop_tx(netdev, tx_ring, desc_needed);
 
 		if (!skb->xmit_more ||
 		    netif_xmit_stopped(netdev_get_tx_queue(netdev, 0))) {
@@ -3509,19 +3516,6 @@ static void e1000_reset_task(struct work_struct *work)
 }
 
 /**
- * e1000_get_stats - Get System Network Statistics
- * @netdev: network interface device structure
- *
- * Returns the address of the device statistics structure.
- * The statistics are actually updated from the watchdog.
- **/
-static struct net_device_stats *e1000_get_stats(struct net_device *netdev)
-{
-	/* only return the current stats */
-	return &netdev->stats;
-}
-
-/**
  * e1000_change_mtu - Change the Maximum Transfer Unit
  * @netdev: network interface device structure
  * @new_mtu: new value for maximum frame size
@@ -3532,13 +3526,7 @@ static int e1000_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
-	int max_frame = new_mtu + ENET_HEADER_SIZE + ETHERNET_FCS_SIZE;
-
-	if ((max_frame < MINIMUM_ETHERNET_FRAME_SIZE) ||
-	    (max_frame > MAX_JUMBO_FRAME_SIZE)) {
-		e_err(probe, "Invalid MTU setting\n");
-		return -EINVAL;
-	}
+	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN;
 
 	/* Adapter-specific max frame size limits. */
 	switch (hw->mac_type) {
@@ -4345,7 +4333,7 @@ static struct sk_buff *e1000_copybreak(struct e1000_adapter *adapter,
 	dma_sync_single_for_cpu(&adapter->pdev->dev, buffer_info->dma,
 				length, DMA_FROM_DEVICE);
 
-	memcpy(skb_put(skb, length), data, length);
+	skb_put_data(skb, data, length);
 
 	return skb;
 }
@@ -5149,7 +5137,8 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
 	if (netif_running(netdev))
 		e1000_free_irq(adapter);
 
-	pci_disable_device(pdev);
+	if (!test_and_set_bit(__E1000_DISABLED, &adapter->flags))
+		pci_disable_device(pdev);
 
 	return 0;
 }
@@ -5193,6 +5182,10 @@ static int e1000_resume(struct pci_dev *pdev)
 		pr_err("Cannot enable PCI device from suspend\n");
 		return err;
 	}
+
+	/* flush memory to make sure state is correct */
+	smp_mb__before_atomic();
+	clear_bit(__E1000_DISABLED, &adapter->flags);
 	pci_set_master(pdev);
 
 	pci_enable_wake(pdev, PCI_D3hot, 0);
@@ -5240,8 +5233,8 @@ static void e1000_netpoll(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 
-	disable_irq(adapter->pdev->irq);
-	e1000_intr(adapter->pdev->irq, netdev);
+	if (disable_hardirq(adapter->pdev->irq))
+		e1000_intr(adapter->pdev->irq, netdev);
 	enable_irq(adapter->pdev->irq);
 }
 #endif
@@ -5267,7 +5260,9 @@ static pci_ers_result_t e1000_io_error_detected(struct pci_dev *pdev,
 
 	if (netif_running(netdev))
 		e1000_down(adapter);
-	pci_disable_device(pdev);
+
+	if (!test_and_set_bit(__E1000_DISABLED, &adapter->flags))
+		pci_disable_device(pdev);
 
 	/* Request a slot slot reset. */
 	return PCI_ERS_RESULT_NEED_RESET;
@@ -5295,6 +5290,10 @@ static pci_ers_result_t e1000_io_slot_reset(struct pci_dev *pdev)
 		pr_err("Cannot re-enable PCI device after reset.\n");
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
+
+	/* flush memory to make sure state is correct */
+	smp_mb__before_atomic();
+	clear_bit(__E1000_DISABLED, &adapter->flags);
 	pci_set_master(pdev);
 
 	pci_enable_wake(pdev, PCI_D3hot, 0);

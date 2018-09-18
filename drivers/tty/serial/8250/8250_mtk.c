@@ -1,22 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Mediatek 8250 driver.
  *
  * Copyright (c) 2014 MundoReader S.L.
  * Author: Matthias Brugger <matthias.bgg@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/init.h>
+#include <linux/module.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -41,11 +32,9 @@ static void
 mtk8250_set_termios(struct uart_port *port, struct ktermios *termios,
 			struct ktermios *old)
 {
+	struct uart_8250_port *up = up_to_u8250p(port);
 	unsigned long flags;
 	unsigned int baud, quot;
-
-	struct uart_8250_port *up =
-		container_of(port, struct uart_8250_port, port);
 
 	serial8250_do_set_termios(port, termios, old);
 
@@ -63,8 +52,8 @@ mtk8250_set_termios(struct uart_port *port, struct ktermios *termios,
 	 * registers to their default values.
 	 */
 	baud = uart_get_baud_rate(port, termios, old,
-				  port->uartclk / 16 / 0xffff,
-				  port->uartclk / 16);
+				  port->uartclk / 16 / UART_DIV_MAX,
+				  port->uartclk);
 
 	if (baud <= 115200) {
 		serial_port_out(port, UART_MTK_HIGHS, 0x0);
@@ -78,10 +67,6 @@ mtk8250_set_termios(struct uart_port *port, struct ktermios *termios,
 		quot = DIV_ROUND_UP(port->uartclk, 4 * baud);
 	} else {
 		serial_port_out(port, UART_MTK_HIGHS, 0x3);
-
-		/* Set to highest baudrate supported */
-		if (baud >= 1152000)
-			baud = 921600;
 		quot = DIV_ROUND_UP(port->uartclk, 256 * baud);
 	}
 
@@ -116,7 +101,7 @@ mtk8250_set_termios(struct uart_port *port, struct ktermios *termios,
 		tty_termios_encode_baud_rate(termios, baud, baud);
 }
 
-static int mtk8250_runtime_suspend(struct device *dev)
+static int __maybe_unused mtk8250_runtime_suspend(struct device *dev)
 {
 	struct mtk8250_data *data = dev_get_drvdata(dev);
 
@@ -126,7 +111,7 @@ static int mtk8250_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int mtk8250_runtime_resume(struct device *dev)
+static int __maybe_unused mtk8250_runtime_resume(struct device *dev)
 {
 	struct mtk8250_data *data = dev_get_drvdata(dev);
 	int err;
@@ -177,10 +162,7 @@ static int mtk8250_probe_of(struct platform_device *pdev, struct uart_port *p,
 	}
 
 	data->bus_clk = devm_clk_get(&pdev->dev, "bus");
-	if (IS_ERR(data->bus_clk))
-		return PTR_ERR(data->bus_clk);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(data->bus_clk);
 }
 
 static int mtk8250_probe(struct platform_device *pdev)
@@ -245,8 +227,24 @@ static int mtk8250_probe(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int mtk8250_suspend(struct device *dev)
+static int mtk8250_remove(struct platform_device *pdev)
+{
+	struct mtk8250_data *data = platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(&pdev->dev);
+
+	serial8250_unregister_port(data->line);
+
+	pm_runtime_disable(&pdev->dev);
+	pm_runtime_put_noidle(&pdev->dev);
+
+	if (!pm_runtime_status_suspended(&pdev->dev))
+		mtk8250_runtime_suspend(&pdev->dev);
+
+	return 0;
+}
+
+static int __maybe_unused mtk8250_suspend(struct device *dev)
 {
 	struct mtk8250_data *data = dev_get_drvdata(dev);
 
@@ -255,7 +253,7 @@ static int mtk8250_suspend(struct device *dev)
 	return 0;
 }
 
-static int mtk8250_resume(struct device *dev)
+static int __maybe_unused mtk8250_resume(struct device *dev)
 {
 	struct mtk8250_data *data = dev_get_drvdata(dev);
 
@@ -263,7 +261,6 @@ static int mtk8250_resume(struct device *dev)
 
 	return 0;
 }
-#endif /* CONFIG_PM_SLEEP */
 
 static const struct dev_pm_ops mtk8250_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(mtk8250_suspend, mtk8250_resume)
@@ -275,18 +272,18 @@ static const struct of_device_id mtk8250_of_match[] = {
 	{ .compatible = "mediatek,mt6577-uart" },
 	{ /* Sentinel */ }
 };
+MODULE_DEVICE_TABLE(of, mtk8250_of_match);
 
 static struct platform_driver mtk8250_platform_driver = {
 	.driver = {
-		.name			= "mt6577-uart",
-		.pm			= &mtk8250_pm_ops,
-		.of_match_table		= mtk8250_of_match,
-		.suppress_bind_attrs	= true,
-
+		.name		= "mt6577-uart",
+		.pm		= &mtk8250_pm_ops,
+		.of_match_table	= mtk8250_of_match,
 	},
 	.probe			= mtk8250_probe,
+	.remove			= mtk8250_remove,
 };
-builtin_platform_driver(mtk8250_platform_driver);
+module_platform_driver(mtk8250_platform_driver);
 
 #ifdef CONFIG_SERIAL_8250_CONSOLE
 static int __init early_mtk8250_setup(struct earlycon_device *device,
@@ -302,3 +299,7 @@ static int __init early_mtk8250_setup(struct earlycon_device *device,
 
 OF_EARLYCON_DECLARE(mtk8250, "mediatek,mt6577-uart", early_mtk8250_setup);
 #endif
+
+MODULE_AUTHOR("Matthias Brugger");
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Mediatek 8250 serial port driver");

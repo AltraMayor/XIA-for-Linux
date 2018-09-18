@@ -17,23 +17,26 @@
 #include <linux/wl12xx.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
+#include <linux/power/smartreflex.h>
 #include <linux/regulator/machine.h>
 #include <linux/regulator/fixed.h>
 
 #include <linux/platform_data/pinctrl-single.h>
+#include <linux/platform_data/hsmmc-omap.h>
 #include <linux/platform_data/iommu-omap.h>
+#include <linux/platform_data/ti-sysc.h>
 #include <linux/platform_data/wkup_m3.h>
-#include <linux/platform_data/pwm_omap_dmtimer.h>
-#include <plat/dmtimer.h>
+#include <linux/platform_data/asoc-ti-mcbsp.h>
 
 #include "common.h"
 #include "common-board-devices.h"
-#include "dss-common.h"
 #include "control.h"
 #include "omap_device.h"
 #include "omap-secure.h"
 #include "soc.h"
 #include "hsmmc.h"
+
+static struct omap_hsmmc_platform_data __maybe_unused mmc_pdata[2];
 
 struct pdata_init {
 	const char *compatible;
@@ -156,7 +159,7 @@ static struct ti_st_plat_data wilink7_pdata = {
 	.nshutdown_gpio = 162,
 	.dev_name = "/dev/ttyO1",
 	.flow_cntrl = 1,
-	.baud_rate = 300000,
+	.baud_rate = 3000000,
 };
 
 static struct platform_device wl128x_device = {
@@ -271,6 +274,8 @@ static struct platform_device omap3_rom_rng_device = {
 static void __init nokia_n900_legacy_init(void)
 {
 	hsmmc2_internal_input_clk();
+	mmc_pdata[0].name = "external";
+	mmc_pdata[1].name = "internal";
 
 	if (omap_type() == OMAP2_DEVICE_TYPE_SEC) {
 		if (IS_ENABLED(CONFIG_ARM_ERRATA_430973)) {
@@ -284,7 +289,6 @@ static void __init nokia_n900_legacy_init(void)
 
 		pr_info("RX-51: Registering OMAP3 HWRNG device\n");
 		platform_device_register(&omap3_rom_rng_device);
-
 	}
 }
 
@@ -428,6 +432,63 @@ static void __init omap5_uevm_legacy_init(void)
 }
 #endif
 
+#ifdef CONFIG_SOC_DRA7XX
+static struct omap_hsmmc_platform_data dra7_hsmmc_data_mmc1;
+static struct omap_hsmmc_platform_data dra7_hsmmc_data_mmc2;
+static struct omap_hsmmc_platform_data dra7_hsmmc_data_mmc3;
+
+static void __init dra7x_evm_mmc_quirk(void)
+{
+	if (omap_rev() == DRA752_REV_ES1_1 || omap_rev() == DRA752_REV_ES1_0) {
+		dra7_hsmmc_data_mmc1.version = "rev11";
+		dra7_hsmmc_data_mmc1.max_freq = 96000000;
+
+		dra7_hsmmc_data_mmc2.version = "rev11";
+		dra7_hsmmc_data_mmc2.max_freq = 48000000;
+
+		dra7_hsmmc_data_mmc3.version = "rev11";
+		dra7_hsmmc_data_mmc3.max_freq = 48000000;
+	}
+}
+#endif
+
+static int ti_sysc_enable_module(struct device *dev,
+				 const struct ti_sysc_cookie *cookie)
+{
+	if (!cookie->data)
+		return -EINVAL;
+
+	return omap_hwmod_enable(cookie->data);
+}
+
+static int ti_sysc_idle_module(struct device *dev,
+			       const struct ti_sysc_cookie *cookie)
+{
+	if (!cookie->data)
+		return -EINVAL;
+
+	return omap_hwmod_idle(cookie->data);
+}
+
+static int ti_sysc_shutdown_module(struct device *dev,
+				   const struct ti_sysc_cookie *cookie)
+{
+	if (!cookie->data)
+		return -EINVAL;
+
+	return omap_hwmod_shutdown(cookie->data);
+}
+
+static struct of_dev_auxdata omap_auxdata_lookup[];
+
+static struct ti_sysc_platform_data ti_sysc_pdata = {
+	.auxdata = omap_auxdata_lookup,
+	.init_module = omap_hwmod_init_module,
+	.enable_module = ti_sysc_enable_module,
+	.idle_module = ti_sysc_idle_module,
+	.shutdown_module = ti_sysc_shutdown_module,
+};
+
 static struct pcs_pdata pcs_pdata;
 
 void omap_pcs_legacy_init(int irq, void (*rearm)(void))
@@ -451,22 +512,14 @@ void omap_auxdata_legacy_init(struct device *dev)
 	dev->platform_data = &twl_gpio_auxdata;
 }
 
-/* Dual mode timer PWM callbacks platdata */
-#if IS_ENABLED(CONFIG_OMAP_DM_TIMER)
-struct pwm_omap_dmtimer_pdata pwm_dmtimer_pdata = {
-	.request_by_node = omap_dm_timer_request_by_node,
-	.free = omap_dm_timer_free,
-	.enable = omap_dm_timer_enable,
-	.disable = omap_dm_timer_disable,
-	.get_fclk = omap_dm_timer_get_fclk,
-	.start = omap_dm_timer_start,
-	.stop = omap_dm_timer_stop,
-	.set_load = omap_dm_timer_set_load,
-	.set_match = omap_dm_timer_set_match,
-	.set_pwm = omap_dm_timer_set_pwm,
-	.set_prescaler = omap_dm_timer_set_prescaler,
-	.write_counter = omap_dm_timer_write_counter,
-};
+#if IS_ENABLED(CONFIG_SND_OMAP_SOC_MCBSP)
+static struct omap_mcbsp_platform_data mcbsp_pdata;
+static void __init omap3_mcbsp_init(void)
+{
+	omap3_mcbsp_init_pdata_callback(&mcbsp_pdata);
+}
+#else
+static void __init omap3_mcbsp_init(void) {}
 #endif
 
 /*
@@ -485,52 +538,64 @@ static struct pdata_init auxdata_quirks[] __initdata = {
 	{ /* sentinel */ },
 };
 
-static struct of_dev_auxdata omap_auxdata_lookup[] __initdata = {
+struct omap_sr_data __maybe_unused omap_sr_pdata[OMAP_SR_NR];
+
+static struct of_dev_auxdata omap_auxdata_lookup[] = {
 #ifdef CONFIG_MACH_NOKIA_N8X0
 	OF_DEV_AUXDATA("ti,omap2420-mmc", 0x4809c000, "mmci-omap.0", NULL),
 	OF_DEV_AUXDATA("menelaus", 0x72, "1-0072", &n8x0_menelaus_platform_data),
 	OF_DEV_AUXDATA("tlv320aic3x", 0x18, "2-0018", &n810_aic33_data),
 #endif
 #ifdef CONFIG_ARCH_OMAP3
-	OF_DEV_AUXDATA("ti,omap3-padconf", 0x48002030, "48002030.pinmux", &pcs_pdata),
-	OF_DEV_AUXDATA("ti,omap3-padconf", 0x480025a0, "480025a0.pinmux", &pcs_pdata),
-	OF_DEV_AUXDATA("ti,omap3-padconf", 0x48002a00, "48002a00.pinmux", &pcs_pdata),
 	OF_DEV_AUXDATA("ti,omap2-iommu", 0x5d000000, "5d000000.mmu",
 		       &omap3_iommu_pdata),
+	OF_DEV_AUXDATA("ti,omap3-smartreflex-core", 0x480cb000,
+		       "480cb000.smartreflex", &omap_sr_pdata[OMAP_SR_CORE]),
+	OF_DEV_AUXDATA("ti,omap3-smartreflex-mpu-iva", 0x480c9000,
+		       "480c9000.smartreflex", &omap_sr_pdata[OMAP_SR_MPU]),
+	OF_DEV_AUXDATA("ti,omap3-hsmmc", 0x4809c000, "4809c000.mmc", &mmc_pdata[0]),
+	OF_DEV_AUXDATA("ti,omap3-hsmmc", 0x480b4000, "480b4000.mmc", &mmc_pdata[1]),
 	/* Only on am3517 */
 	OF_DEV_AUXDATA("ti,davinci_mdio", 0x5c030000, "davinci_mdio.0", NULL),
 	OF_DEV_AUXDATA("ti,am3517-emac", 0x5c000000, "davinci_emac.0",
 		       &am35xx_emac_pdata),
+	/* McBSP modules with sidetone core */
+#if IS_ENABLED(CONFIG_SND_OMAP_SOC_MCBSP)
+	OF_DEV_AUXDATA("ti,omap3-mcbsp", 0x49022000, "49022000.mcbsp", &mcbsp_pdata),
+	OF_DEV_AUXDATA("ti,omap3-mcbsp", 0x49024000, "49024000.mcbsp", &mcbsp_pdata),
+#endif
 #endif
 #ifdef CONFIG_SOC_AM33XX
 	OF_DEV_AUXDATA("ti,am3352-wkup-m3", 0x44d00000, "44d00000.wkup_m3",
 		       &wkup_m3_data),
 #endif
-#ifdef CONFIG_ARCH_OMAP4
-	OF_DEV_AUXDATA("ti,omap4-padconf", 0x4a100040, "4a100040.pinmux", &pcs_pdata),
-	OF_DEV_AUXDATA("ti,omap4-padconf", 0x4a31e040, "4a31e040.pinmux", &pcs_pdata),
-#endif
-#ifdef CONFIG_SOC_OMAP5
-	OF_DEV_AUXDATA("ti,omap5-padconf", 0x4a002840, "4a002840.pinmux", &pcs_pdata),
-	OF_DEV_AUXDATA("ti,omap5-padconf", 0x4ae0c840, "4ae0c840.pinmux", &pcs_pdata),
-#endif
-#ifdef CONFIG_SOC_DRA7XX
-	OF_DEV_AUXDATA("ti,dra7-padconf", 0x4a003400, "4a003400.pinmux", &pcs_pdata),
-#endif
 #ifdef CONFIG_SOC_AM43XX
-	OF_DEV_AUXDATA("ti,am437-padconf", 0x44e10800, "44e10800.pinmux", &pcs_pdata),
 	OF_DEV_AUXDATA("ti,am4372-wkup-m3", 0x44d00000, "44d00000.wkup_m3",
 		       &wkup_m3_data),
-#endif
-#if IS_ENABLED(CONFIG_OMAP_DM_TIMER)
-	OF_DEV_AUXDATA("ti,omap-dmtimer-pwm", 0, NULL, &pwm_dmtimer_pdata),
 #endif
 #if defined(CONFIG_ARCH_OMAP4) || defined(CONFIG_SOC_OMAP5)
 	OF_DEV_AUXDATA("ti,omap4-iommu", 0x4a066000, "4a066000.mmu",
 		       &omap4_iommu_pdata),
 	OF_DEV_AUXDATA("ti,omap4-iommu", 0x55082000, "55082000.mmu",
 		       &omap4_iommu_pdata),
+	OF_DEV_AUXDATA("ti,omap4-smartreflex-iva", 0x4a0db000,
+		       "4a0db000.smartreflex", &omap_sr_pdata[OMAP_SR_IVA]),
+	OF_DEV_AUXDATA("ti,omap4-smartreflex-core", 0x4a0dd000,
+		       "4a0dd000.smartreflex", &omap_sr_pdata[OMAP_SR_CORE]),
+	OF_DEV_AUXDATA("ti,omap4-smartreflex-mpu", 0x4a0d9000,
+		       "4a0d9000.smartreflex", &omap_sr_pdata[OMAP_SR_MPU]),
 #endif
+#ifdef CONFIG_SOC_DRA7XX
+	OF_DEV_AUXDATA("ti,dra7-hsmmc", 0x4809c000, "4809c000.mmc",
+		       &dra7_hsmmc_data_mmc1),
+	OF_DEV_AUXDATA("ti,dra7-hsmmc", 0x480b4000, "480b4000.mmc",
+		       &dra7_hsmmc_data_mmc2),
+	OF_DEV_AUXDATA("ti,dra7-hsmmc", 0x480ad000, "480ad000.mmc",
+		       &dra7_hsmmc_data_mmc3),
+#endif
+	/* Common auxdata */
+	OF_DEV_AUXDATA("ti,sysc", 0, NULL, &ti_sysc_pdata),
+	OF_DEV_AUXDATA("pinctrl-single", 0, NULL, &pcs_pdata),
 	{ /* sentinel */ },
 };
 
@@ -558,6 +623,9 @@ static struct pdata_init pdata_quirks[] __initdata = {
 #ifdef CONFIG_SOC_OMAP5
 	{ "ti,omap5-uevm", omap5_uevm_legacy_init, },
 #endif
+#ifdef CONFIG_SOC_DRA7XX
+	{ "ti,dra7-evm", dra7x_evm_mmc_quirk, },
+#endif
 	{ /* sentinel */ },
 };
 
@@ -567,7 +635,6 @@ static void pdata_quirks_check(struct pdata_init *quirks)
 		if (of_machine_is_compatible(quirks->compatible)) {
 			if (quirks->fn)
 				quirks->fn();
-			break;
 		}
 		quirks++;
 	}
@@ -583,6 +650,8 @@ void __init pdata_quirks_init(const struct of_device_id *omap_dt_match_table)
 	    of_machine_is_compatible("ti,omap3"))
 		omap_sdrc_init(NULL, NULL);
 
+	if (of_machine_is_compatible("ti,omap3"))
+		omap3_mcbsp_init();
 	pdata_quirks_check(auxdata_quirks);
 	of_platform_populate(NULL, omap_dt_match_table,
 			     omap_auxdata_lookup, NULL);

@@ -26,6 +26,10 @@
 
 #include "drm.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 /* Please note that modifications to all structs defined here are
  * subject to backwards-compatibility constraints.
  *
@@ -59,6 +63,7 @@ struct drm_virtgpu_execbuffer {
 };
 
 #define VIRTGPU_PARAM_3D_FEATURES 1 /* do we have 3D features in the hw */
+#define VIRTGPU_PARAM_CAPSET_QUERY_FIX 2 /* do we have the capset fix */
 
 struct drm_virtgpu_getparam {
 	__u64 param;
@@ -162,5 +167,9 @@ struct drm_virtgpu_get_caps {
 #define DRM_IOCTL_VIRTGPU_GET_CAPS \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_GET_CAPS, \
 	struct drm_virtgpu_get_caps)
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

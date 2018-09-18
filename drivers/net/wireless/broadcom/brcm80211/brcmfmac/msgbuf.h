@@ -27,13 +27,19 @@
 #define BRCMF_H2D_MSGRING_CONTROL_SUBMIT_ITEMSIZE	40
 #define BRCMF_H2D_MSGRING_RXPOST_SUBMIT_ITEMSIZE	32
 #define BRCMF_D2H_MSGRING_CONTROL_COMPLETE_ITEMSIZE	24
-#define BRCMF_D2H_MSGRING_TX_COMPLETE_ITEMSIZE		16
-#define BRCMF_D2H_MSGRING_RX_COMPLETE_ITEMSIZE		32
+#define BRCMF_D2H_MSGRING_TX_COMPLETE_ITEMSIZE_PRE_V7	16
+#define BRCMF_D2H_MSGRING_TX_COMPLETE_ITEMSIZE		24
+#define BRCMF_D2H_MSGRING_RX_COMPLETE_ITEMSIZE_PRE_V7	32
+#define BRCMF_D2H_MSGRING_RX_COMPLETE_ITEMSIZE		40
 #define BRCMF_H2D_TXFLOWRING_ITEMSIZE			48
 
+struct msgbuf_buf_addr {
+	__le32		low_addr;
+	__le32		high_addr;
+};
 
 int brcmf_proto_msgbuf_rx_trigger(struct device *dev);
-void brcmf_msgbuf_delete_flowring(struct brcmf_pub *drvr, u8 flowid);
+void brcmf_msgbuf_delete_flowring(struct brcmf_pub *drvr, u16 flowid);
 int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr);
 void brcmf_proto_msgbuf_detach(struct brcmf_pub *drvr);
 #else

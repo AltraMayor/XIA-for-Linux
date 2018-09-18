@@ -1,12 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * USB Attached SCSI
  * Note that this is not the same as the USB Mass Storage driver
  *
- * Copyright Hans de Goede <hdegoede@redhat.com> for Red Hat, Inc. 2013 - 2014
+ * Copyright Hans de Goede <hdegoede@redhat.com> for Red Hat, Inc. 2013 - 2016
  * Copyright Matthew Wilcox for Intel Corp, 2010
  * Copyright Sarah Sharp for Intel Corp, 2010
- *
- * Distributed under the terms of the GNU GPL, version two.
  */
 
 #include <linux/blkdev.h>
@@ -246,6 +245,29 @@ static void uas_xfer_data(struct urb *urb, struct scsi_cmnd *cmnd,
 	}
 }
 
+static bool uas_evaluate_response_iu(struct response_iu *riu, struct scsi_cmnd *cmnd)
+{
+	u8 response_code = riu->response_code;
+
+	switch (response_code) {
+	case RC_INCORRECT_LUN:
+		cmnd->result = DID_BAD_TARGET << 16;
+		break;
+	case RC_TMF_SUCCEEDED:
+		cmnd->result = DID_OK << 16;
+		break;
+	case RC_TMF_NOT_SUPPORTED:
+		cmnd->result = DID_TARGET_FAILURE << 16;
+		break;
+	default:
+		uas_log_cmd_state(cmnd, "response iu", response_code);
+		cmnd->result = DID_ERROR << 16;
+		break;
+	}
+
+	return response_code == RC_TMF_SUCCEEDED;
+}
+
 static void uas_stat_cmplt(struct urb *urb)
 {
 	struct iu *iu = urb->transfer_buffer;
@@ -258,6 +280,7 @@ static void uas_stat_cmplt(struct urb *urb)
 	unsigned long flags;
 	unsigned int idx;
 	int status = urb->status;
+	bool success;
 
 	spin_lock_irqsave(&devinfo->lock, flags);
 
@@ -313,13 +336,13 @@ static void uas_stat_cmplt(struct urb *urb)
 		uas_xfer_data(urb, cmnd, SUBMIT_DATA_OUT_URB);
 		break;
 	case IU_ID_RESPONSE:
-		uas_log_cmd_state(cmnd, "unexpected response iu",
-				  ((struct response_iu *)iu)->response_code);
-		/* Error, cancel data transfers */
-		data_in_urb = usb_get_urb(cmdinfo->data_in_urb);
-		data_out_urb = usb_get_urb(cmdinfo->data_out_urb);
 		cmdinfo->state &= ~COMMAND_INFLIGHT;
-		cmnd->result = DID_ERROR << 16;
+		success = uas_evaluate_response_iu((struct response_iu *)iu, cmnd);
+		if (!success) {
+			/* Error, cancel data transfers */
+			data_in_urb = usb_get_urb(cmdinfo->data_in_urb);
+			data_out_urb = usb_get_urb(cmdinfo->data_out_urb);
+		}
 		uas_try_complete(cmnd, __func__);
 		break;
 	default:
@@ -644,6 +667,7 @@ static int uas_queuecommand_lck(struct scsi_cmnd *cmnd,
 		break;
 	case DMA_BIDIRECTIONAL:
 		cmdinfo->state |= ALLOC_DATA_IN_URB | SUBMIT_DATA_IN_URB;
+		/* fall through */
 	case DMA_TO_DEVICE:
 		cmdinfo->state |= ALLOC_DATA_OUT_URB | SUBMIT_DATA_OUT_URB;
 	case DMA_NONE:
@@ -713,7 +737,7 @@ static int uas_eh_abort_handler(struct scsi_cmnd *cmnd)
 	return FAILED;
 }
 
-static int uas_eh_bus_reset_handler(struct scsi_cmnd *cmnd)
+static int uas_eh_device_reset_handler(struct scsi_cmnd *cmnd)
 {
 	struct scsi_device *sdev = cmnd->device;
 	struct uas_dev_info *devinfo = sdev->hostdata;
@@ -757,6 +781,17 @@ static int uas_eh_bus_reset_handler(struct scsi_cmnd *cmnd)
 	return SUCCESS;
 }
 
+static int uas_target_alloc(struct scsi_target *starget)
+{
+	struct uas_dev_info *devinfo = (struct uas_dev_info *)
+			dev_to_shost(starget->dev.parent)->hostdata;
+
+	if (devinfo->flags & US_FL_NO_REPORT_LUNS)
+		starget->no_report_luns = 1;
+
+	return 0;
+}
+
 static int uas_slave_alloc(struct scsi_device *sdev)
 {
 	struct uas_dev_info *devinfo =
@@ -764,7 +799,8 @@ static int uas_slave_alloc(struct scsi_device *sdev)
 
 	sdev->hostdata = devinfo;
 
-	/* USB has unusual DMA-alignment requirements: Although the
+	/*
+	 * USB has unusual DMA-alignment requirements: Although the
 	 * starting address of each scatter-gather element doesn't matter,
 	 * the length of each element except the last must be divisible
 	 * by the Bulk maxpacket value.  There's currently no way to
@@ -800,6 +836,33 @@ static int uas_slave_configure(struct scsi_device *sdev)
 	if (devinfo->flags & US_FL_BROKEN_FUA)
 		sdev->broken_fua = 1;
 
+	/* UAS also needs to support FL_ALWAYS_SYNC */
+	if (devinfo->flags & US_FL_ALWAYS_SYNC) {
+		sdev->skip_ms_page_3f = 1;
+		sdev->skip_ms_page_8 = 1;
+		sdev->wce_default_on = 1;
+	}
+
+	/*
+	 * Some disks return the total number of blocks in response
+	 * to READ CAPACITY rather than the highest block number.
+	 * If this device makes that mistake, tell the sd driver.
+	 */
+	if (devinfo->flags & US_FL_FIX_CAPACITY)
+		sdev->fix_capacity = 1;
+
+	/*
+	 * Some devices don't like MODE SENSE with page=0x3f,
+	 * which is the command used for checking if a device
+	 * is write-protected.  Now that we tell the sd driver
+	 * to do a 192-byte transfer with this command the
+	 * majority of devices work fine, but a few still can't
+	 * handle it.  The sd driver will simply assume those
+	 * devices are write-enabled.
+	 */
+	if (devinfo->flags & US_FL_NO_WP_DETECT)
+		sdev->skip_ms_page_3f = 1;
+
 	scsi_change_queue_depth(sdev, devinfo->qdepth - 2);
 	return 0;
 }
@@ -808,11 +871,11 @@ static struct scsi_host_template uas_host_template = {
 	.module = THIS_MODULE,
 	.name = "uas",
 	.queuecommand = uas_queuecommand,
+	.target_alloc = uas_target_alloc,
 	.slave_alloc = uas_slave_alloc,
 	.slave_configure = uas_slave_configure,
 	.eh_abort_handler = uas_eh_abort_handler,
-	.eh_bus_reset_handler = uas_eh_bus_reset_handler,
-	.can_queue = 65536,	/* Is there a limit on the _host_ ? */
+	.eh_device_reset_handler = uas_eh_device_reset_handler,
 	.this_id = -1,
 	.sg_tablesize = SG_NONE,
 	.skip_settle_delay = 1,
@@ -837,14 +900,14 @@ MODULE_DEVICE_TABLE(usb, uas_usb_ids);
 static int uas_switch_interface(struct usb_device *udev,
 				struct usb_interface *intf)
 {
-	int alt;
+	struct usb_host_interface *alt;
 
 	alt = uas_find_uas_alt_setting(intf);
-	if (alt < 0)
-		return alt;
+	if (!alt)
+		return -ENODEV;
 
-	return usb_set_interface(udev,
-			intf->altsetting[0].desc.bInterfaceNumber, alt);
+	return usb_set_interface(udev, alt->desc.bInterfaceNumber,
+			alt->desc.bAlternateSetting);
 }
 
 static int uas_configure_endpoints(struct uas_dev_info *devinfo)
@@ -931,6 +994,12 @@ static int uas_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	result = uas_configure_endpoints(devinfo);
 	if (result)
 		goto set_alt0;
+
+	/*
+	 * 1 tag is reserved for untagged commands +
+	 * 1 tag to avoid off by one errors in some bridge firmwares
+	 */
+	shost->can_queue = devinfo->qdepth - 2;
 
 	usb_set_intfdata(intf, shost);
 	result = scsi_add_host(shost, &intf->dev);
@@ -1034,20 +1103,19 @@ static int uas_post_reset(struct usb_interface *intf)
 		return 0;
 
 	err = uas_configure_endpoints(devinfo);
-	if (err) {
+	if (err && err != -ENODEV)
 		shost_printk(KERN_ERR, shost,
 			     "%s: alloc streams error %d after reset",
 			     __func__, err);
-		return 1;
-	}
 
+	/* we must unblock the host in every case lest we deadlock */
 	spin_lock_irqsave(shost->host_lock, flags);
 	scsi_report_bus_reset(shost, 0);
 	spin_unlock_irqrestore(shost->host_lock, flags);
 
 	scsi_unblock_requests(shost);
 
-	return 0;
+	return err ? 1 : 0;
 }
 
 static int uas_suspend(struct usb_interface *intf, pm_message_t message)

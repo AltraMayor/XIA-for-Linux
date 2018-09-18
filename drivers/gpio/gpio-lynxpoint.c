@@ -25,7 +25,7 @@
 #include <linux/types.h>
 #include <linux/bitops.h>
 #include <linux/interrupt.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <linux/platform_device.h>
@@ -255,7 +255,7 @@ static void lp_gpio_irq_handler(struct irq_desc *desc)
 			mask = BIT(pin);
 			/* Clear before handling so we don't lose an edge */
 			outl(mask, reg);
-			irq = irq_find_mapping(lg->chip.irqdomain, base + pin);
+			irq = irq_find_mapping(lg->chip.irq.domain, base + pin);
 			generic_handle_irq(irq);
 		}
 	}
@@ -370,7 +370,7 @@ static int lp_gpio_probe(struct platform_device *pdev)
 	gc->can_sleep = false;
 	gc->parent = dev;
 
-	ret = gpiochip_add_data(gc, lg);
+	ret = devm_gpiochip_add_data(dev, gc, lg);
 	if (ret) {
 		dev_err(dev, "failed adding lp-gpio chip\n");
 		return ret;
@@ -383,7 +383,6 @@ static int lp_gpio_probe(struct platform_device *pdev)
 					   handle_simple_irq, IRQ_TYPE_NONE);
 		if (ret) {
 			dev_err(dev, "failed to add irqchip\n");
-			gpiochip_remove(gc);
 			return ret;
 		}
 
@@ -439,9 +438,7 @@ MODULE_DEVICE_TABLE(acpi, lynxpoint_gpio_acpi_match);
 
 static int lp_gpio_remove(struct platform_device *pdev)
 {
-	struct lp_gpio *lg = platform_get_drvdata(pdev);
 	pm_runtime_disable(&pdev->dev);
-	gpiochip_remove(&lg->chip);
 	return 0;
 }
 

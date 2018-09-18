@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the PCI specific kernel interface routines under Linux.
 #
 
 obj-y				+= pci.o
+obj-$(CONFIG_PCI_DRIVERS_LEGACY)+= pci-legacy.o
+obj-$(CONFIG_PCI_DRIVERS_GENERIC)+= pci-generic.o
 
 #
 # PCI bus host bridge specific code

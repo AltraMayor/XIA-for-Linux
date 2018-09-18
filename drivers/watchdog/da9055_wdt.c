@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * System monitoring driver for DA9055 PMICs.
  *
  * Copyright(c) 2012 Dialog Semiconductor Ltd.
  *
  * Author: David Dajun Chen <dchen@diasemi.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  *
  */
 
@@ -108,7 +104,7 @@ static int da9055_wdt_stop(struct watchdog_device *wdt_dev)
 	return da9055_wdt_set_timeout(wdt_dev, 0);
 }
 
-static struct watchdog_info da9055_wdt_info = {
+static const struct watchdog_info da9055_wdt_info = {
 	.options	= WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING,
 	.identity	= "DA9055 Watchdog",
 };
@@ -147,32 +143,19 @@ static int da9055_wdt_probe(struct platform_device *pdev)
 	ret = da9055_wdt_stop(da9055_wdt);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to stop watchdog, %d\n", ret);
-		goto err;
+		return ret;
 	}
 
-	platform_set_drvdata(pdev, driver_data);
-
-	ret = watchdog_register_device(&driver_data->wdt);
+	ret = devm_watchdog_register_device(&pdev->dev, &driver_data->wdt);
 	if (ret != 0)
 		dev_err(da9055->dev, "watchdog_register_device() failed: %d\n",
 			ret);
 
-err:
 	return ret;
-}
-
-static int da9055_wdt_remove(struct platform_device *pdev)
-{
-	struct da9055_wdt_data *driver_data = platform_get_drvdata(pdev);
-
-	watchdog_unregister_device(&driver_data->wdt);
-
-	return 0;
 }
 
 static struct platform_driver da9055_wdt_driver = {
 	.probe = da9055_wdt_probe,
-	.remove = da9055_wdt_remove,
 	.driver = {
 		.name	= "da9055-watchdog",
 	},

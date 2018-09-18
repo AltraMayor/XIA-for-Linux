@@ -86,9 +86,8 @@ EXPORT_SYMBOL_GPL(vchan_find_desc);
 static void vchan_complete(unsigned long arg)
 {
 	struct virt_dma_chan *vc = (struct virt_dma_chan *)arg;
-	struct virt_dma_desc *vd;
-	dma_async_tx_callback cb = NULL;
-	void *cb_data = NULL;
+	struct virt_dma_desc *vd, *_vd;
+	struct dmaengine_desc_callback cb;
 	LIST_HEAD(head);
 
 	spin_lock_irq(&vc->lock);
@@ -96,35 +95,29 @@ static void vchan_complete(unsigned long arg)
 	vd = vc->cyclic;
 	if (vd) {
 		vc->cyclic = NULL;
-		cb = vd->tx.callback;
-		cb_data = vd->tx.callback_param;
+		dmaengine_desc_get_callback(&vd->tx, &cb);
+	} else {
+		memset(&cb, 0, sizeof(cb));
 	}
 	spin_unlock_irq(&vc->lock);
 
-	if (cb)
-		cb(cb_data);
+	dmaengine_desc_callback_invoke(&cb, NULL);
 
-	while (!list_empty(&head)) {
-		vd = list_first_entry(&head, struct virt_dma_desc, node);
-		cb = vd->tx.callback;
-		cb_data = vd->tx.callback_param;
+	list_for_each_entry_safe(vd, _vd, &head, node) {
+		dmaengine_desc_get_callback(&vd->tx, &cb);
 
 		list_del(&vd->node);
-		if (dmaengine_desc_test_reuse(&vd->tx))
-			list_add(&vd->node, &vc->desc_allocated);
-		else
-			vc->desc_free(vd);
+		vchan_vdesc_fini(vd);
 
-		if (cb)
-			cb(cb_data);
+		dmaengine_desc_callback_invoke(&cb, NULL);
 	}
 }
 
 void vchan_dma_desc_free_list(struct virt_dma_chan *vc, struct list_head *head)
 {
-	while (!list_empty(head)) {
-		struct virt_dma_desc *vd = list_first_entry(head,
-			struct virt_dma_desc, node);
+	struct virt_dma_desc *vd, *_vd;
+
+	list_for_each_entry_safe(vd, _vd, head, node) {
 		if (dmaengine_desc_test_reuse(&vd->tx)) {
 			list_move_tail(&vd->node, &vc->desc_allocated);
 		} else {

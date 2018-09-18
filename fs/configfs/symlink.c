@@ -64,7 +64,7 @@ static void fill_item_path(struct config_item * item, char * buffer, int length)
 
 		/* back up enough to print this bus id with '/' */
 		length -= cur;
-		strncpy(buffer + length,config_item_name(p),cur);
+		memcpy(buffer + length, config_item_name(p), cur);
 		*(buffer + --length) = '/';
 	}
 }
@@ -83,14 +83,13 @@ static int create_link(struct config_item *parent_item,
 	ret = -ENOMEM;
 	sl = kmalloc(sizeof(struct configfs_symlink), GFP_KERNEL);
 	if (sl) {
-		sl->sl_target = config_item_get(item);
 		spin_lock(&configfs_dirent_lock);
 		if (target_sd->s_type & CONFIGFS_USET_DROPPING) {
 			spin_unlock(&configfs_dirent_lock);
-			config_item_put(item);
 			kfree(sl);
 			return -ENOENT;
 		}
+		sl->sl_target = config_item_get(item);
 		list_add(&sl->sl_list, &target_sd->s_links);
 		spin_unlock(&configfs_dirent_lock);
 		ret = configfs_create_link(sl, parent_item->ci_dentry,
@@ -139,7 +138,7 @@ int configfs_symlink(struct inode *dir, struct dentry *dentry, const char *symna
 	struct configfs_dirent *sd;
 	struct config_item *parent_item;
 	struct config_item *target_item = NULL;
-	struct config_item_type *type;
+	const struct config_item_type *type;
 
 	sd = dentry->d_parent->d_fsdata;
 	/*
@@ -187,7 +186,7 @@ int configfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct configfs_dirent *sd = dentry->d_fsdata;
 	struct configfs_symlink *sl;
 	struct config_item *parent_item;
-	struct config_item_type *type;
+	const struct config_item_type *type;
 	int ret;
 
 	ret = -EPERM;  /* What lack-of-symlink returns */
@@ -305,7 +304,6 @@ static const char *configfs_get_link(struct dentry *dentry,
 
 const struct inode_operations configfs_symlink_inode_operations = {
 	.get_link = configfs_get_link,
-	.readlink = generic_readlink,
 	.setattr = configfs_setattr,
 };
 

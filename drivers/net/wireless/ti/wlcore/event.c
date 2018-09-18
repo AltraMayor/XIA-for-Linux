@@ -38,7 +38,7 @@
 
 int wlcore_event_fw_logger(struct wl1271 *wl)
 {
-	u32 ret;
+	int ret;
 	struct fw_logger_information fw_log;
 	u8  *buffer;
 	u32 internal_fw_addrbase = WL18XX_DATA_RAM_BASE_ADDRESS;
@@ -129,7 +129,8 @@ void wlcore_event_rssi_trigger(struct wl1271 *wl, s8 *metric_arr)
 
 		vif = wl12xx_wlvif_to_vif(wlvif);
 		if (event != wlvif->last_rssi_event)
-			ieee80211_cqm_rssi_notify(vif, event, GFP_KERNEL);
+			ieee80211_cqm_rssi_notify(vif, event, metric,
+						  GFP_KERNEL);
 		wlvif->last_rssi_event = event;
 	}
 }

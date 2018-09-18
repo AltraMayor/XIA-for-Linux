@@ -130,7 +130,7 @@ MODULE_FIRMWARE("atmel_at76c505amx-rfmd.bin");
 
 #define USB_DEVICE_DATA(__ops)	.driver_info = (kernel_ulong_t)(__ops)
 
-static struct usb_device_id dev_table[] = {
+static const struct usb_device_id dev_table[] = {
 	/*
 	 * at76c503-i3861
 	 */
@@ -518,11 +518,11 @@ exit:
 
 /* LED trigger */
 static int tx_activity;
-static void at76_ledtrig_tx_timerfunc(unsigned long data);
-static DEFINE_TIMER(ledtrig_tx_timer, at76_ledtrig_tx_timerfunc, 0, 0);
+static void at76_ledtrig_tx_timerfunc(struct timer_list *unused);
+static DEFINE_TIMER(ledtrig_tx_timer, at76_ledtrig_tx_timerfunc);
 DEFINE_LED_TRIGGER(ledtrig_tx);
 
-static void at76_ledtrig_tx_timerfunc(unsigned long data)
+static void at76_ledtrig_tx_timerfunc(struct timer_list *unused)
 {
 	static int tx_lastactivity;
 
@@ -1547,7 +1547,7 @@ static inline int at76_guess_freq(struct at76_priv *priv)
 		channel = el[2];
 
 exit:
-	return ieee80211_channel_to_frequency(channel, IEEE80211_BAND_2GHZ);
+	return ieee80211_channel_to_frequency(channel, NL80211_BAND_2GHZ);
 }
 
 static void at76_rx_tasklet(unsigned long param)
@@ -1590,7 +1590,7 @@ static void at76_rx_tasklet(unsigned long param)
 	rx_status.signal = buf->rssi;
 	rx_status.flag |= RX_FLAG_DECRYPTED;
 	rx_status.flag |= RX_FLAG_IV_STRIPPED;
-	rx_status.band = IEEE80211_BAND_2GHZ;
+	rx_status.band = NL80211_BAND_2GHZ;
 	rx_status.freq = at76_guess_freq(priv);
 
 	at76_dbg(DBG_MAC80211, "calling ieee80211_rx_irqsafe(): %d/%d",
@@ -1922,6 +1922,9 @@ static void at76_dwork_hw_scan(struct work_struct *work)
 {
 	struct at76_priv *priv = container_of(work, struct at76_priv,
 					      dwork_hw_scan.work);
+	struct cfg80211_scan_info info = {
+		.aborted = false,
+	};
 	int ret;
 
 	if (priv->device_unplugged)
@@ -1948,7 +1951,7 @@ static void at76_dwork_hw_scan(struct work_struct *work)
 
 	mutex_unlock(&priv->mtx);
 
-	ieee80211_scan_completed(priv->hw, false);
+	ieee80211_scan_completed(priv->hw, &info);
 
 	ieee80211_wake_queues(priv->hw);
 }
@@ -2359,7 +2362,7 @@ static int at76_init_new_device(struct at76_priv *priv,
 	priv->hw->wiphy->max_scan_ssids = 1;
 	priv->hw->wiphy->max_scan_ie_len = 0;
 	priv->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
-	priv->hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &at76_supported_band;
+	priv->hw->wiphy->bands[NL80211_BAND_2GHZ] = &at76_supported_band;
 	ieee80211_hw_set(priv->hw, RX_INCLUDES_FCS);
 	ieee80211_hw_set(priv->hw, SIGNAL_UNSPEC);
 	priv->hw->max_signal = 100;
@@ -2373,6 +2376,8 @@ static int at76_init_new_device(struct at76_priv *priv,
 		 priv->fw_version.patch, priv->fw_version.build);
 
 	wiphy->hw_version = priv->board_type;
+
+	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 
 	ret = ieee80211_register_hw(priv->hw);
 	if (ret) {
@@ -2481,9 +2486,7 @@ static int at76_probe(struct usb_interface *interface,
 			dev_err(&interface->dev,
 				"error %d downloading internal firmware\n",
 				ret);
-			goto exit;
 		}
-		usb_put_dev(udev);
 		goto exit;
 	}
 

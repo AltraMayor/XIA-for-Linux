@@ -60,6 +60,16 @@ static void regmap_irq_lock(struct irq_data *data)
 	mutex_lock(&d->lock);
 }
 
+static int regmap_irq_update_bits(struct regmap_irq_chip_data *d,
+				  unsigned int reg, unsigned int mask,
+				  unsigned int val)
+{
+	if (d->chip->mask_writeonly)
+		return regmap_write_bits(d->map, reg, mask, val);
+	else
+		return regmap_update_bits(d->map, reg, mask, val);
+}
+
 static void regmap_irq_sync_unlock(struct irq_data *data)
 {
 	struct regmap_irq_chip_data *d = irq_data_get_irq_chip_data(data);
@@ -84,11 +94,11 @@ static void regmap_irq_sync_unlock(struct irq_data *data)
 		reg = d->chip->mask_base +
 			(i * map->reg_stride * d->irq_reg_stride);
 		if (d->chip->mask_invert) {
-			ret = regmap_update_bits(d->map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 					 d->mask_buf_def[i], ~d->mask_buf[i]);
 		} else if (d->chip->unmask_base) {
 			/* set mask with mask_base register */
-			ret = regmap_update_bits(d->map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 					d->mask_buf_def[i], ~d->mask_buf[i]);
 			if (ret < 0)
 				dev_err(d->map->dev,
@@ -97,12 +107,12 @@ static void regmap_irq_sync_unlock(struct irq_data *data)
 			unmask_offset = d->chip->unmask_base -
 							d->chip->mask_base;
 			/* clear mask with unmask_base register */
-			ret = regmap_update_bits(d->map,
+			ret = regmap_irq_update_bits(d,
 					reg + unmask_offset,
 					d->mask_buf_def[i],
 					d->mask_buf[i]);
 		} else {
-			ret = regmap_update_bits(d->map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 					 d->mask_buf_def[i], d->mask_buf[i]);
 		}
 		if (ret != 0)
@@ -113,11 +123,11 @@ static void regmap_irq_sync_unlock(struct irq_data *data)
 			(i * map->reg_stride * d->irq_reg_stride);
 		if (d->wake_buf) {
 			if (d->chip->wake_invert)
-				ret = regmap_update_bits(d->map, reg,
+				ret = regmap_irq_update_bits(d, reg,
 							 d->mask_buf_def[i],
 							 ~d->wake_buf[i]);
 			else
-				ret = regmap_update_bits(d->map, reg,
+				ret = regmap_irq_update_bits(d, reg,
 							 d->mask_buf_def[i],
 							 d->wake_buf[i]);
 			if (ret != 0)
@@ -153,10 +163,10 @@ static void regmap_irq_sync_unlock(struct irq_data *data)
 		reg = d->chip->type_base +
 			(i * map->reg_stride * d->type_reg_stride);
 		if (d->chip->type_invert)
-			ret = regmap_update_bits(d->map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 				d->type_buf_def[i], ~d->type_buf[i]);
 		else
-			ret = regmap_update_bits(d->map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 				d->type_buf_def[i], d->type_buf[i]);
 		if (ret != 0)
 			dev_err(d->map->dev, "Failed to sync type in %x\n",
@@ -268,13 +278,16 @@ static irqreturn_t regmap_irq_thread(int irq, void *d)
 	bool handled = false;
 	u32 reg;
 
+	if (chip->handle_pre_irq)
+		chip->handle_pre_irq(chip->irq_drv_data);
+
 	if (chip->runtime_pm) {
 		ret = pm_runtime_get_sync(map->dev);
 		if (ret < 0) {
 			dev_err(map->dev, "IRQ thread failed to resume: %d\n",
 				ret);
 			pm_runtime_put(map->dev);
-			return IRQ_NONE;
+			goto exit;
 		}
 	}
 
@@ -296,7 +309,7 @@ static irqreturn_t regmap_irq_thread(int irq, void *d)
 		if (ret != 0) {
 			dev_err(map->dev, "Failed to read IRQ status: %d\n",
 				ret);
-			return IRQ_NONE;
+			goto exit;
 		}
 
 		for (i = 0; i < data->chip->num_regs; i++) {
@@ -312,7 +325,7 @@ static irqreturn_t regmap_irq_thread(int irq, void *d)
 				break;
 			default:
 				BUG();
-				return IRQ_NONE;
+				goto exit;
 			}
 		}
 
@@ -329,7 +342,7 @@ static irqreturn_t regmap_irq_thread(int irq, void *d)
 					ret);
 				if (chip->runtime_pm)
 					pm_runtime_put(map->dev);
-				return IRQ_NONE;
+				goto exit;
 			}
 		}
 	}
@@ -365,6 +378,10 @@ static irqreturn_t regmap_irq_thread(int irq, void *d)
 	if (chip->runtime_pm)
 		pm_runtime_put(map->dev);
 
+exit:
+	if (chip->handle_post_irq)
+		chip->handle_post_irq(chip->irq_drv_data);
+
 	if (handled)
 		return IRQ_HANDLED;
 	else
@@ -379,6 +396,7 @@ static int regmap_irq_map(struct irq_domain *h, unsigned int virq,
 	irq_set_chip_data(virq, data);
 	irq_set_chip(virq, &data->irq_chip);
 	irq_set_nested_thread(virq, 1);
+	irq_set_parent(virq, data->irq);
 	irq_set_noprobe(virq);
 
 	return 0;
@@ -386,17 +404,18 @@ static int regmap_irq_map(struct irq_domain *h, unsigned int virq,
 
 static const struct irq_domain_ops regmap_domain_ops = {
 	.map	= regmap_irq_map,
-	.xlate	= irq_domain_xlate_twocell,
+	.xlate	= irq_domain_xlate_onetwocell,
 };
 
 /**
- * regmap_add_irq_chip(): Use standard regmap IRQ controller handling
+ * regmap_add_irq_chip() - Use standard regmap IRQ controller handling
  *
- * map:       The regmap for the device.
- * irq:       The IRQ the device uses to signal interrupts
- * irq_flags: The IRQF_ flags to use for the primary interrupt.
- * chip:      Configuration for the interrupt controller.
- * data:      Runtime data structure for the controller, allocated on success
+ * @map: The regmap for the device.
+ * @irq: The IRQ the device uses to signal interrupts.
+ * @irq_flags: The IRQF_ flags to use for the primary interrupt.
+ * @irq_base: Allocate at specific IRQ number if irq_base > 0.
+ * @chip: Configuration for the interrupt controller.
+ * @data: Runtime data structure for the controller, allocated on success.
  *
  * Returns 0 on success or an errno on failure.
  *
@@ -510,17 +529,17 @@ int regmap_add_irq_chip(struct regmap *map, int irq, int irq_flags,
 		reg = chip->mask_base +
 			(i * map->reg_stride * d->irq_reg_stride);
 		if (chip->mask_invert)
-			ret = regmap_update_bits(map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 					 d->mask_buf[i], ~d->mask_buf[i]);
 		else if (d->chip->unmask_base) {
 			unmask_offset = d->chip->unmask_base -
 					d->chip->mask_base;
-			ret = regmap_update_bits(d->map,
+			ret = regmap_irq_update_bits(d,
 					reg + unmask_offset,
 					d->mask_buf[i],
 					d->mask_buf[i]);
 		} else
-			ret = regmap_update_bits(map, reg,
+			ret = regmap_irq_update_bits(d, reg,
 					 d->mask_buf[i], d->mask_buf[i]);
 		if (ret != 0) {
 			dev_err(map->dev, "Failed to set masks in 0x%x: %d\n",
@@ -566,11 +585,11 @@ int regmap_add_irq_chip(struct regmap *map, int irq, int irq_flags,
 				(i * map->reg_stride * d->irq_reg_stride);
 
 			if (chip->wake_invert)
-				ret = regmap_update_bits(map, reg,
+				ret = regmap_irq_update_bits(d, reg,
 							 d->mask_buf_def[i],
 							 0);
 			else
-				ret = regmap_update_bits(map, reg,
+				ret = regmap_irq_update_bits(d, reg,
 							 d->mask_buf_def[i],
 							 d->wake_buf[i]);
 			if (ret != 0) {
@@ -594,10 +613,10 @@ int regmap_add_irq_chip(struct regmap *map, int irq, int irq_flags,
 			reg = chip->type_base +
 				(i * map->reg_stride * d->type_reg_stride);
 			if (chip->type_invert)
-				ret = regmap_update_bits(map, reg,
+				ret = regmap_irq_update_bits(d, reg,
 					d->type_buf_def[i], 0xFF);
 			else
-				ret = regmap_update_bits(map, reg,
+				ret = regmap_irq_update_bits(d, reg,
 					d->type_buf_def[i], 0x0);
 			if (ret != 0) {
 				dev_err(map->dev,
@@ -651,17 +670,38 @@ err_alloc:
 EXPORT_SYMBOL_GPL(regmap_add_irq_chip);
 
 /**
- * regmap_del_irq_chip(): Stop interrupt handling for a regmap IRQ chip
+ * regmap_del_irq_chip() - Stop interrupt handling for a regmap IRQ chip
  *
  * @irq: Primary IRQ for the device
- * @d:   regmap_irq_chip_data allocated by regmap_add_irq_chip()
+ * @d: &regmap_irq_chip_data allocated by regmap_add_irq_chip()
+ *
+ * This function also disposes of all mapped IRQs on the chip.
  */
 void regmap_del_irq_chip(int irq, struct regmap_irq_chip_data *d)
 {
+	unsigned int virq;
+	int hwirq;
+
 	if (!d)
 		return;
 
 	free_irq(irq, d);
+
+	/* Dispose all virtual irq from irq domain before removing it */
+	for (hwirq = 0; hwirq < d->chip->num_irqs; hwirq++) {
+		/* Ignore hwirq if holes in the IRQ list */
+		if (!d->chip->irqs[hwirq].mask)
+			continue;
+
+		/*
+		 * Find the virtual irq of hwirq on chip and if it is
+		 * there then dispose it
+		 */
+		virq = irq_find_mapping(d->domain, hwirq);
+		if (virq)
+			irq_dispose_mapping(virq);
+	}
+
 	irq_domain_remove(d->domain);
 	kfree(d->type_buf);
 	kfree(d->type_buf_def);
@@ -674,12 +714,97 @@ void regmap_del_irq_chip(int irq, struct regmap_irq_chip_data *d)
 }
 EXPORT_SYMBOL_GPL(regmap_del_irq_chip);
 
+static void devm_regmap_irq_chip_release(struct device *dev, void *res)
+{
+	struct regmap_irq_chip_data *d = *(struct regmap_irq_chip_data **)res;
+
+	regmap_del_irq_chip(d->irq, d);
+}
+
+static int devm_regmap_irq_chip_match(struct device *dev, void *res, void *data)
+
+{
+	struct regmap_irq_chip_data **r = res;
+
+	if (!r || !*r) {
+		WARN_ON(!r || !*r);
+		return 0;
+	}
+	return *r == data;
+}
+
 /**
- * regmap_irq_chip_get_base(): Retrieve interrupt base for a regmap IRQ chip
+ * devm_regmap_add_irq_chip() - Resource manager regmap_add_irq_chip()
+ *
+ * @dev: The device pointer on which irq_chip belongs to.
+ * @map: The regmap for the device.
+ * @irq: The IRQ the device uses to signal interrupts
+ * @irq_flags: The IRQF_ flags to use for the primary interrupt.
+ * @irq_base: Allocate at specific IRQ number if irq_base > 0.
+ * @chip: Configuration for the interrupt controller.
+ * @data: Runtime data structure for the controller, allocated on success
+ *
+ * Returns 0 on success or an errno on failure.
+ *
+ * The &regmap_irq_chip_data will be automatically released when the device is
+ * unbound.
+ */
+int devm_regmap_add_irq_chip(struct device *dev, struct regmap *map, int irq,
+			     int irq_flags, int irq_base,
+			     const struct regmap_irq_chip *chip,
+			     struct regmap_irq_chip_data **data)
+{
+	struct regmap_irq_chip_data **ptr, *d;
+	int ret;
+
+	ptr = devres_alloc(devm_regmap_irq_chip_release, sizeof(*ptr),
+			   GFP_KERNEL);
+	if (!ptr)
+		return -ENOMEM;
+
+	ret = regmap_add_irq_chip(map, irq, irq_flags, irq_base,
+				  chip, &d);
+	if (ret < 0) {
+		devres_free(ptr);
+		return ret;
+	}
+
+	*ptr = d;
+	devres_add(dev, ptr);
+	*data = d;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(devm_regmap_add_irq_chip);
+
+/**
+ * devm_regmap_del_irq_chip() - Resource managed regmap_del_irq_chip()
+ *
+ * @dev: Device for which which resource was allocated.
+ * @irq: Primary IRQ for the device.
+ * @data: &regmap_irq_chip_data allocated by regmap_add_irq_chip().
+ *
+ * A resource managed version of regmap_del_irq_chip().
+ */
+void devm_regmap_del_irq_chip(struct device *dev, int irq,
+			      struct regmap_irq_chip_data *data)
+{
+	int rc;
+
+	WARN_ON(irq != data->irq);
+	rc = devres_release(dev, devm_regmap_irq_chip_release,
+			    devm_regmap_irq_chip_match, data);
+
+	if (rc != 0)
+		WARN_ON(rc);
+}
+EXPORT_SYMBOL_GPL(devm_regmap_del_irq_chip);
+
+/**
+ * regmap_irq_chip_get_base() - Retrieve interrupt base for a regmap IRQ chip
+ *
+ * @data: regmap irq controller to operate on.
  *
  * Useful for drivers to request their own IRQs.
- *
- * @data: regmap_irq controller to operate on.
  */
 int regmap_irq_chip_get_base(struct regmap_irq_chip_data *data)
 {
@@ -689,12 +814,12 @@ int regmap_irq_chip_get_base(struct regmap_irq_chip_data *data)
 EXPORT_SYMBOL_GPL(regmap_irq_chip_get_base);
 
 /**
- * regmap_irq_get_virq(): Map an interrupt on a chip to a virtual IRQ
+ * regmap_irq_get_virq() - Map an interrupt on a chip to a virtual IRQ
+ *
+ * @data: regmap irq controller to operate on.
+ * @irq: index of the interrupt requested in the chip IRQs.
  *
  * Useful for drivers to request their own IRQs.
- *
- * @data: regmap_irq controller to operate on.
- * @irq: index of the interrupt requested in the chip IRQs
  */
 int regmap_irq_get_virq(struct regmap_irq_chip_data *data, int irq)
 {
@@ -707,14 +832,14 @@ int regmap_irq_get_virq(struct regmap_irq_chip_data *data, int irq)
 EXPORT_SYMBOL_GPL(regmap_irq_get_virq);
 
 /**
- * regmap_irq_get_domain(): Retrieve the irq_domain for the chip
+ * regmap_irq_get_domain() - Retrieve the irq_domain for the chip
+ *
+ * @data: regmap_irq controller to operate on.
  *
  * Useful for drivers to request their own IRQs and for integration
  * with subsystems.  For ease of integration NULL is accepted as a
  * domain, allowing devices to just call this even if no domain is
  * allocated.
- *
- * @data: regmap_irq controller to operate on.
  */
 struct irq_domain *regmap_irq_get_domain(struct regmap_irq_chip_data *data)
 {

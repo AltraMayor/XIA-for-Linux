@@ -84,8 +84,9 @@ static int mc13xxx_led_set(struct led_classdev *led_cdev,
 	case MC13892_LED_MD:
 	case MC13892_LED_AD:
 	case MC13892_LED_KP:
-		reg = (led->id - MC13892_LED_MD) / 2;
-		shift = 3 + (led->id - MC13892_LED_MD) * 12;
+		off = led->id - MC13892_LED_MD;
+		reg = off / 2;
+		shift = 3 + (off - reg * 2) * 12;
 		break;
 	case MC13892_LED_R:
 	case MC13892_LED_G:
@@ -135,7 +136,7 @@ static struct mc13xxx_leds_platform_data __init *mc13xxx_led_probe_dt(
 
 	pdata->num_leds = of_get_child_count(parent);
 
-	pdata->led = devm_kzalloc(dev, pdata->num_leds * sizeof(*pdata->led),
+	pdata->led = devm_kcalloc(dev, pdata->num_leds, sizeof(*pdata->led),
 				  GFP_KERNEL);
 	if (!pdata->led) {
 		ret = -ENOMEM;
@@ -209,7 +210,7 @@ static int __init mc13xxx_led_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	leds->led = devm_kzalloc(dev, leds->num_leds * sizeof(*leds->led),
+	leds->led = devm_kcalloc(dev, leds->num_leds, sizeof(*leds->led),
 				 GFP_KERNEL);
 	if (!leds->led)
 		return -ENOMEM;

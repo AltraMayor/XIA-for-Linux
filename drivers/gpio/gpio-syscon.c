@@ -10,7 +10,7 @@
  */
 
 #include <linux/err.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
@@ -129,10 +129,37 @@ static int syscon_gpio_dir_out(struct gpio_chip *chip, unsigned offset, int val)
 
 static const struct syscon_gpio_data clps711x_mctrl_gpio = {
 	/* ARM CLPS711X SYSFLG1 Bits 8-10 */
-	.compatible	= "cirrus,clps711x-syscon1",
+	.compatible	= "cirrus,ep7209-syscon1",
 	.flags		= GPIO_SYSCON_FEAT_IN,
 	.bit_count	= 3,
 	.dat_bit_offset	= 0x40 * 8 + 8,
+};
+
+static void rockchip_gpio_set(struct gpio_chip *chip, unsigned int offset,
+			      int val)
+{
+	struct syscon_gpio_priv *priv = gpiochip_get_data(chip);
+	unsigned int offs;
+	u8 bit;
+	u32 data;
+	int ret;
+
+	offs = priv->dreg_offset + priv->data->dat_bit_offset + offset;
+	bit = offs % SYSCON_REG_BITS;
+	data = (val ? BIT(bit) : 0) | BIT(bit + 16);
+	ret = regmap_write(priv->syscon,
+			   (offs / SYSCON_REG_BITS) * SYSCON_REG_SIZE,
+			   data);
+	if (ret < 0)
+		dev_err(chip->parent, "gpio write failed ret(%d)\n", ret);
+}
+
+static const struct syscon_gpio_data rockchip_rk3328_gpio_mute = {
+	/* RK3328 GPIO_MUTE is an output only pin at GRF_SOC_CON10[1] */
+	.flags		= GPIO_SYSCON_FEAT_OUT,
+	.bit_count	= 1,
+	.dat_bit_offset = 0x0428 * 8 + 1,
+	.set		= rockchip_gpio_set,
 };
 
 #define KEYSTONE_LOCK_BIT BIT(0)
@@ -168,12 +195,16 @@ static const struct syscon_gpio_data keystone_dsp_gpio = {
 
 static const struct of_device_id syscon_gpio_ids[] = {
 	{
-		.compatible	= "cirrus,clps711x-mctrl-gpio",
+		.compatible	= "cirrus,ep7209-mctrl-gpio",
 		.data		= &clps711x_mctrl_gpio,
 	},
 	{
 		.compatible	= "ti,keystone-dsp-gpio",
 		.data		= &keystone_dsp_gpio,
+	},
+	{
+		.compatible	= "rockchip,rk3328-grf-gpio",
+		.data		= &rockchip_rk3328_gpio_mute,
 	},
 	{ }
 };
@@ -182,20 +213,15 @@ MODULE_DEVICE_TABLE(of, syscon_gpio_ids);
 static int syscon_gpio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	const struct of_device_id *of_id;
 	struct syscon_gpio_priv *priv;
 	struct device_node *np = dev->of_node;
 	int ret;
-
-	of_id = of_match_device(syscon_gpio_ids, dev);
-	if (!of_id)
-		return -ENODEV;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
-	priv->data = of_id->data;
+	priv->data = of_device_get_match_data(dev);
 
 	if (priv->data->compatible) {
 		priv->syscon = syscon_regmap_lookup_by_compatible(
@@ -205,6 +231,8 @@ static int syscon_gpio_probe(struct platform_device *pdev)
 	} else {
 		priv->syscon =
 			syscon_regmap_lookup_by_phandle(np, "gpio,syscon-dev");
+		if (IS_ERR(priv->syscon) && np->parent)
+			priv->syscon = syscon_node_to_regmap(np->parent);
 		if (IS_ERR(priv->syscon))
 			return PTR_ERR(priv->syscon);
 
@@ -238,15 +266,7 @@ static int syscon_gpio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
-	return gpiochip_add_data(&priv->chip, priv);
-}
-
-static int syscon_gpio_remove(struct platform_device *pdev)
-{
-	struct syscon_gpio_priv *priv = platform_get_drvdata(pdev);
-
-	gpiochip_remove(&priv->chip);
-	return 0;
+	return devm_gpiochip_add_data(&pdev->dev, &priv->chip, priv);
 }
 
 static struct platform_driver syscon_gpio_driver = {
@@ -255,7 +275,6 @@ static struct platform_driver syscon_gpio_driver = {
 		.of_match_table	= syscon_gpio_ids,
 	},
 	.probe	= syscon_gpio_probe,
-	.remove	= syscon_gpio_remove,
 };
 module_platform_driver(syscon_gpio_driver);
 

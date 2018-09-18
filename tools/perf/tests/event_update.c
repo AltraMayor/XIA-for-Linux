@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/compiler.h>
 #include "evlist.h"
 #include "evsel.h"
@@ -30,7 +31,7 @@ static int process_event_scale(struct perf_tool *tool __maybe_unused,
 
 	TEST_ASSERT_VAL("wrong id", ev->id == 123);
 	TEST_ASSERT_VAL("wrong id", ev->type == PERF_EVENT_UPDATE__SCALE);
-	TEST_ASSERT_VAL("wrong scale", ev_data->scale = 0.123);
+	TEST_ASSERT_VAL("wrong scale", ev_data->scale == 0.123);
 	return 0;
 }
 
@@ -76,7 +77,7 @@ static int process_event_cpus(struct perf_tool *tool __maybe_unused,
 	return 0;
 }
 
-int test__event_update(int subtest __maybe_unused)
+int test__event_update(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	struct perf_evlist *evlist;
 	struct perf_evsel *evsel;

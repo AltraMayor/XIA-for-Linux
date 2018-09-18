@@ -209,8 +209,7 @@ static struct fb_videomode known_lcd_panels[] = {
 		.lower_margin   = 2,
 		.hsync_len      = 0,
 		.vsync_len      = 0,
-		.sync           = FB_SYNC_CLK_INVERT |
-			FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+		.sync           = FB_SYNC_CLK_INVERT,
 	},
 	/* Sharp LK043T1DG01 */
 	[1] = {
@@ -224,7 +223,7 @@ static struct fb_videomode known_lcd_panels[] = {
 		.lower_margin   = 2,
 		.hsync_len      = 41,
 		.vsync_len      = 10,
-		.sync           = FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+		.sync           = 0,
 		.flag           = 0,
 	},
 	[2] = {
@@ -239,7 +238,7 @@ static struct fb_videomode known_lcd_panels[] = {
 		.lower_margin   = 10,
 		.hsync_len      = 10,
 		.vsync_len      = 10,
-		.sync           = FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+		.sync           = 0,
 		.flag           = 0,
 	},
 	[3] = {
@@ -714,7 +713,7 @@ static int da8xx_fb_config_clk_divider(struct da8xx_fb_par *par,
 
 	if (par->lcdc_clk_rate != lcdc_clk_rate) {
 		ret = clk_set_rate(par->lcdc_clk, lcdc_clk_rate);
-		if (IS_ERR_VALUE(ret)) {
+		if (ret) {
 			dev_err(par->dev,
 				"unable to set clock rate at %u\n",
 				lcdc_clk_rate);
@@ -785,7 +784,7 @@ static int lcd_init(struct da8xx_fb_par *par, const struct lcd_ctrl_config *cfg,
 	int ret = 0;
 
 	ret = da8xx_fb_calc_config_clk_divider(par, panel);
-	if (IS_ERR_VALUE(ret)) {
+	if (ret) {
 		dev_err(par->dev, "unable to configure clock\n");
 		return ret;
 	}
@@ -1342,7 +1341,7 @@ static int fb_probe(struct platform_device *device)
 {
 	struct da8xx_lcdc_platform_data *fb_pdata =
 						dev_get_platdata(&device->dev);
-	static struct resource *lcdc_regs;
+	struct resource *lcdc_regs;
 	struct lcd_ctrl_config *lcd_cfg;
 	struct fb_videomode *lcdc_info;
 	struct fb_info *da8xx_fb_info;

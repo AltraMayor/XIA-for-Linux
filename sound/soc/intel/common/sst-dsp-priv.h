@@ -77,6 +77,10 @@ struct sst_addr {
 	u32 dram_offset;
 	u32 dsp_iram_offset;
 	u32 dsp_dram_offset;
+	u32 sram0_base;
+	u32 sram1_base;
+	u32 w0_stat_sz;
+	u32 w0_up_sz;
 	void __iomem *lpe;
 	void __iomem *shim;
 	void __iomem *pci_cfg;
@@ -149,7 +153,7 @@ struct sst_block_allocator {
 };
 
 /*
- * Runtime Module Instance - A module object can be instanciated multiple
+ * Runtime Module Instance - A module object can be instantiated multiple
  * times within the DSP FW.
  */
 struct sst_module_runtime {
@@ -189,7 +193,7 @@ enum sst_module_state {
  *
  * Each Firmware file can consist of 1..N modules. A module can span multiple
  * ADSP memory blocks. The simplest FW will be a file with 1 module. A module
- * can be instanciated multiple times in the DSP.
+ * can be instantiated multiple times in the DSP.
  */
 struct sst_module {
 	struct sst_dsp *dsp;
@@ -317,6 +321,7 @@ struct sst_dsp {
 	struct skl_cl_dev cl_dev;
 	u32 intr_status;
 	const struct firmware *fw;
+	struct snd_dma_buffer dmab;
 };
 
 /* Size optimised DRAM/IRAM memcpy */
@@ -381,10 +386,6 @@ struct sst_mem_block *sst_mem_block_register(struct sst_dsp *dsp, u32 offset,
 	u32 size, enum sst_mem_type type, const struct sst_block_ops *ops,
 	u32 index, void *private);
 void sst_mem_block_unregister_all(struct sst_dsp *dsp);
-
-/* Create/Free DMA resources */
-int sst_dma_new(struct sst_dsp *sst);
-void sst_dma_free(struct sst_dma *dma);
 
 u32 sst_dsp_get_offset(struct sst_dsp *dsp, u32 offset,
 	enum sst_mem_type type);

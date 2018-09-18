@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *    Copyright IBM Corp. 2007
  *    Author(s): Heiko Carstens <heiko.carstens@de.ibm.com>
@@ -47,7 +48,7 @@ static void sclp_cpu_capability_notify(struct work_struct *work)
 	int cpu;
 	struct device *dev;
 
-	s390_adjust_jiffies();
+	s390_update_cpu_mhz();
 	pr_info("CPU capability may have changed\n");
 	get_online_cpus();
 	for_each_online_cpu(cpu) {
@@ -135,7 +136,7 @@ static ssize_t sysfs_ofb_data_write(struct file *filp, struct kobject *kobj,
 	return rc ?: count;
 }
 
-static struct bin_attribute ofb_bin_attr = {
+static const struct bin_attribute ofb_bin_attr = {
 	.attr = {
 		.name = "event_data",
 		.mode = S_IWUSR,

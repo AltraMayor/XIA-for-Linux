@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-1.0+
 /*
  * zcore module to export memory content and register sets for creating system
  * dumps on SCSI disks (zfcpdump). The "zcore/mem" debugfs file shows the same
@@ -14,16 +15,14 @@
 
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/miscdevice.h>
 #include <linux/debugfs.h>
-#include <linux/module.h>
 #include <linux/memblock.h>
 
 #include <asm/asm-offsets.h>
 #include <asm/ipl.h>
 #include <asm/sclp.h>
 #include <asm/setup.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/debug.h>
 #include <asm/processor.h>
 #include <asm/irqflags.h>
@@ -153,7 +152,7 @@ static int zcore_memmap_open(struct inode *inode, struct file *filp)
 	char *buf;
 	int i = 0;
 
-	buf = kzalloc(memblock.memory.cnt * CHUNK_INFO_SIZE, GFP_KERNEL);
+	buf = kcalloc(memblock.memory.cnt, CHUNK_INFO_SIZE, GFP_KERNEL);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -185,7 +184,7 @@ static ssize_t zcore_reipl_write(struct file *filp, const char __user *buf,
 {
 	if (ipl_block) {
 		diag308(DIAG308_SET, ipl_block);
-		diag308(DIAG308_IPL, NULL);
+		diag308(DIAG308_LOAD_CLEAR, NULL);
 	}
 	return count;
 }
@@ -273,7 +272,7 @@ static int __init zcore_reipl_init(void)
 		rc = memcpy_hsa_kernel(ipl_block, ipib_info.ipib, PAGE_SIZE);
 	else
 		rc = memcpy_real(ipl_block, (void *) ipib_info.ipib, PAGE_SIZE);
-	if (rc || csum_partial(ipl_block, ipl_block->hdr.len, 0) !=
+	if (rc || (__force u32)csum_partial(ipl_block, ipl_block->hdr.len, 0) !=
 	    ipib_info.checksum) {
 		TRACE("Checksum does not match\n");
 		free_page((unsigned long) ipl_block);
@@ -320,7 +319,7 @@ static int __init zcore_init(void)
 		goto fail;
 	}
 
-	pr_alert("DETECTED 'S390X (64 bit) OS'\n");
+	pr_alert("The dump process started for a 64-bit operating system\n");
 	rc = init_cpu_info();
 	if (rc)
 		goto fail;
@@ -364,22 +363,4 @@ fail:
 	diag308(DIAG308_REL_HSA, NULL);
 	return rc;
 }
-
-static void __exit zcore_exit(void)
-{
-	debug_unregister(zcore_dbf);
-	sclp_sdias_exit();
-	free_page((unsigned long) ipl_block);
-	debugfs_remove(zcore_hsa_file);
-	debugfs_remove(zcore_reipl_file);
-	debugfs_remove(zcore_memmap_file);
-	debugfs_remove(zcore_dir);
-	diag308(DIAG308_REL_HSA, NULL);
-}
-
-MODULE_AUTHOR("Copyright IBM Corp. 2003,2008");
-MODULE_DESCRIPTION("zcore module for zfcpdump support");
-MODULE_LICENSE("GPL");
-
 subsys_initcall(zcore_init);
-module_exit(zcore_exit);
