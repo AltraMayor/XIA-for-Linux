@@ -107,7 +107,7 @@ static int gpio_setup_data_regs(struct sh_pfc_chip *chip)
 	for (i = 0; pfc->info->data_regs[i].reg_width; ++i)
 		;
 
-	chip->regs = devm_kzalloc(pfc->dev, i * sizeof(*chip->regs),
+	chip->regs = devm_kcalloc(pfc->dev, i, sizeof(*chip->regs),
 				  GFP_KERNEL);
 	if (chip->regs == NULL)
 		return -ENOMEM;
@@ -139,12 +139,12 @@ static int gpio_pin_request(struct gpio_chip *gc, unsigned offset)
 	if (idx < 0 || pfc->info->pins[idx].enum_id == 0)
 		return -EINVAL;
 
-	return pinctrl_request_gpio(offset);
+	return pinctrl_gpio_request(offset);
 }
 
 static void gpio_pin_free(struct gpio_chip *gc, unsigned offset)
 {
-	return pinctrl_free_gpio(offset);
+	return pinctrl_gpio_free(offset);
 }
 
 static void gpio_pin_set_value(struct sh_pfc_chip *chip, unsigned offset,
@@ -212,7 +212,7 @@ static int gpio_pin_to_irq(struct gpio_chip *gc, unsigned offset)
 		}
 	}
 
-	return -ENOSYS;
+	return 0;
 
 found:
 	return pfc->irqs[i];
@@ -224,8 +224,9 @@ static int gpio_pin_setup(struct sh_pfc_chip *chip)
 	struct gpio_chip *gc = &chip->gpio_chip;
 	int ret;
 
-	chip->pins = devm_kzalloc(pfc->dev, pfc->info->nr_pins *
-				  sizeof(*chip->pins), GFP_KERNEL);
+	chip->pins = devm_kcalloc(pfc->dev,
+				  pfc->info->nr_pins, sizeof(*chip->pins),
+				  GFP_KERNEL);
 	if (chip->pins == NULL)
 		return -ENOMEM;
 
@@ -318,7 +319,7 @@ sh_pfc_add_gpiochip(struct sh_pfc *pfc, int(*setup)(struct sh_pfc_chip *),
 	if (ret < 0)
 		return ERR_PTR(ret);
 
-	ret = gpiochip_add_data(&chip->gpio_chip, chip);
+	ret = devm_gpiochip_add_data(pfc->dev, &chip->gpio_chip, chip);
 	if (unlikely(ret < 0))
 		return ERR_PTR(ret);
 
@@ -399,18 +400,7 @@ int sh_pfc_register_gpiochip(struct sh_pfc *pfc)
 	chip = sh_pfc_add_gpiochip(pfc, gpio_function_setup, NULL);
 	if (IS_ERR(chip))
 		return PTR_ERR(chip);
-
-	pfc->func = chip;
 #endif /* CONFIG_SUPERH */
 
-	return 0;
-}
-
-int sh_pfc_unregister_gpiochip(struct sh_pfc *pfc)
-{
-	gpiochip_remove(&pfc->gpio->gpio_chip);
-#ifdef CONFIG_SUPERH
-	gpiochip_remove(&pfc->func->gpio_chip);
-#endif
 	return 0;
 }

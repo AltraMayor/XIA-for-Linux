@@ -16,6 +16,7 @@
 
 #include <linux/timer.h>
 #include <linux/mutex.h>
+#include <linux/uaccess.h>
 
 #include "picvue.h"
 
@@ -43,7 +44,7 @@ static int pvc_line_proc_show(struct seq_file *m, void *v)
 {
 	int lineno = *(int *)m->private;
 
-	if (lineno < 0 || lineno > PVC_NLINES) {
+	if (lineno < 0 || lineno >= PVC_NLINES) {
 		printk(KERN_WARNING "proc_read_line: invalid lineno %d\n", lineno);
 		return 0;
 	}
@@ -67,7 +68,7 @@ static ssize_t pvc_line_proc_write(struct file *file, const char __user *buf,
 	char kbuf[PVC_LINELEN];
 	size_t len;
 
-	BUG_ON(lineno < 0 || lineno > PVC_NLINES);
+	BUG_ON(lineno < 0 || lineno >= PVC_NLINES);
 
 	len = min(count, sizeof(kbuf) - 1);
 	if (copy_from_user(kbuf, buf, len))
@@ -155,7 +156,7 @@ static const struct file_operations pvc_scroll_proc_fops = {
 	.write		= pvc_scroll_proc_write,
 };
 
-void pvc_proc_timerfunc(unsigned long data)
+void pvc_proc_timerfunc(struct timer_list *unused)
 {
 	if (scroll_dir < 0)
 		pvc_move(DISPLAY|RIGHT);
@@ -196,8 +197,7 @@ static int __init pvc_proc_init(void)
 	if (proc_entry == NULL)
 		goto error;
 
-	init_timer(&timer);
-	timer.function = pvc_proc_timerfunc;
+	timer_setup(&timer, pvc_proc_timerfunc, 0);
 
 	return 0;
 error:

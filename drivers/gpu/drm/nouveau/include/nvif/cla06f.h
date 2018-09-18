@@ -1,21 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NVIF_CLA06F_H__
 #define __NVIF_CLA06F_H__
 
 struct kepler_channel_gpfifo_a_v0 {
 	__u8  version;
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_GR                               0x01
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_MSPDEC                           0x02
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_MSPPP                            0x04
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_MSVLD                            0x08
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_CE0                              0x10
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_CE1                              0x20
-#define KEPLER_CHANNEL_GPFIFO_A_V0_ENGINE_ENC                              0x40
-	__u8  engine;
+	__u8  pad01[1];
 	__u16 chid;
 	__u32 ilength;
 	__u64 ioffset;
-	__u64 vm;
+	__u64 runlist;
+	__u64 vmm;
 };
 
-#define KEPLER_CHANNEL_GPFIFO_A_V0_NTFY_UEVENT                             0x00
+#define NVA06F_V0_NTFY_NON_STALL_INTERRUPT                                 0x00
+#define NVA06F_V0_NTFY_KILLED                                              0x01
 #endif

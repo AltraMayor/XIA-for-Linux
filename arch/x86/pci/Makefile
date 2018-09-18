@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 obj-y				:= i386.o init.o
 
 obj-$(CONFIG_PCI_BIOS)		+= pcbios.o
@@ -22,8 +23,6 @@ obj-y				+= bus_numa.o
 
 obj-$(CONFIG_AMD_NB)		+= amd_bus.o
 obj-$(CONFIG_PCI_CNB20LE_QUIRK)	+= broadcom_bus.o
-
-obj-$(CONFIG_VMD) += vmd.o
 
 ifeq ($(CONFIG_PCI_DEBUG),y)
 EXTRA_CFLAGS += -DDEBUG

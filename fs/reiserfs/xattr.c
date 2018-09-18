@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * linux/fs/reiserfs/xattr.c
  *
@@ -415,7 +416,7 @@ out:
 static inline void reiserfs_put_page(struct page *page)
 {
 	kunmap(page);
-	page_cache_release(page);
+	put_page(page);
 }
 
 static struct page *reiserfs_get_page(struct inode *dir, size_t n)
@@ -427,7 +428,7 @@ static struct page *reiserfs_get_page(struct inode *dir, size_t n)
 	 * and an unlink/rmdir has just occurred - GFP_NOFS avoids this
 	 */
 	mapping_set_gfp_mask(mapping, GFP_NOFS);
-	page = read_mapping_page(mapping, n >> PAGE_CACHE_SHIFT, NULL);
+	page = read_mapping_page(mapping, n >> PAGE_SHIFT, NULL);
 	if (!IS_ERR(page)) {
 		kmap(page);
 		if (PageError(page))
@@ -450,13 +451,13 @@ int reiserfs_commit_write(struct file *f, struct page *page,
 
 static void update_ctime(struct inode *inode)
 {
-	struct timespec now = current_fs_time(inode->i_sb);
+	struct timespec64 now = current_time(inode);
 
 	if (inode_unhashed(inode) || !inode->i_nlink ||
-	    timespec_equal(&inode->i_ctime, &now))
+	    timespec64_equal(&inode->i_ctime, &now))
 		return;
 
-	inode->i_ctime = CURRENT_TIME_SEC;
+	inode->i_ctime = current_time(inode);
 	mark_inode_dirty(inode);
 }
 
@@ -526,10 +527,10 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 	while (buffer_pos < buffer_size || buffer_pos == 0) {
 		size_t chunk;
 		size_t skip = 0;
-		size_t page_offset = (file_pos & (PAGE_CACHE_SIZE - 1));
+		size_t page_offset = (file_pos & (PAGE_SIZE - 1));
 
-		if (buffer_size - buffer_pos > PAGE_CACHE_SIZE)
-			chunk = PAGE_CACHE_SIZE;
+		if (buffer_size - buffer_pos > PAGE_SIZE)
+			chunk = PAGE_SIZE;
 		else
 			chunk = buffer_size - buffer_pos;
 
@@ -546,8 +547,8 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 			struct reiserfs_xattr_header *rxh;
 
 			skip = file_pos = sizeof(struct reiserfs_xattr_header);
-			if (chunk + skip > PAGE_CACHE_SIZE)
-				chunk = PAGE_CACHE_SIZE - skip;
+			if (chunk + skip > PAGE_SIZE)
+				chunk = PAGE_SIZE - skip;
 			rxh = (struct reiserfs_xattr_header *)data;
 			rxh->h_magic = cpu_to_le32(REISERFS_XATTR_MAGIC);
 			rxh->h_hash = cpu_to_le32(xahash);
@@ -575,7 +576,7 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 	new_size = buffer_size + sizeof(struct reiserfs_xattr_header);
 	if (!err && new_size < i_size_read(d_inode(dentry))) {
 		struct iattr newattrs = {
-			.ia_ctime = current_fs_time(inode->i_sb),
+			.ia_ctime = current_time(inode),
 			.ia_size = new_size,
 			.ia_valid = ATTR_SIZE | ATTR_CTIME,
 		};
@@ -675,8 +676,8 @@ reiserfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 		char *data;
 		size_t skip = 0;
 
-		if (isize - file_pos > PAGE_CACHE_SIZE)
-			chunk = PAGE_CACHE_SIZE;
+		if (isize - file_pos > PAGE_SIZE)
+			chunk = PAGE_SIZE;
 		else
 			chunk = isize - file_pos;
 
@@ -764,60 +765,6 @@ find_xattr_handler_prefix(const struct xattr_handler **handlers,
 	return xah;
 }
 
-
-/*
- * Inode operation getxattr()
- */
-ssize_t
-reiserfs_getxattr(struct dentry * dentry, const char *name, void *buffer,
-		  size_t size)
-{
-	const struct xattr_handler *handler;
-
-	handler = find_xattr_handler_prefix(dentry->d_sb->s_xattr, name);
-
-	if (!handler || get_inode_sd_version(d_inode(dentry)) == STAT_DATA_V1)
-		return -EOPNOTSUPP;
-
-	return handler->get(handler, dentry, name, buffer, size);
-}
-
-/*
- * Inode operation setxattr()
- *
- * d_inode(dentry)->i_mutex down
- */
-int
-reiserfs_setxattr(struct dentry *dentry, const char *name, const void *value,
-		  size_t size, int flags)
-{
-	const struct xattr_handler *handler;
-
-	handler = find_xattr_handler_prefix(dentry->d_sb->s_xattr, name);
-
-	if (!handler || get_inode_sd_version(d_inode(dentry)) == STAT_DATA_V1)
-		return -EOPNOTSUPP;
-
-	return handler->set(handler, dentry, name, value, size, flags);
-}
-
-/*
- * Inode operation removexattr()
- *
- * d_inode(dentry)->i_mutex down
- */
-int reiserfs_removexattr(struct dentry *dentry, const char *name)
-{
-	const struct xattr_handler *handler;
-
-	handler = find_xattr_handler_prefix(dentry->d_sb->s_xattr, name);
-
-	if (!handler || get_inode_sd_version(d_inode(dentry)) == STAT_DATA_V1)
-		return -EOPNOTSUPP;
-
-	return handler->set(handler, dentry, name, NULL, 0, XATTR_REPLACE);
-}
-
 struct listxattr_buf {
 	struct dir_context ctx;
 	size_t size;
@@ -845,8 +792,10 @@ static int listxattr_filler(struct dir_context *ctx, const char *name,
 			return 0;
 		size = namelen + 1;
 		if (b->buf) {
-			if (size > b->size)
+			if (b->pos + size > b->size) {
+				b->pos = -ERANGE;
 				return -ERANGE;
+			}
 			memcpy(b->buf + b->pos, name, namelen);
 			b->buf[b->pos + namelen] = 0;
 		}
@@ -1012,7 +961,7 @@ int reiserfs_lookup_privroot(struct super_block *s)
 
 /*
  * We need to take a copy of the mount flags since things like
- * MS_RDONLY don't get set until *after* we're called.
+ * SB_RDONLY don't get set until *after* we're called.
  * mount_flags != mount_options
  */
 int reiserfs_xattr_init(struct super_block *s, int mount_flags)
@@ -1024,7 +973,7 @@ int reiserfs_xattr_init(struct super_block *s, int mount_flags)
 	if (err)
 		goto error;
 
-	if (d_really_is_negative(privroot) && !(mount_flags & MS_RDONLY)) {
+	if (d_really_is_negative(privroot) && !(mount_flags & SB_RDONLY)) {
 		inode_lock(d_inode(s->s_root));
 		err = create_privroot(REISERFS_SB(s)->priv_root);
 		inode_unlock(d_inode(s->s_root));
@@ -1052,11 +1001,11 @@ error:
 		clear_bit(REISERFS_POSIXACL, &REISERFS_SB(s)->s_mount_opt);
 	}
 
-	/* The super_block MS_POSIXACL must mirror the (no)acl mount option. */
+	/* The super_block SB_POSIXACL must mirror the (no)acl mount option. */
 	if (reiserfs_posixacl(s))
-		s->s_flags |= MS_POSIXACL;
+		s->s_flags |= SB_POSIXACL;
 	else
-		s->s_flags &= ~MS_POSIXACL;
+		s->s_flags &= ~SB_POSIXACL;
 
 	return err;
 }

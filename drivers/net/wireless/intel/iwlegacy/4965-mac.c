@@ -457,7 +457,7 @@ il4965_rxq_stop(struct il_priv *il)
 }
 
 int
-il4965_hwrate_to_mac80211_idx(u32 rate_n_flags, enum ieee80211_band band)
+il4965_hwrate_to_mac80211_idx(u32 rate_n_flags, enum nl80211_band band)
 {
 	int idx = 0;
 	int band_offset = 0;
@@ -468,7 +468,7 @@ il4965_hwrate_to_mac80211_idx(u32 rate_n_flags, enum ieee80211_band band)
 		return idx;
 		/* Legacy rate format, search for match in table */
 	} else {
-		if (band == IEEE80211_BAND_5GHZ)
+		if (band == NL80211_BAND_5GHZ)
 			band_offset = IL_FIRST_OFDM_RATE;
 		for (idx = band_offset; idx < RATE_COUNT_LEGACY; idx++)
 			if (il_rates[idx].plcp == (rate_n_flags & 0xFF))
@@ -606,7 +606,7 @@ il4965_pass_packet_to_mac80211(struct il_priv *il, struct ieee80211_hdr *hdr,
 	}
 
 	if (len <= SMALL_PACKET_SIZE) {
-		memcpy(skb_put(skb, len), hdr, len);
+		skb_put_data(skb, hdr, len);
 	} else {
 		skb_add_rx_frag(skb, 0, rxb->page, (void *)hdr - rxb_addr(rxb),
 				len, PAGE_SIZE << il->hw_params.rx_page_order);
@@ -688,8 +688,8 @@ il4965_hdl_rx(struct il_priv *il, struct il_rx_buf *rxb)
 	rx_status.mactime = le64_to_cpu(phy_res->timestamp);
 	rx_status.band =
 	    (phy_res->
-	     phy_flags & RX_RES_PHY_FLAGS_BAND_24_MSK) ? IEEE80211_BAND_2GHZ :
-	    IEEE80211_BAND_5GHZ;
+	     phy_flags & RX_RES_PHY_FLAGS_BAND_24_MSK) ? NL80211_BAND_2GHZ :
+	    NL80211_BAND_5GHZ;
 	rx_status.freq =
 	    ieee80211_channel_to_frequency(le16_to_cpu(phy_res->channel),
 					   rx_status.band);
@@ -728,15 +728,17 @@ il4965_hdl_rx(struct il_priv *il, struct il_rx_buf *rxb)
 
 	/* set the preamble flag if appropriate */
 	if (phy_res->phy_flags & RX_RES_PHY_FLAGS_SHORT_PREAMBLE_MSK)
-		rx_status.flag |= RX_FLAG_SHORTPRE;
+		rx_status.enc_flags |= RX_ENC_FLAG_SHORTPRE;
 
 	/* Set up the HT phy flags */
 	if (rate_n_flags & RATE_MCS_HT_MSK)
-		rx_status.flag |= RX_FLAG_HT;
+		rx_status.encoding = RX_ENC_HT;
 	if (rate_n_flags & RATE_MCS_HT40_MSK)
-		rx_status.flag |= RX_FLAG_40MHZ;
+		rx_status.bw = RATE_INFO_BW_40;
+	else
+		rx_status.bw = RATE_INFO_BW_20;
 	if (rate_n_flags & RATE_MCS_SGI_MSK)
-		rx_status.flag |= RX_FLAG_SHORT_GI;
+		rx_status.enc_flags |= RX_ENC_FLAG_SHORT_GI;
 
 	if (phy_res->phy_flags & RX_RES_PHY_FLAGS_AGG_MSK) {
 		/* We know which subframes of an A-MPDU belong
@@ -766,7 +768,7 @@ il4965_hdl_rx_phy(struct il_priv *il, struct il_rx_buf *rxb)
 
 static int
 il4965_get_channels_for_scan(struct il_priv *il, struct ieee80211_vif *vif,
-			     enum ieee80211_band band, u8 is_active,
+			     enum nl80211_band band, u8 is_active,
 			     u8 n_probes, struct il_scan_channel *scan_ch)
 {
 	struct ieee80211_channel *chan;
@@ -822,7 +824,7 @@ il4965_get_channels_for_scan(struct il_priv *il, struct ieee80211_vif *vif,
 		 * power level:
 		 * scan_ch->tx_gain = ((1 << 5) | (2 << 3)) | 3;
 		 */
-		if (band == IEEE80211_BAND_5GHZ)
+		if (band == NL80211_BAND_5GHZ)
 			scan_ch->tx_gain = ((1 << 5) | (3 << 3)) | 3;
 		else
 			scan_ch->tx_gain = ((1 << 5) | (5 << 3));
@@ -870,7 +872,7 @@ il4965_request_scan(struct il_priv *il, struct ieee80211_vif *vif)
 	u32 rate_flags = 0;
 	u16 cmd_len;
 	u16 rx_chain = 0;
-	enum ieee80211_band band;
+	enum nl80211_band band;
 	u8 n_probes = 0;
 	u8 rx_ant = il->hw_params.valid_rx_ant;
 	u8 rate;
@@ -944,7 +946,7 @@ il4965_request_scan(struct il_priv *il, struct ieee80211_vif *vif)
 	scan->tx_cmd.stop_time.life_time = TX_CMD_LIFE_TIME_INFINITE;
 
 	switch (il->scan_band) {
-	case IEEE80211_BAND_2GHZ:
+	case NL80211_BAND_2GHZ:
 		scan->flags = RXON_FLG_BAND_24G_MSK | RXON_FLG_AUTO_DETECT_MSK;
 		chan_mod =
 		    le32_to_cpu(il->active.flags & RXON_FLG_CHANNEL_MODE_MSK) >>
@@ -956,7 +958,7 @@ il4965_request_scan(struct il_priv *il, struct ieee80211_vif *vif)
 			rate_flags = RATE_MCS_CCK_MSK;
 		}
 		break;
-	case IEEE80211_BAND_5GHZ:
+	case NL80211_BAND_5GHZ:
 		rate = RATE_6M_PLCP;
 		break;
 	default:
@@ -1336,15 +1338,12 @@ il4965_accumulative_stats(struct il_priv *il, __le32 * stats)
 	u32 *accum_stats;
 	u32 *delta, *max_delta;
 	struct stats_general_common *general, *accum_general;
-	struct stats_tx *tx, *accum_tx;
 
 	prev_stats = (__le32 *) &il->_4965.stats;
 	accum_stats = (u32 *) &il->_4965.accum_stats;
 	size = sizeof(struct il_notif_stats);
 	general = &il->_4965.stats.general.common;
 	accum_general = &il->_4965.accum_stats.general.common;
-	tx = &il->_4965.stats.tx;
-	accum_tx = &il->_4965.accum_stats.tx;
 	delta = (u32 *) &il->_4965.delta_stats;
 	max_delta = (u32 *) &il->_4965.max_delta;
 
@@ -1478,7 +1477,7 @@ il4965_get_ac_from_tid(u16 tid)
 static inline int
 il4965_get_fifo_from_tid(u16 tid)
 {
-	const u8 ac_to_fifo[] = {
+	static const u8 ac_to_fifo[] = {
 		IL_TX_FIFO_VO,
 		IL_TX_FIFO_VI,
 		IL_TX_FIFO_BE,
@@ -1590,7 +1589,7 @@ il4965_tx_cmd_build_rate(struct il_priv *il,
 	    || rate_idx > RATE_COUNT_LEGACY)
 		rate_idx = rate_lowest_index(&il->bands[info->band], sta);
 	/* For 5 GHZ band, remap mac80211 rate indices into driver indices */
-	if (info->band == IEEE80211_BAND_5GHZ)
+	if (info->band == NL80211_BAND_5GHZ)
 		rate_idx += IL_FIRST_OFDM_RATE;
 	/* Get PLCP rate for tx_cmd->rate_n_flags */
 	rate_plcp = il_rates[rate_idx].plcp;
@@ -3051,7 +3050,7 @@ il4965_sta_alloc_lq(struct il_priv *il, u8 sta_id)
 	}
 	/* Set up the rate scaling to start at selected rate, fall back
 	 * all the way down to 1M in IEEE order, and then spin on 1M */
-	if (il->band == IEEE80211_BAND_5GHZ)
+	if (il->band == NL80211_BAND_5GHZ)
 		r = RATE_6M_IDX;
 	else
 		r = RATE_1M_IDX;
@@ -4072,9 +4071,9 @@ il4965_hdl_alive(struct il_priv *il, struct il_rx_buf *rxb)
  * used for calibrating the TXPOWER.
  */
 static void
-il4965_bg_stats_periodic(unsigned long data)
+il4965_bg_stats_periodic(struct timer_list *t)
 {
-	struct il_priv *il = (struct il_priv *)data;
+	struct il_priv *il = from_timer(il, t, stats_periodic);
 
 	if (test_bit(S_EXIT_PENDING, &il->status))
 		return;
@@ -4589,7 +4588,7 @@ il4965_store_debug_level(struct device *d, struct device_attribute *attr,
 	return strnlen(buf, count);
 }
 
-static DEVICE_ATTR(debug_level, S_IWUSR | S_IRUGO, il4965_show_debug_level,
+static DEVICE_ATTR(debug_level, 0644, il4965_show_debug_level,
 		   il4965_store_debug_level);
 
 #endif /* CONFIG_IWLEGACY_DEBUG */
@@ -4606,7 +4605,7 @@ il4965_show_temperature(struct device *d, struct device_attribute *attr,
 	return sprintf(buf, "%d\n", il->temperature);
 }
 
-static DEVICE_ATTR(temperature, S_IRUGO, il4965_show_temperature, NULL);
+static DEVICE_ATTR(temperature, 0444, il4965_show_temperature, NULL);
 
 static ssize_t
 il4965_show_tx_power(struct device *d, struct device_attribute *attr, char *buf)
@@ -4640,7 +4639,7 @@ il4965_store_tx_power(struct device *d, struct device_attribute *attr,
 	return ret;
 }
 
-static DEVICE_ATTR(tx_power, S_IWUSR | S_IRUGO, il4965_show_tx_power,
+static DEVICE_ATTR(tx_power, 0644, il4965_show_tx_power,
 		   il4965_store_tx_power);
 
 static struct attribute *il_sysfs_entries[] = {
@@ -4652,7 +4651,7 @@ static struct attribute *il_sysfs_entries[] = {
 	NULL
 };
 
-static struct attribute_group il_attribute_group = {
+static const struct attribute_group il_attribute_group = {
 	.name = NULL,		/* put in device directory */
 	.attrs = il_sysfs_entries,
 };
@@ -4782,7 +4781,6 @@ static void
 il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 {
 	struct il_priv *il = context;
-	struct il_ucode_header *ucode;
 	int err;
 	struct il4965_firmware_pieces pieces;
 	const unsigned int api_max = il->cfg->ucode_api_max;
@@ -4812,8 +4810,6 @@ il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 	}
 
 	/* Data from ucode file:  header followed by uCode images */
-	ucode = (struct il_ucode_header *)ucode_raw->data;
-
 	err = il4965_load_firmware(il, ucode_raw, &pieces);
 
 	if (err)
@@ -4855,39 +4851,39 @@ il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 	 */
 
 	D_INFO("f/w package hdr ucode version raw = 0x%x\n", il->ucode_ver);
-	D_INFO("f/w package hdr runtime inst size = %Zd\n", pieces.inst_size);
-	D_INFO("f/w package hdr runtime data size = %Zd\n", pieces.data_size);
-	D_INFO("f/w package hdr init inst size = %Zd\n", pieces.init_size);
-	D_INFO("f/w package hdr init data size = %Zd\n", pieces.init_data_size);
-	D_INFO("f/w package hdr boot inst size = %Zd\n", pieces.boot_size);
+	D_INFO("f/w package hdr runtime inst size = %zd\n", pieces.inst_size);
+	D_INFO("f/w package hdr runtime data size = %zd\n", pieces.data_size);
+	D_INFO("f/w package hdr init inst size = %zd\n", pieces.init_size);
+	D_INFO("f/w package hdr init data size = %zd\n", pieces.init_data_size);
+	D_INFO("f/w package hdr boot inst size = %zd\n", pieces.boot_size);
 
 	/* Verify that uCode images will fit in card's SRAM */
 	if (pieces.inst_size > il->hw_params.max_inst_size) {
-		IL_ERR("uCode instr len %Zd too large to fit in\n",
+		IL_ERR("uCode instr len %zd too large to fit in\n",
 		       pieces.inst_size);
 		goto try_again;
 	}
 
 	if (pieces.data_size > il->hw_params.max_data_size) {
-		IL_ERR("uCode data len %Zd too large to fit in\n",
+		IL_ERR("uCode data len %zd too large to fit in\n",
 		       pieces.data_size);
 		goto try_again;
 	}
 
 	if (pieces.init_size > il->hw_params.max_inst_size) {
-		IL_ERR("uCode init instr len %Zd too large to fit in\n",
+		IL_ERR("uCode init instr len %zd too large to fit in\n",
 		       pieces.init_size);
 		goto try_again;
 	}
 
 	if (pieces.init_data_size > il->hw_params.max_data_size) {
-		IL_ERR("uCode init data len %Zd too large to fit in\n",
+		IL_ERR("uCode init data len %zd too large to fit in\n",
 		       pieces.init_data_size);
 		goto try_again;
 	}
 
 	if (pieces.boot_size > il->hw_params.max_bsm_size) {
-		IL_ERR("uCode boot instr len %Zd too large to fit in\n",
+		IL_ERR("uCode boot instr len %zd too large to fit in\n",
 		       pieces.boot_size);
 		goto try_again;
 	}
@@ -4938,7 +4934,7 @@ il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 	/* Copy images into buffers for card's bus-master reads ... */
 
 	/* Runtime instructions (first block of data in file) */
-	D_INFO("Copying (but not loading) uCode instr len %Zd\n",
+	D_INFO("Copying (but not loading) uCode instr len %zd\n",
 	       pieces.inst_size);
 	memcpy(il->ucode_code.v_addr, pieces.inst, pieces.inst_size);
 
@@ -4949,28 +4945,28 @@ il4965_ucode_callback(const struct firmware *ucode_raw, void *context)
 	 * Runtime data
 	 * NOTE:  Copy into backup buffer will be done in il_up()
 	 */
-	D_INFO("Copying (but not loading) uCode data len %Zd\n",
+	D_INFO("Copying (but not loading) uCode data len %zd\n",
 	       pieces.data_size);
 	memcpy(il->ucode_data.v_addr, pieces.data, pieces.data_size);
 	memcpy(il->ucode_data_backup.v_addr, pieces.data, pieces.data_size);
 
 	/* Initialization instructions */
 	if (pieces.init_size) {
-		D_INFO("Copying (but not loading) init instr len %Zd\n",
+		D_INFO("Copying (but not loading) init instr len %zd\n",
 		       pieces.init_size);
 		memcpy(il->ucode_init.v_addr, pieces.init, pieces.init_size);
 	}
 
 	/* Initialization data */
 	if (pieces.init_data_size) {
-		D_INFO("Copying (but not loading) init data len %Zd\n",
+		D_INFO("Copying (but not loading) init data len %zd\n",
 		       pieces.init_data_size);
 		memcpy(il->ucode_init_data.v_addr, pieces.init_data,
 		       pieces.init_data_size);
 	}
 
 	/* Bootstrap instructions */
-	D_INFO("Copying (but not loading) boot instr len %Zd\n",
+	D_INFO("Copying (but not loading) boot instr len %zd\n",
 	       pieces.boot_size);
 	memcpy(il->ucode_boot.v_addr, pieces.boot, pieces.boot_size);
 
@@ -5553,6 +5549,7 @@ __il4965_up(struct il_priv *il)
 
 	il4965_prepare_card_hw(il);
 	if (!il->hw_ready) {
+		il_dealloc_bcast_stations(il);
 		IL_ERR("HW not ready\n");
 		return -EIO;
 	}
@@ -5564,6 +5561,7 @@ __il4965_up(struct il_priv *il)
 		set_bit(S_RFKILL, &il->status);
 		wiphy_rfkill_set_hw_state(il->hw->wiphy, true);
 
+		il_dealloc_bcast_stations(il);
 		il_enable_rfkill_int(il);
 		IL_WARN("Radio disabled by HW RF Kill switch\n");
 		return 0;
@@ -5577,6 +5575,7 @@ __il4965_up(struct il_priv *il)
 	ret = il4965_hw_nic_init(il);
 	if (ret) {
 		IL_ERR("Unable to init nic\n");
+		il_dealloc_bcast_stations(il);
 		return ret;
 	}
 
@@ -5787,14 +5786,16 @@ il4965_mac_setup_register(struct il_priv *il, u32 max_probe_length)
 
 	hw->max_listen_interval = IL_CONN_MAX_LISTEN_INTERVAL;
 
-	if (il->bands[IEEE80211_BAND_2GHZ].n_channels)
-		il->hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
-		    &il->bands[IEEE80211_BAND_2GHZ];
-	if (il->bands[IEEE80211_BAND_5GHZ].n_channels)
-		il->hw->wiphy->bands[IEEE80211_BAND_5GHZ] =
-		    &il->bands[IEEE80211_BAND_5GHZ];
+	if (il->bands[NL80211_BAND_2GHZ].n_channels)
+		il->hw->wiphy->bands[NL80211_BAND_2GHZ] =
+		    &il->bands[NL80211_BAND_2GHZ];
+	if (il->bands[NL80211_BAND_5GHZ].n_channels)
+		il->hw->wiphy->bands[NL80211_BAND_5GHZ] =
+		    &il->bands[NL80211_BAND_5GHZ];
 
 	il_leds_init(il);
+
+	wiphy_ext_feature_set(il->hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 
 	ret = ieee80211_register_hw(il->hw);
 	if (ret) {
@@ -5982,12 +5983,14 @@ il4965_mac_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 
 int
 il4965_mac_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
-			enum ieee80211_ampdu_mlme_action action,
-			struct ieee80211_sta *sta, u16 tid, u16 * ssn,
-			u8 buf_size, bool amsdu)
+			struct ieee80211_ampdu_params *params)
 {
 	struct il_priv *il = hw->priv;
 	int ret = -EINVAL;
+	struct ieee80211_sta *sta = params->sta;
+	enum ieee80211_ampdu_mlme_action action = params->action;
+	u16 tid = params->tid;
+	u16 *ssn = &params->ssn;
 
 	D_HT("A-MPDU action on addr %pM tid %d\n", sta->addr, tid);
 
@@ -6249,10 +6252,9 @@ il4965_setup_deferred_work(struct il_priv *il)
 
 	INIT_WORK(&il->txpower_work, il4965_bg_txpower_work);
 
-	setup_timer(&il->stats_periodic, il4965_bg_stats_periodic,
-		    (unsigned long)il);
+	timer_setup(&il->stats_periodic, il4965_bg_stats_periodic, 0);
 
-	setup_timer(&il->watchdog, il_bg_watchdog, (unsigned long)il);
+	timer_setup(&il->watchdog, il_bg_watchdog, 0);
 
 	tasklet_init(&il->irq_tasklet,
 		     (void (*)(unsigned long))il4965_irq_tasklet,
@@ -6363,7 +6365,7 @@ il4965_init_drv(struct il_priv *il)
 
 	il->ieee_channels = NULL;
 	il->ieee_rates = NULL;
-	il->band = IEEE80211_BAND_2GHZ;
+	il->band = NL80211_BAND_2GHZ;
 
 	il->iw_mode = NL80211_IFTYPE_STATION;
 	il->current_ht_config.smps = IEEE80211_SMPS_STATIC;
@@ -6475,7 +6477,7 @@ il4965_set_hw_params(struct il_priv *il)
 	il->hw_params.max_data_size = IL49_RTC_DATA_SIZE;
 	il->hw_params.max_inst_size = IL49_RTC_INST_SIZE;
 	il->hw_params.max_bsm_size = BSM_SRAM_SIZE;
-	il->hw_params.ht40_channel = BIT(IEEE80211_BAND_5GHZ);
+	il->hw_params.ht40_channel = BIT(NL80211_BAND_5GHZ);
 
 	il->hw_params.rx_wrt_ptr_reg = FH49_RSCSR_CHNL0_WPTR;
 
@@ -6851,18 +6853,17 @@ module_exit(il4965_exit);
 module_init(il4965_init);
 
 #ifdef CONFIG_IWLEGACY_DEBUG
-module_param_named(debug, il_debug_level, uint, S_IRUGO | S_IWUSR);
+module_param_named(debug, il_debug_level, uint, 0644);
 MODULE_PARM_DESC(debug, "debug output mask");
 #endif
 
-module_param_named(swcrypto, il4965_mod_params.sw_crypto, int, S_IRUGO);
+module_param_named(swcrypto, il4965_mod_params.sw_crypto, int, 0444);
 MODULE_PARM_DESC(swcrypto, "using crypto in software (default 0 [hardware])");
-module_param_named(queues_num, il4965_mod_params.num_of_queues, int, S_IRUGO);
+module_param_named(queues_num, il4965_mod_params.num_of_queues, int, 0444);
 MODULE_PARM_DESC(queues_num, "number of hw queues.");
-module_param_named(11n_disable, il4965_mod_params.disable_11n, int, S_IRUGO);
+module_param_named(11n_disable, il4965_mod_params.disable_11n, int, 0444);
 MODULE_PARM_DESC(11n_disable, "disable 11n functionality");
-module_param_named(amsdu_size_8K, il4965_mod_params.amsdu_size_8K, int,
-		   S_IRUGO);
+module_param_named(amsdu_size_8K, il4965_mod_params.amsdu_size_8K, int, 0444);
 MODULE_PARM_DESC(amsdu_size_8K, "enable 8K amsdu size (default 0 [disabled])");
-module_param_named(fw_restart, il4965_mod_params.restart_fw, int, S_IRUGO);
+module_param_named(fw_restart, il4965_mod_params.restart_fw, int, 0444);
 MODULE_PARM_DESC(fw_restart, "restart firmware in case of error");

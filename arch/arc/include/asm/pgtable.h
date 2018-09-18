@@ -12,7 +12,7 @@
  *  - Utilise some unused free bits to confine PTE flags to 12 bits
  *     This is a must for 4k pg-sz
  *
- * vineetg: Mar 2011 - changes to accomodate MMU TLB Page Descriptor mods
+ * vineetg: Mar 2011 - changes to accommodate MMU TLB Page Descriptor mods
  *  -TLB Locking never really existed, except for initial specs
  *  -SILENT_xxx not needed for our port
  *  -Per my request, MMU V3 changes the layout of some of the bits
@@ -35,10 +35,11 @@
 #ifndef _ASM_ARC_PGTABLE_H
 #define _ASM_ARC_PGTABLE_H
 
-#include <asm/page.h>
-#include <asm/mmu.h>
-#include <asm-generic/pgtable-nopmd.h>
 #include <linux/const.h>
+#define __ARCH_USE_5LEVEL_HACK
+#include <asm-generic/pgtable-nopmd.h>
+#include <asm/page.h>
+#include <asm/mmu.h>	/* to propagate CONFIG_ARC_MMU_VER <n> */
 
 /**************************************************************************
  * Page Table Flags
@@ -47,7 +48,7 @@
  * Page Tables are purely for Linux VM's consumption and the bits below are
  * suited to that (uniqueness). Hence some are not implemented in the TLB and
  * some have different value in TLB.
- * e.g. MMU v2: K_READ bit is 8 and so is GLOBAL (possible becoz they live in
+ * e.g. MMU v2: K_READ bit is 8 and so is GLOBAL (possible because they live in
  *      seperate PD0 and PD1, which combined forms a translation entry)
  *      while for PTE perspective, they are 8 and 9 respectively
  * with MMU v3: Most bits (except SHARED) represent the exact hardware pos
@@ -110,7 +111,7 @@
 #define ___DEF (_PAGE_PRESENT | _PAGE_CACHEABLE)
 
 /* Set of bits not changed in pte_modify */
-#define _PAGE_CHG_MASK	(PAGE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
+#define _PAGE_CHG_MASK	(PAGE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SPECIAL)
 
 /* More Abbrevaited helpers */
 #define PAGE_U_NONE     __pgprot(___DEF)
@@ -217,7 +218,7 @@
 #define BITS_FOR_PTE	(PGDIR_SHIFT - PAGE_SHIFT)
 #define BITS_FOR_PGD	(32 - PGDIR_SHIFT)
 
-#define PGDIR_SIZE	(1UL << PGDIR_SHIFT)	/* vaddr span, not PDG sz */
+#define PGDIR_SIZE	_BITUL(PGDIR_SHIFT)	/* vaddr span, not PDG sz */
 #define PGDIR_MASK	(~(PGDIR_SIZE-1))
 
 #define	PTRS_PER_PTE	_BITUL(BITS_FOR_PTE)
@@ -278,14 +279,12 @@ static inline void pmd_set(pmd_t *pmdp, pte_t *ptep)
 #define pmd_present(x)			(pmd_val(x))
 #define pmd_clear(xp)			do { pmd_val(*(xp)) = 0; } while (0)
 
-#define pte_page(x) (mem_map + \
-		(unsigned long)(((pte_val(x) - CONFIG_LINUX_LINK_BASE) >> \
-				PAGE_SHIFT)))
-
+#define pte_page(pte)		pfn_to_page(pte_pfn(pte))
 #define mk_pte(page, prot)	pfn_pte(page_to_pfn(page), prot)
+#define pfn_pte(pfn, prot)	__pte(__pfn_to_phys(pfn) | pgprot_val(prot))
+
+/* Don't use virt_to_pfn for macros below: could cause truncations for PAE40*/
 #define pte_pfn(pte)		(pte_val(pte) >> PAGE_SHIFT)
-#define pfn_pte(pfn, prot)	(__pte(((pte_t)(pfn) << PAGE_SHIFT) | \
-				 pgprot_val(prot)))
 #define __pte_index(addr)	(((addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
 
 /*
@@ -320,8 +319,6 @@ PTE_BIT_FUNC(exprotect,	&= ~(_PAGE_EXECUTE));
 PTE_BIT_FUNC(mkexec,	|= (_PAGE_EXECUTE));
 PTE_BIT_FUNC(mkspecial,	|= (_PAGE_SPECIAL));
 PTE_BIT_FUNC(mkhuge,	|= (_PAGE_HW_SZ));
-
-#define __HAVE_ARCH_PTE_SPECIAL
 
 static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 {
@@ -380,7 +377,7 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address,
 
 /* Decode a PTE containing swap "identifier "into constituents */
 #define __swp_type(pte_lookalike)	(((pte_lookalike).val) & 0x1f)
-#define __swp_offset(pte_lookalike)	((pte_lookalike).val << 13)
+#define __swp_offset(pte_lookalike)	((pte_lookalike).val >> 13)
 
 /* NOPs, to keep generic kernel happy */
 #define __pte_to_swp_entry(pte)	((swp_entry_t) { pte_val(pte) })

@@ -47,7 +47,7 @@ int drm_ht_create(struct drm_open_hash *ht, unsigned int order)
 	if (size <= PAGE_SIZE / sizeof(*ht->table))
 		ht->table = kcalloc(size, sizeof(*ht->table), GFP_KERNEL);
 	else
-		ht->table = vzalloc(size*sizeof(*ht->table));
+		ht->table = vzalloc(array_size(size, sizeof(*ht->table)));
 	if (!ht->table) {
 		DRM_ERROR("Out of memory for hash table\n");
 		return -ENOMEM;
@@ -142,7 +142,7 @@ int drm_ht_just_insert_please(struct drm_open_hash *ht, struct drm_hash_item *it
 			      unsigned long add)
 {
 	int ret;
-	unsigned long mask = (1 << bits) - 1;
+	unsigned long mask = (1UL << bits) - 1;
 	unsigned long first, unshifted_key;
 
 	unshifted_key = hash_long(seed, bits);

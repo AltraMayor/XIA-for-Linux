@@ -10,6 +10,8 @@
 
 #include <linux/auxvec.h>
 #include <linux/fs.h>
+#include <linux/mm_types.h>
+
 #include <uapi/linux/elf.h>
 
 #include <asm/current.h>
@@ -111,6 +113,11 @@
 #define R_MIPS_CALLHI16		30
 #define R_MIPS_CALLLO16		31
 /*
+ * Introduced for MIPSr6.
+ */
+#define R_MIPS_PC21_S2		60
+#define R_MIPS_PC26_S2		61
+/*
  * This range is reserved for vendor specific relocations.
  */
 #define R_MIPS_LOVENDOR		100
@@ -170,16 +177,14 @@
 #define SHF_MIPS_NAMES		0x02000000
 #define SHF_MIPS_NODUPES	0x01000000
 
-#ifndef ELF_ARCH
-/* ELF register definitions */
-#define ELF_NGREG	45
-#define ELF_NFPREG	33
-
-typedef unsigned long elf_greg_t;
-typedef elf_greg_t elf_gregset_t[ELF_NGREG];
-
-typedef double elf_fpreg_t;
-typedef elf_fpreg_t elf_fpregset_t[ELF_NFPREG];
+#define MIPS_ABI_FP_ANY		0	/* FP ABI doesn't matter */
+#define MIPS_ABI_FP_DOUBLE	1	/* -mdouble-float */
+#define MIPS_ABI_FP_SINGLE	2	/* -msingle-float */
+#define MIPS_ABI_FP_SOFT	3	/* -msoft-float */
+#define MIPS_ABI_FP_OLD_64	4	/* -mips32r2 -mfp64 */
+#define MIPS_ABI_FP_XX		5	/* -mfpxx */
+#define MIPS_ABI_FP_64		6	/* -mips32r2 -mfp64 */
+#define MIPS_ABI_FP_64A		7	/* -mips32r2 -mfp64 -mno-odd-spreg */
 
 struct mips_elf_abiflags_v0 {
 	uint16_t version;	/* Version of flags structure */
@@ -196,16 +201,63 @@ struct mips_elf_abiflags_v0 {
 	uint32_t flags2;
 };
 
-#define MIPS_ABI_FP_ANY		0	/* FP ABI doesn't matter */
-#define MIPS_ABI_FP_DOUBLE	1	/* -mdouble-float */
-#define MIPS_ABI_FP_SINGLE	2	/* -msingle-float */
-#define MIPS_ABI_FP_SOFT	3	/* -msoft-float */
-#define MIPS_ABI_FP_OLD_64	4	/* -mips32r2 -mfp64 */
-#define MIPS_ABI_FP_XX		5	/* -mfpxx */
-#define MIPS_ABI_FP_64		6	/* -mips32r2 -mfp64 */
-#define MIPS_ABI_FP_64A		7	/* -mips32r2 -mfp64 -mno-odd-spreg */
+#ifndef ELF_ARCH
+/* ELF register definitions */
+#define ELF_NGREG	45
+#define ELF_NFPREG	33
+
+typedef unsigned long elf_greg_t;
+typedef elf_greg_t elf_gregset_t[ELF_NGREG];
+
+typedef double elf_fpreg_t;
+typedef elf_fpreg_t elf_fpregset_t[ELF_NFPREG];
+
+void mips_dump_regs32(u32 *uregs, const struct pt_regs *regs);
+void mips_dump_regs64(u64 *uregs, const struct pt_regs *regs);
 
 #ifdef CONFIG_32BIT
+/*
+ * This is used to ensure we don't load something for the wrong architecture.
+ */
+#define elf_check_arch elfo32_check_arch
+
+/*
+ * These are used to set parameters in the core dumps.
+ */
+#define ELF_CLASS	ELFCLASS32
+
+#define ELF_CORE_COPY_REGS(dest, regs) \
+	mips_dump_regs32((u32 *)&(dest), (regs));
+
+#endif /* CONFIG_32BIT */
+
+#ifdef CONFIG_64BIT
+/*
+ * This is used to ensure we don't load something for the wrong architecture.
+ */
+#define elf_check_arch elfn64_check_arch
+
+/*
+ * These are used to set parameters in the core dumps.
+ */
+#define ELF_CLASS	ELFCLASS64
+
+#define ELF_CORE_COPY_REGS(dest, regs) \
+	mips_dump_regs64((u64 *)&(dest), (regs));
+
+#endif /* CONFIG_64BIT */
+
+/*
+ * These are used to set parameters in the core dumps.
+ */
+#ifdef __MIPSEB__
+#define ELF_DATA	ELFDATA2MSB
+#elif defined(__MIPSEL__)
+#define ELF_DATA	ELFDATA2LSB
+#endif
+#define ELF_ARCH	EM_MIPS
+
+#endif /* !defined(ELF_ARCH) */
 
 /*
  * In order to be sure that we don't attempt to execute an O32 binary which
@@ -219,10 +271,15 @@ struct mips_elf_abiflags_v0 {
 # define __MIPS_O32_FP64_MUST_BE_ZERO	EF_MIPS_FP64
 #endif
 
+#define mips_elf_check_machine(x) ((x)->e_machine == EM_MIPS)
+
+#define vmcore_elf32_check_arch mips_elf_check_machine
+#define vmcore_elf64_check_arch mips_elf_check_machine
+
 /*
- * This is used to ensure we don't load something for the wrong architecture.
+ * Return non-zero if HDR identifies an o32 ELF binary.
  */
-#define elf_check_arch(hdr)						\
+#define elfo32_check_arch(hdr)						\
 ({									\
 	int __res = 1;							\
 	struct elfhdr *__h = (hdr);					\
@@ -243,17 +300,9 @@ struct mips_elf_abiflags_v0 {
 })
 
 /*
- * These are used to set parameters in the core dumps.
+ * Return non-zero if HDR identifies an n64 ELF binary.
  */
-#define ELF_CLASS	ELFCLASS32
-
-#endif /* CONFIG_32BIT */
-
-#ifdef CONFIG_64BIT
-/*
- * This is used to ensure we don't load something for the wrong architecture.
- */
-#define elf_check_arch(hdr)						\
+#define elfn64_check_arch(hdr)						\
 ({									\
 	int __res = 1;							\
 	struct elfhdr *__h = (hdr);					\
@@ -267,28 +316,23 @@ struct mips_elf_abiflags_v0 {
 })
 
 /*
- * These are used to set parameters in the core dumps.
+ * Return non-zero if HDR identifies an n32 ELF binary.
  */
-#define ELF_CLASS	ELFCLASS64
-
-#endif /* CONFIG_64BIT */
-
-/*
- * These are used to set parameters in the core dumps.
- */
-#ifdef __MIPSEB__
-#define ELF_DATA	ELFDATA2MSB
-#elif defined(__MIPSEL__)
-#define ELF_DATA	ELFDATA2LSB
-#endif
-#define ELF_ARCH	EM_MIPS
-
-#endif /* !defined(ELF_ARCH) */
-
-#define mips_elf_check_machine(x) ((x)->e_machine == EM_MIPS)
-
-#define vmcore_elf32_check_arch mips_elf_check_machine
-#define vmcore_elf64_check_arch mips_elf_check_machine
+#define elfn32_check_arch(hdr)						\
+({									\
+	int __res = 1;							\
+	struct elfhdr *__h = (hdr);					\
+									\
+	if (!mips_elf_check_machine(__h))				\
+		__res = 0;						\
+	if (__h->e_ident[EI_CLASS] != ELFCLASS32)			\
+		__res = 0;						\
+	if (((__h->e_flags & EF_MIPS_ABI2) == 0) ||			\
+	    ((__h->e_flags & EF_MIPS_ABI) != 0))			\
+		__res = 0;						\
+									\
+	__res;								\
+})
 
 struct mips_abi;
 
@@ -300,17 +344,16 @@ extern struct mips_abi mips_abi_n32;
 
 #define SET_PERSONALITY2(ex, state)					\
 do {									\
-	if (personality(current->personality) != PER_LINUX)		\
-		set_personality(PER_LINUX);				\
-									\
 	clear_thread_flag(TIF_HYBRID_FPREGS);				\
 	set_thread_flag(TIF_32BIT_FPREGS);				\
 									\
-	mips_set_personality_fp(state);					\
-									\
 	current->thread.abi = &mips_abi;				\
 									\
+	mips_set_personality_fp(state);					\
 	mips_set_personality_nan(state);				\
+									\
+	if (personality(current->personality) != PER_LINUX)		\
+		set_personality(PER_LINUX);				\
 } while (0)
 
 #endif /* CONFIG_32BIT */
@@ -321,6 +364,7 @@ do {									\
 #define __SET_PERSONALITY32_N32()					\
 	do {								\
 		set_thread_flag(TIF_32BIT_ADDR);			\
+									\
 		current->thread.abi = &mips_abi_n32;			\
 	} while (0)
 #else
@@ -336,9 +380,9 @@ do {									\
 		clear_thread_flag(TIF_HYBRID_FPREGS);			\
 		set_thread_flag(TIF_32BIT_FPREGS);			\
 									\
-		mips_set_personality_fp(state);				\
-									\
 		current->thread.abi = &mips_abi_32;			\
+									\
+		mips_set_personality_fp(state);				\
 	} while (0)
 #else
 #define __SET_PERSONALITY32_O32(ex, state)				\
@@ -425,6 +469,7 @@ extern const char *__elf_platform;
 #define ELF_ET_DYN_BASE		(TASK_SIZE / 3 * 2)
 #endif
 
+/* update AT_VECTOR_SIZE_ARCH if the number of NEW_AUX_ENT entries changes */
 #define ARCH_DLINFO							\
 do {									\
 	NEW_AUX_ENT(AT_SYSINFO_EHDR,					\
@@ -464,5 +509,8 @@ extern int arch_check_elf(void *ehdr, bool has_interpreter, void *interp_ehdr,
 
 extern void mips_set_personality_nan(struct arch_elf_state *state);
 extern void mips_set_personality_fp(struct arch_elf_state *state);
+
+#define elf_read_implies_exec(ex, stk) mips_elf_read_implies_exec(&(ex), stk)
+extern int mips_elf_read_implies_exec(void *elf_ex, int exstack);
 
 #endif /* _ASM_ELF_H */

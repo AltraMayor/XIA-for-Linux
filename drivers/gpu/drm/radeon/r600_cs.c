@@ -28,6 +28,7 @@
 #include <linux/kernel.h>
 #include <drm/drmP.h>
 #include "radeon.h"
+#include "radeon_asic.h"
 #include "r600d.h"
 #include "r600_reg_safe.h"
 
@@ -886,7 +887,7 @@ int r600_cs_common_vline_parse(struct radeon_cs_parser *p,
 	crtc_id = radeon_get_ib_value(p, h_idx + 2 + 7 + 1);
 	reg = R600_CP_PACKET0_GET_REG(header);
 
-	crtc = drm_crtc_find(p->rdev->ddev, crtc_id);
+	crtc = drm_crtc_find(p->rdev->ddev, p->filp, crtc_id);
 	if (!crtc) {
 		DRM_ERROR("cannot find crtc %d\n", crtc_id);
 		return -ENOENT;
@@ -931,8 +932,7 @@ static int r600_packet0_check(struct radeon_cs_parser *p,
 		}
 		break;
 	default:
-		printk(KERN_ERR "Forbidden register 0x%04X in cs at %d\n",
-		       reg, idx);
+		pr_err("Forbidden register 0x%04X in cs at %d\n", reg, idx);
 		return -EINVAL;
 	}
 	return 0;
@@ -1671,8 +1671,8 @@ static int r600_packet3_check(struct radeon_cs_parser *p,
 		}
 
 		offset = reloc->gpu_offset +
-		         (idx_value & 0xfffffff0) +
-		         ((u64)(tmp & 0xff) << 32);
+			 (idx_value & 0xfffffff0) +
+			 ((u64)(tmp & 0xff) << 32);
 
 		ib[idx + 0] = offset;
 		ib[idx + 1] = (tmp & 0xffffff00) | (upper_32_bits(offset) & 0xff);
@@ -1712,8 +1712,8 @@ static int r600_packet3_check(struct radeon_cs_parser *p,
 		}
 
 		offset = reloc->gpu_offset +
-		         idx_value +
-		         ((u64)(radeon_get_ib_value(p, idx+1) & 0xff) << 32);
+			 idx_value +
+			 ((u64)(radeon_get_ib_value(p, idx+1) & 0xff) << 32);
 
 		ib[idx+0] = offset;
 		ib[idx+1] = upper_32_bits(offset) & 0xff;
@@ -1764,8 +1764,8 @@ static int r600_packet3_check(struct radeon_cs_parser *p,
 			}
 
 			offset = reloc->gpu_offset +
-			         (radeon_get_ib_value(p, idx+1) & 0xfffffff0) +
-			         ((u64)(radeon_get_ib_value(p, idx+2) & 0xff) << 32);
+				 (radeon_get_ib_value(p, idx+1) & 0xfffffff0) +
+				 ((u64)(radeon_get_ib_value(p, idx+2) & 0xff) << 32);
 
 			ib[idx+1] = (ib[idx+1] & 0x3) | (offset & 0xfffffff0);
 			ib[idx+2] = upper_32_bits(offset) & 0xff;
@@ -1876,8 +1876,8 @@ static int r600_packet3_check(struct radeon_cs_parser *p,
 				return -EINVAL;
 			}
 			offset = reloc->gpu_offset +
-			         (radeon_get_ib_value(p, idx+1) & 0xfffffff8) +
-			         ((u64)(radeon_get_ib_value(p, idx+2) & 0xff) << 32);
+				 (radeon_get_ib_value(p, idx+1) & 0xfffffff8) +
+				 ((u64)(radeon_get_ib_value(p, idx+2) & 0xff) << 32);
 
 			ib[idx+1] = offset & 0xfffffff8;
 			ib[idx+2] = upper_32_bits(offset) & 0xff;
@@ -1898,8 +1898,8 @@ static int r600_packet3_check(struct radeon_cs_parser *p,
 		}
 
 		offset = reloc->gpu_offset +
-		         (radeon_get_ib_value(p, idx+1) & 0xfffffffc) +
-		         ((u64)(radeon_get_ib_value(p, idx+2) & 0xff) << 32);
+			 (radeon_get_ib_value(p, idx+1) & 0xfffffffc) +
+			 ((u64)(radeon_get_ib_value(p, idx+2) & 0xff) << 32);
 
 		ib[idx+1] = offset & 0xfffffffc;
 		ib[idx+2] = (ib[idx+2] & 0xffffff00) | (upper_32_bits(offset) & 0xff);
@@ -2319,7 +2319,7 @@ int r600_cs_parse(struct radeon_cs_parser *p)
 	} while (p->idx < p->chunk_ib->length_dw);
 #if 0
 	for (r = 0; r < p->ib.length_dw; r++) {
-		printk(KERN_INFO "%05d  0x%08X\n", r, p->ib.ptr[r]);
+		pr_info("%05d  0x%08X\n", r, p->ib.ptr[r]);
 		mdelay(1);
 	}
 #endif
@@ -2527,7 +2527,7 @@ int r600_dma_cs_parse(struct radeon_cs_parser *p)
 	} while (p->idx < p->chunk_ib->length_dw);
 #if 0
 	for (r = 0; r < p->ib->length_dw; r++) {
-		printk(KERN_INFO "%05d  0x%08X\n", r, p->ib.ptr[r]);
+		pr_info("%05d  0x%08X\n", r, p->ib.ptr[r]);
 		mdelay(1);
 	}
 #endif

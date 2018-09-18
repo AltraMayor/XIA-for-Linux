@@ -29,7 +29,7 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/vmalloc.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <linux/configfs.h>
 #include "configfs_internal.h"
@@ -80,11 +80,11 @@ static int fill_read_buffer(struct dentry * dentry, struct configfs_buffer * buf
 
 	count = attr->show(item, buffer->page);
 
-	buffer->needs_read_fill = 0;
 	BUG_ON(count > (ssize_t)SIMPLE_ATTR_SIZE);
-	if (count >= 0)
+	if (count >= 0) {
+		buffer->needs_read_fill = 0;
 		buffer->count = count;
-	else
+	} else
 		ret = count;
 	return ret;
 }
@@ -166,7 +166,7 @@ configfs_read_bin_file(struct file *file, char __user *buf,
 		retval = -ETXTBSY;
 		goto out;
 	}
-	buffer->read_in_progress = 1;
+	buffer->read_in_progress = true;
 
 	if (buffer->needs_read_fill) {
 		/* perform first read with buf == NULL to get extent */
@@ -325,7 +325,7 @@ configfs_write_bin_file(struct file *file, const char __user *buf,
 		len = -ETXTBSY;
 		goto out;
 	}
-	buffer->write_in_progress = 1;
+	buffer->write_in_progress = true;
 
 	/* buffer grows? */
 	if (*ppos + count > buffer->bin_buffer_size) {
@@ -333,6 +333,7 @@ configfs_write_bin_file(struct file *file, const char __user *buf,
 		if (bin_attr->cb_max_size &&
 			*ppos + count > bin_attr->cb_max_size) {
 			len = -EFBIG;
+			goto out;
 		}
 
 		tbuf = vmalloc(*ppos + count);
@@ -357,8 +358,6 @@ configfs_write_bin_file(struct file *file, const char __user *buf,
 
 	len = simple_write_to_buffer(buffer->bin_buffer,
 			buffer->bin_buffer_size, ppos, buf, count);
-	if (len > 0)
-		*ppos += len;
 out:
 	mutex_unlock(&buffer->mutex);
 	return len;
@@ -430,8 +429,8 @@ static int check_perm(struct inode * inode, struct file * file, int type)
 	}
 	mutex_init(&buffer->mutex);
 	buffer->needs_read_fill = 1;
-	buffer->read_in_progress = 0;
-	buffer->write_in_progress = 0;
+	buffer->read_in_progress = false;
+	buffer->write_in_progress = false;
 	buffer->ops = ops;
 	file->private_data = buffer;
 	goto Done;
@@ -489,10 +488,10 @@ static int configfs_release_bin_file(struct inode *inode, struct file *filp)
 	ssize_t len = 0;
 	int ret;
 
-	buffer->read_in_progress = 0;
+	buffer->read_in_progress = false;
 
 	if (buffer->write_in_progress) {
-		buffer->write_in_progress = 0;
+		buffer->write_in_progress = false;
 
 		len = bin_attr->write(item, buffer->bin_buffer,
 				buffer->bin_buffer_size);

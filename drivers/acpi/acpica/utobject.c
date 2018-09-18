@@ -1,47 +1,14 @@
+// SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0
 /******************************************************************************
  *
  * Module Name: utobject - ACPI object create/delete/size/cache routines
  *
+ * Copyright (C) 2000 - 2018, Intel Corp.
+ *
  *****************************************************************************/
 
-/*
- * Copyright (C) 2000 - 2016, Intel Corp.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions, and the following disclaimer,
- *    without modification.
- * 2. Redistributions in binary form must reproduce at minimum a disclaimer
- *    substantially similar to the "NO WARRANTY" disclaimer below
- *    ("Disclaimer") and any redistribution must be conditioned upon
- *    including a substantially similar Disclaimer requirement for further
- *    binary redistribution.
- * 3. Neither the names of the above-listed copyright holders nor the names
- *    of any contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * Alternatively, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2 as published by the Free
- * Software Foundation.
- *
- * NO WARRANTY
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDERS OR CONTRIBUTORS BE LIABLE FOR SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGES.
- */
-
 #include <acpi/acpi.h>
+#include <linux/kmemleak.h>
 #include "accommon.h"
 #include "acnamesp.h"
 
@@ -51,11 +18,11 @@ ACPI_MODULE_NAME("utobject")
 /* Local prototypes */
 static acpi_status
 acpi_ut_get_simple_object_size(union acpi_operand_object *obj,
-			       acpi_size * obj_length);
+			       acpi_size *obj_length);
 
 static acpi_status
 acpi_ut_get_package_object_size(union acpi_operand_object *obj,
-				acpi_size * obj_length);
+				acpi_size *obj_length);
 
 static acpi_status
 acpi_ut_get_element_length(u8 object_type,
@@ -104,6 +71,7 @@ union acpi_operand_object *acpi_ut_create_internal_object_dbg(const char
 	if (!object) {
 		return_PTR(NULL);
 	}
+	kmemleak_not_leak(object);
 
 	switch (type) {
 	case ACPI_TYPE_REGION:
@@ -177,7 +145,7 @@ union acpi_operand_object *acpi_ut_create_package_object(u32 count)
 	 * Create the element array. Count+1 allows the array to be null
 	 * terminated.
 	 */
-	package_elements = ACPI_ALLOCATE_ZEROED(((acpi_size) count +
+	package_elements = ACPI_ALLOCATE_ZEROED(((acpi_size)count +
 						 1) * sizeof(void *));
 	if (!package_elements) {
 		ACPI_FREE(package_desc);
@@ -454,7 +422,7 @@ void acpi_ut_delete_object_desc(union acpi_operand_object *object)
 
 static acpi_status
 acpi_ut_get_simple_object_size(union acpi_operand_object *internal_object,
-			       acpi_size * obj_length)
+			       acpi_size *obj_length)
 {
 	acpi_size length;
 	acpi_size size;
@@ -483,6 +451,11 @@ acpi_ut_get_simple_object_size(union acpi_operand_object *internal_object,
 
 		/* A namespace node should never get here */
 
+		ACPI_ERROR((AE_INFO,
+			    "Received a namespace node [%4.4s] "
+			    "where an operand object is required",
+			    ACPI_CAST_PTR(struct acpi_namespace_node,
+					  internal_object)->name.ascii));
 		return_ACPI_STATUS(AE_AML_INTERNAL);
 	}
 
@@ -495,12 +468,12 @@ acpi_ut_get_simple_object_size(union acpi_operand_object *internal_object,
 	switch (internal_object->common.type) {
 	case ACPI_TYPE_STRING:
 
-		length += (acpi_size) internal_object->string.length + 1;
+		length += (acpi_size)internal_object->string.length + 1;
 		break;
 
 	case ACPI_TYPE_BUFFER:
 
-		length += (acpi_size) internal_object->buffer.length;
+		length += (acpi_size)internal_object->buffer.length;
 		break;
 
 	case ACPI_TYPE_INTEGER:
@@ -640,7 +613,7 @@ acpi_ut_get_element_length(u8 object_type,
 
 static acpi_status
 acpi_ut_get_package_object_size(union acpi_operand_object *internal_object,
-				acpi_size * obj_length)
+				acpi_size *obj_length)
 {
 	acpi_status status;
 	struct acpi_pkg_info info;
@@ -665,7 +638,7 @@ acpi_ut_get_package_object_size(union acpi_operand_object *internal_object,
 	 */
 	info.length +=
 	    ACPI_ROUND_UP_TO_NATIVE_WORD(sizeof(union acpi_object)) *
-	    (acpi_size) info.num_packages;
+	    (acpi_size)info.num_packages;
 
 	/* Return the total package length */
 
@@ -689,7 +662,7 @@ acpi_ut_get_package_object_size(union acpi_operand_object *internal_object,
 
 acpi_status
 acpi_ut_get_object_size(union acpi_operand_object *internal_object,
-			acpi_size * obj_length)
+			acpi_size *obj_length)
 {
 	acpi_status status;
 

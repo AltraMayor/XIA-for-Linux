@@ -186,7 +186,7 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* Create dev top level debugfs entry */
-	snprintf(name, sizeof(name), "%s%s_%02x:%02d.%02d",
+	snprintf(name, sizeof(name), "%s%s_%02x:%02d.%d",
 		 ADF_DEVICE_NAME_PREFIX, hw_data->dev_class->name,
 		 pdev->bus->number, PCI_SLOT(pdev->devfn),
 		 PCI_FUNC(pdev->devfn));
@@ -300,9 +300,7 @@ static void adf_remove(struct pci_dev *pdev)
 		pr_err("QAT: Driver removal failed\n");
 		return;
 	}
-	if (adf_dev_stop(accel_dev))
-		dev_err(&GET_DEV(accel_dev), "Failed to stop QAT accel dev\n");
-
+	adf_dev_stop(accel_dev);
 	adf_dev_shutdown(accel_dev);
 	adf_disable_aer(accel_dev);
 	adf_cleanup_accel(accel_dev);
@@ -331,5 +329,7 @@ module_exit(adfdrv_release);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Intel");
+MODULE_FIRMWARE(ADF_C3XXX_FW);
+MODULE_FIRMWARE(ADF_C3XXX_MMP);
 MODULE_DESCRIPTION("Intel(R) QuickAssist Technology");
 MODULE_VERSION(ADF_DRV_VERSION);

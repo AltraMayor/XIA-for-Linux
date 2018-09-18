@@ -16,6 +16,7 @@
 #define pr_fmt(fmt) "GICv2m: " fmt
 
 #include <linux/acpi.h>
+#include <linux/dma-iommu.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/kernel.h>
@@ -24,6 +25,7 @@
 #include <linux/of_pci.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/irqchip/arm-gic.h>
 
 /*
 * MSI_TYPER:
@@ -49,6 +51,9 @@
 /* APM X-Gene with GICv2m MSI_IIDR register value */
 #define XGENE_GICV2M_MSI_IIDR		0x06000170
 
+/* Broadcom NS2 GICv2m MSI_IIDR register value */
+#define BCM_NS2_GICV2M_MSI_IIDR		0x0000013f
+
 /* List of flags for specific v2m implementation */
 #define GICV2M_NEEDS_SPI_OFFSET		0x00000001
 
@@ -62,6 +67,7 @@ struct v2m_data {
 	void __iomem *base;	/* GICv2m virt address */
 	u32 spi_start;		/* The SPI number that MSIs start */
 	u32 nr_spis;		/* The number of SPIs for MSIs */
+	u32 spi_offset;		/* offset to be subtracted from SPI number */
 	unsigned long *bm;	/* MSI vector bitmap */
 	u32 flags;		/* v2m flags for specific implementation */
 };
@@ -88,21 +94,9 @@ static struct irq_chip gicv2m_msi_irq_chip = {
 
 static struct msi_domain_info gicv2m_msi_domain_info = {
 	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
-		   MSI_FLAG_PCI_MSIX),
+		   MSI_FLAG_PCI_MSIX | MSI_FLAG_MULTI_PCI_MSI),
 	.chip	= &gicv2m_msi_irq_chip,
 };
-
-static int gicv2m_set_affinity(struct irq_data *irq_data,
-			       const struct cpumask *mask, bool force)
-{
-	int ret;
-
-	ret = irq_chip_set_affinity_parent(irq_data, mask, force);
-	if (ret == IRQ_SET_MASK_OK)
-		ret = IRQ_SET_MASK_OK_DONE;
-
-	return ret;
-}
 
 static void gicv2m_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 {
@@ -114,7 +108,9 @@ static void gicv2m_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	msg->data = data->hwirq;
 
 	if (v2m->flags & GICV2M_NEEDS_SPI_OFFSET)
-		msg->data -= v2m->spi_start;
+		msg->data -= v2m->spi_offset;
+
+	iommu_dma_map_msi_msg(data->irq, msg);
 }
 
 static struct irq_chip gicv2m_irq_chip = {
@@ -122,7 +118,7 @@ static struct irq_chip gicv2m_irq_chip = {
 	.irq_mask		= irq_chip_mask_parent,
 	.irq_unmask		= irq_chip_unmask_parent,
 	.irq_eoi		= irq_chip_eoi_parent,
-	.irq_set_affinity	= gicv2m_set_affinity,
+	.irq_set_affinity	= irq_chip_set_affinity_parent,
 	.irq_compose_msi_msg	= gicv2m_compose_msi_msg,
 };
 
@@ -159,18 +155,12 @@ static int gicv2m_irq_gic_domain_alloc(struct irq_domain *domain,
 	return 0;
 }
 
-static void gicv2m_unalloc_msi(struct v2m_data *v2m, unsigned int hwirq)
+static void gicv2m_unalloc_msi(struct v2m_data *v2m, unsigned int hwirq,
+			       int nr_irqs)
 {
-	int pos;
-
-	pos = hwirq - v2m->spi_start;
-	if (pos < 0 || pos >= v2m->nr_spis) {
-		pr_err("Failed to teardown msi. Invalid hwirq %d\n", hwirq);
-		return;
-	}
-
 	spin_lock(&v2m_lock);
-	__clear_bit(pos, v2m->bm);
+	bitmap_release_region(v2m->bm, hwirq - v2m->spi_start,
+			      get_count_order(nr_irqs));
 	spin_unlock(&v2m_lock);
 }
 
@@ -178,13 +168,13 @@ static int gicv2m_irq_domain_alloc(struct irq_domain *domain, unsigned int virq,
 				   unsigned int nr_irqs, void *args)
 {
 	struct v2m_data *v2m = NULL, *tmp;
-	int hwirq, offset, err = 0;
+	int hwirq, offset, i, err = 0;
 
 	spin_lock(&v2m_lock);
 	list_for_each_entry(tmp, &v2m_nodes, entry) {
-		offset = find_first_zero_bit(tmp->bm, tmp->nr_spis);
-		if (offset < tmp->nr_spis) {
-			__set_bit(offset, tmp->bm);
+		offset = bitmap_find_free_region(tmp->bm, tmp->nr_spis,
+						 get_count_order(nr_irqs));
+		if (offset >= 0) {
 			v2m = tmp;
 			break;
 		}
@@ -196,16 +186,21 @@ static int gicv2m_irq_domain_alloc(struct irq_domain *domain, unsigned int virq,
 
 	hwirq = v2m->spi_start + offset;
 
-	err = gicv2m_irq_gic_domain_alloc(domain, virq, hwirq);
-	if (err) {
-		gicv2m_unalloc_msi(v2m, hwirq);
-		return err;
+	for (i = 0; i < nr_irqs; i++) {
+		err = gicv2m_irq_gic_domain_alloc(domain, virq + i, hwirq + i);
+		if (err)
+			goto fail;
+
+		irq_domain_set_hwirq_and_chip(domain, virq + i, hwirq + i,
+					      &gicv2m_irq_chip, v2m);
 	}
 
-	irq_domain_set_hwirq_and_chip(domain, virq, hwirq,
-				      &gicv2m_irq_chip, v2m);
-
 	return 0;
+
+fail:
+	irq_domain_free_irqs_parent(domain, virq, nr_irqs);
+	gicv2m_unalloc_msi(v2m, hwirq, nr_irqs);
+	return err;
 }
 
 static void gicv2m_irq_domain_free(struct irq_domain *domain,
@@ -214,8 +209,7 @@ static void gicv2m_irq_domain_free(struct irq_domain *domain,
 	struct irq_data *d = irq_domain_get_irq_data(domain, virq);
 	struct v2m_data *v2m = irq_data_get_irq_chip_data(d);
 
-	BUG_ON(nr_irqs != 1);
-	gicv2m_unalloc_msi(v2m, d->hwirq);
+	gicv2m_unalloc_msi(v2m, d->hwirq, nr_irqs);
 	irq_domain_free_irqs_parent(domain, virq, nr_irqs);
 }
 
@@ -284,7 +278,7 @@ static int gicv2m_allocate_domains(struct irq_domain *parent)
 		return -ENOMEM;
 	}
 
-	inner_domain->bus_token = DOMAIN_BUS_NEXUS;
+	irq_domain_update_bus_token(inner_domain, DOMAIN_BUS_NEXUS);
 	inner_domain->parent = parent;
 	pci_domain = pci_msi_create_irq_domain(v2m->fwnode,
 					       &gicv2m_msi_domain_info,
@@ -352,11 +346,22 @@ static int __init gicv2m_init_one(struct fwnode_handle *fwnode,
 	 * different from the standard GICv2m implementation where
 	 * the MSI data is the absolute value within the range from
 	 * spi_start to (spi_start + num_spis).
+	 *
+	 * Broadom NS2 GICv2m implementation has an erratum where the MSI data
+	 * is 'spi_number - 32'
 	 */
-	if (readl_relaxed(v2m->base + V2M_MSI_IIDR) == XGENE_GICV2M_MSI_IIDR)
+	switch (readl_relaxed(v2m->base + V2M_MSI_IIDR)) {
+	case XGENE_GICV2M_MSI_IIDR:
 		v2m->flags |= GICV2M_NEEDS_SPI_OFFSET;
+		v2m->spi_offset = v2m->spi_start;
+		break;
+	case BCM_NS2_GICV2M_MSI_IIDR:
+		v2m->flags |= GICV2M_NEEDS_SPI_OFFSET;
+		v2m->spi_offset = 32;
+		break;
+	}
 
-	v2m->bm = kzalloc(sizeof(long) * BITS_TO_LONGS(v2m->nr_spis),
+	v2m->bm = kcalloc(BITS_TO_LONGS(v2m->nr_spis), sizeof(long),
 			  GFP_KERNEL);
 	if (!v2m->bm) {
 		ret = -ENOMEM;

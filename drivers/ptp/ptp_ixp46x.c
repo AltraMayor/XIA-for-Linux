@@ -236,7 +236,7 @@ static int ptp_ixp_enable(struct ptp_clock_info *ptp,
 	return -EOPNOTSUPP;
 }
 
-static struct ptp_clock_info ptp_ixp_caps = {
+static const struct ptp_clock_info ptp_ixp_caps = {
 	.owner		= THIS_MODULE,
 	.name		= "IXP46X timer",
 	.max_adj	= 66666655,
@@ -268,18 +268,19 @@ static int setup_interrupt(int gpio)
 		return err;
 
 	irq = gpio_to_irq(gpio);
+	if (irq < 0)
+		return irq;
 
-	if (NO_IRQ == irq)
-		return NO_IRQ;
-
-	if (irq_set_irq_type(irq, IRQF_TRIGGER_FALLING)) {
+	err = irq_set_irq_type(irq, IRQF_TRIGGER_FALLING);
+	if (err) {
 		pr_err("cannot set trigger type for irq %d\n", irq);
-		return NO_IRQ;
+		return err;
 	}
 
-	if (request_irq(irq, isr, 0, DRIVER, &ixp_clock)) {
+	err = request_irq(irq, isr, 0, DRIVER, &ixp_clock);
+	if (err) {
 		pr_err("request_irq failed for irq %d\n", irq);
-		return NO_IRQ;
+		return err;
 	}
 
 	return irq;

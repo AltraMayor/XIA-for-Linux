@@ -14,7 +14,9 @@
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
-#include <video/omapdss.h>
+#include <linux/seq_file.h>
+
+#include <video/omapfb_dss.h>
 
 #include "dss.h"
 #include "hdmi.h"

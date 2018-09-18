@@ -1,14 +1,10 @@
-/*
- * Freescale ASRC ALSA SoC Digital Audio Interface (DAI) driver
- *
- * Copyright (C) 2014 Freescale Semiconductor, Inc.
- *
- * Author: Nicolin Chen <nicoleotsuka@gmail.com>
- *
- * This file is licensed under the terms of the GNU General Public License
- * version 2. This program is licensed "as is" without any warranty of any
- * kind, whether express or implied.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Freescale ASRC ALSA SoC Digital Audio Interface (DAI) driver
+//
+// Copyright (C) 2014 Freescale Semiconductor, Inc.
+//
+// Author: Nicolin Chen <nicoleotsuka@gmail.com>
 
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -368,7 +364,7 @@ static int fsl_asrc_config_pair(struct fsl_asrc_pair *pair)
 	fsl_asrc_set_watermarks(pair, ASRC_INPUTFIFO_THRESHOLD,
 				ASRC_INPUTFIFO_THRESHOLD);
 
-	/* Configure the followings only for Ideal Ratio mode */
+	/* Configure the following only for Ideal Ratio mode */
 	if (!ideal)
 		return 0;
 
@@ -542,7 +538,7 @@ static int fsl_asrc_dai_trigger(struct snd_pcm_substream *substream, int cmd,
 	return 0;
 }
 
-static struct snd_soc_dai_ops fsl_asrc_dai_ops = {
+static const struct snd_soc_dai_ops fsl_asrc_dai_ops = {
 	.hw_params    = fsl_asrc_dai_hw_params,
 	.hw_free      = fsl_asrc_dai_hw_free,
 	.trigger      = fsl_asrc_dai_trigger,
@@ -580,10 +576,6 @@ static struct snd_soc_dai_driver fsl_asrc_dai = {
 		.formats = FSL_ASRC_FORMATS,
 	},
 	.ops = &fsl_asrc_dai_ops,
-};
-
-static const struct snd_soc_component_driver fsl_asrc_component = {
-	.name = "fsl-asrc-dai",
 };
 
 static bool fsl_asrc_readable_reg(struct device *dev, unsigned int reg)
@@ -726,7 +718,7 @@ static const struct regmap_config fsl_asrc_regmap_config = {
 	.readable_reg = fsl_asrc_readable_reg,
 	.volatile_reg = fsl_asrc_volatile_reg,
 	.writeable_reg = fsl_asrc_writeable_reg,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_FLAT,
 };
 
 /**
@@ -879,7 +871,7 @@ static int fsl_asrc_probe(struct platform_device *pdev)
 		}
 	}
 
-	if (of_device_is_compatible(pdev->dev.of_node, "fsl,imx35-asrc")) {
+	if (of_device_is_compatible(np, "fsl,imx35-asrc")) {
 		asrc_priv->channel_bits = 3;
 		clk_map[IN] = input_clk_map_imx35;
 		clk_map[OUT] = output_clk_map_imx35;
@@ -892,7 +884,7 @@ static int fsl_asrc_probe(struct platform_device *pdev)
 	ret = fsl_asrc_init(asrc_priv);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to init asrc %d\n", ret);
-		return -EINVAL;
+		return ret;
 	}
 
 	asrc_priv->channel_avail = 10;
@@ -901,14 +893,14 @@ static int fsl_asrc_probe(struct platform_device *pdev)
 				   &asrc_priv->asrc_rate);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to get output rate\n");
-		return -EINVAL;
+		return ret;
 	}
 
 	ret = of_property_read_u32(np, "fsl,asrc-width",
 				   &asrc_priv->asrc_width);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to get output width\n");
-		return -EINVAL;
+		return ret;
 	}
 
 	if (asrc_priv->asrc_width != 16 && asrc_priv->asrc_width != 24) {
@@ -926,14 +918,6 @@ static int fsl_asrc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to register ASoC DAI\n");
 		return ret;
 	}
-
-	ret = devm_snd_soc_register_platform(&pdev->dev, &fsl_asrc_platform);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to register ASoC platform\n");
-		return ret;
-	}
-
-	dev_info(&pdev->dev, "driver registered\n");
 
 	return 0;
 }

@@ -22,6 +22,7 @@
 #include <linux/of.h>
 #include <linux/fs.h>
 #include <linux/reboot.h>
+#include <linux/irq_work.h>
 
 #include <asm/machdep.h>
 #include <asm/rtas.h>
@@ -32,10 +33,12 @@
 static unsigned char ras_log_buf[RTAS_ERROR_LOG_MAX];
 static DEFINE_SPINLOCK(ras_log_buf_lock);
 
-static char global_mce_data_buf[RTAS_ERROR_LOG_MAX];
-static DEFINE_PER_CPU(__u64, mce_data_buf);
-
 static int ras_check_exception_token;
+
+static void mce_process_errlog_event(struct irq_work *work);
+static struct irq_work mce_errlog_process_work = {
+	.func = mce_process_errlog_event,
+};
 
 #define EPOW_SENSOR_TOKEN	9
 #define EPOW_SENSOR_INDEX	0
@@ -43,9 +46,32 @@ static int ras_check_exception_token;
 /* EPOW events counter variable */
 static int num_epow_events;
 
+static irqreturn_t ras_hotplug_interrupt(int irq, void *dev_id);
 static irqreturn_t ras_epow_interrupt(int irq, void *dev_id);
 static irqreturn_t ras_error_interrupt(int irq, void *dev_id);
 
+
+/*
+ * Enable the hotplug interrupt late because processing them may touch other
+ * devices or systems (e.g. hugepages) that have not been initialized at the
+ * subsys stage.
+ */
+int __init init_ras_hotplug_IRQ(void)
+{
+	struct device_node *np;
+
+	/* Hotplug Events */
+	np = of_find_node_by_path("/event-sources/hot-plug-events");
+	if (np != NULL) {
+		if (dlpar_workqueue_init() == 0)
+			request_event_sources_irqs(np, ras_hotplug_interrupt,
+						   "RAS_HOTPLUG");
+		of_node_put(np);
+	}
+
+	return 0;
+}
+machine_late_initcall(pseries, init_ras_hotplug_IRQ);
 
 /*
  * Initialize handlers for the set of interrupts caused by hardware errors
@@ -190,6 +216,36 @@ static void rtas_parse_epow_errlog(struct rtas_error_log *log)
 		num_epow_events++;
 }
 
+static irqreturn_t ras_hotplug_interrupt(int irq, void *dev_id)
+{
+	struct pseries_errorlog *pseries_log;
+	struct pseries_hp_errorlog *hp_elog;
+
+	spin_lock(&ras_log_buf_lock);
+
+	rtas_call(ras_check_exception_token, 6, 1, NULL,
+		  RTAS_VECTOR_EXTERNAL_INTERRUPT, virq_to_hw(irq),
+		  RTAS_HOTPLUG_EVENTS, 0, __pa(&ras_log_buf),
+		  rtas_get_error_log_max());
+
+	pseries_log = get_pseries_errorlog((struct rtas_error_log *)ras_log_buf,
+					   PSERIES_ELOG_SECT_ID_HOTPLUG);
+	hp_elog = (struct pseries_hp_errorlog *)pseries_log->data;
+
+	/*
+	 * Since PCI hotplug is not currently supported on pseries, put PCI
+	 * hotplug events on the ras_log_buf to be handled by rtas_errd.
+	 */
+	if (hp_elog->resource == PSERIES_HP_ELOG_RESOURCE_MEM ||
+	    hp_elog->resource == PSERIES_HP_ELOG_RESOURCE_CPU)
+		queue_hotplug_event(hp_elog, NULL, NULL);
+	else
+		log_error(ras_log_buf, ERR_TYPE_RTAS_LOG, 0);
+
+	spin_unlock(&ras_log_buf_lock);
+	return IRQ_HANDLED;
+}
+
 /* Handle environmental and power warning (EPOW) interrupts. */
 static irqreturn_t ras_epow_interrupt(int irq, void *dev_id)
 {
@@ -277,16 +333,20 @@ static irqreturn_t ras_error_interrupt(int irq, void *dev_id)
 	((((A) >= 0x7000) && ((A) < 0x7ff0)) || \
 	(((A) >= rtas.base) && ((A) < (rtas.base + rtas.size - 16))))
 
+static inline struct rtas_error_log *fwnmi_get_errlog(void)
+{
+	return (struct rtas_error_log *)local_paca->mce_data_buf;
+}
+
 /*
  * Get the error information for errors coming through the
  * FWNMI vectors.  The pt_regs' r3 will be updated to reflect
  * the actual r3 if possible, and a ptr to the error log entry
  * will be returned if found.
  *
- * If the RTAS error is not of the extended type, then we put it in a per
- * cpu 64bit buffer. If it is the extended type we use global_mce_data_buf.
+ * Use one buffer mce_data_buf per cpu to store RTAS error.
  *
- * The global_mce_data_buf does not have any locks or protection around it,
+ * The mce_data_buf does not have any locks or protection around it,
  * if a second machine check comes in, or a system reset is done
  * before we have logged the error, then we will get corruption in the
  * error log.  This is preferable over holding off on calling
@@ -296,7 +356,7 @@ static irqreturn_t ras_error_interrupt(int irq, void *dev_id)
 static struct rtas_error_log *fwnmi_get_errinfo(struct pt_regs *regs)
 {
 	unsigned long *savep;
-	struct rtas_error_log *h, *errhdr = NULL;
+	struct rtas_error_log *h;
 
 	/* Mask top two bits */
 	regs->gpr[3] &= ~(0x3UL << 62);
@@ -307,24 +367,22 @@ static struct rtas_error_log *fwnmi_get_errinfo(struct pt_regs *regs)
 	}
 
 	savep = __va(regs->gpr[3]);
-	regs->gpr[3] = savep[0];	/* restore original r3 */
+	regs->gpr[3] = be64_to_cpu(savep[0]);	/* restore original r3 */
 
-	/* If it isn't an extended log we can use the per cpu 64bit buffer */
 	h = (struct rtas_error_log *)&savep[1];
+	/* Use the per cpu buffer from paca to store rtas error log */
+	memset(local_paca->mce_data_buf, 0, RTAS_ERROR_LOG_MAX);
 	if (!rtas_error_extended(h)) {
-		memcpy(this_cpu_ptr(&mce_data_buf), h, sizeof(__u64));
-		errhdr = (struct rtas_error_log *)this_cpu_ptr(&mce_data_buf);
+		memcpy(local_paca->mce_data_buf, h, sizeof(__u64));
 	} else {
 		int len, error_log_length;
 
 		error_log_length = 8 + rtas_error_extended_log_length(h);
-		len = max_t(int, error_log_length, RTAS_ERROR_LOG_MAX);
-		memset(global_mce_data_buf, 0, RTAS_ERROR_LOG_MAX);
-		memcpy(global_mce_data_buf, h, len);
-		errhdr = (struct rtas_error_log *)global_mce_data_buf;
+		len = min_t(int, error_log_length, RTAS_ERROR_LOG_MAX);
+		memcpy(local_paca->mce_data_buf, h, len);
 	}
 
-	return errhdr;
+	return (struct rtas_error_log *)local_paca->mce_data_buf;
 }
 
 /* Call this when done with the data returned by FWNMI_get_errinfo.
@@ -340,6 +398,21 @@ static void fwnmi_release_errinfo(void)
 
 int pSeries_system_reset_exception(struct pt_regs *regs)
 {
+#ifdef __LITTLE_ENDIAN__
+	/*
+	 * Some firmware byteswaps SRR registers and gives incorrect SRR1. Try
+	 * to detect the bad SRR1 pattern here. Flip the NIP back to correct
+	 * endian for reporting purposes. Unfortunately the MSR can't be fixed,
+	 * so clear it. It will be missing MSR_RI so we won't try to recover.
+	 */
+	if ((be64_to_cpu(regs->msr) &
+			(MSR_LE|MSR_RI|MSR_DR|MSR_IR|MSR_ME|MSR_PR|
+			 MSR_ILE|MSR_HV|MSR_SF)) == (MSR_DR|MSR_SF)) {
+		regs->nip = be64_to_cpu((__be64)regs->nip);
+		regs->msr = 0;
+	}
+#endif
+
 	if (fwnmi_active) {
 		struct rtas_error_log *errhdr = fwnmi_get_errinfo(regs);
 		if (errhdr) {
@@ -347,7 +420,22 @@ int pSeries_system_reset_exception(struct pt_regs *regs)
 		}
 		fwnmi_release_errinfo();
 	}
+
+	if (smp_handle_nmi_ipi(regs))
+		return 1;
+
 	return 0; /* need to perform reset */
+}
+
+/*
+ * Process MCE rtas errlog event.
+ */
+static void mce_process_errlog_event(struct irq_work *work)
+{
+	struct rtas_error_log *err;
+
+	err = fwnmi_get_errlog();
+	log_error((char *)err, ERR_TYPE_RTAS_LOG, 0);
 }
 
 /*
@@ -394,7 +482,8 @@ static int recover_mce(struct pt_regs *regs, struct rtas_error_log *err)
 		recovered = 1;
 	}
 
-	log_error((char *)err, ERR_TYPE_RTAS_LOG, 0);
+	/* Queue irq work to log this rtas event later. */
+	irq_work_queue(&mce_errlog_process_work);
 
 	return recovered;
 }

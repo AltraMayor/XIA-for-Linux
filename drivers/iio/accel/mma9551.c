@@ -27,7 +27,6 @@
 
 #define MMA9551_DRV_NAME		"mma9551"
 #define MMA9551_IRQ_NAME		"mma9551_event"
-#define MMA9551_GPIO_NAME		"mma9551_int"
 #define MMA9551_GPIO_COUNT		4
 
 /* Tilt application (inclination in IIO terms). */
@@ -333,7 +332,6 @@ static const struct iio_chan_spec mma9551_channels[] = {
 };
 
 static const struct iio_info mma9551_info = {
-	.driver_module = THIS_MODULE,
 	.read_raw = mma9551_read_raw,
 	.read_event_config = mma9551_read_event_config,
 	.write_event_config = mma9551_write_event_config,
@@ -391,7 +389,7 @@ static irqreturn_t mma9551_event_handler(int irq, void *private)
 	iio_push_event(indio_dev,
 		       IIO_MOD_EVENT_CODE(IIO_INCLI, 0, (mma_axis + 1),
 					  IIO_EV_TYPE_ROC, IIO_EV_DIR_RISING),
-		       iio_get_time_ns());
+		       iio_get_time_ns(indio_dev));
 
 out:
 	mutex_unlock(&data->mutex);
@@ -418,8 +416,7 @@ static int mma9551_gpio_probe(struct iio_dev *indio_dev)
 	struct device *dev = &data->client->dev;
 
 	for (i = 0; i < MMA9551_GPIO_COUNT; i++) {
-		gpio = devm_gpiod_get_index(dev, MMA9551_GPIO_NAME, i,
-					    GPIOD_IN);
+		gpio = devm_gpiod_get_index(dev, NULL, i, GPIOD_IN);
 		if (IS_ERR(gpio)) {
 			dev_err(dev, "acpi gpio get index failed\n");
 			return PTR_ERR(gpio);

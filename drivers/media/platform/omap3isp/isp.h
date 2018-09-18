@@ -23,7 +23,6 @@
 #include <linux/clk-provider.h>
 #include <linux/device.h>
 #include <linux/io.h>
-#include <linux/iommu.h>
 #include <linux/platform_device.h>
 #include <linux/wait.h>
 
@@ -177,7 +176,6 @@ struct isp_device {
 	struct v4l2_device v4l2_dev;
 	struct v4l2_async_notifier notifier;
 	struct media_device media_dev;
-	struct media_entity_graph pm_count_graph;
 	struct device *dev;
 	u32 revision;
 
@@ -222,16 +220,15 @@ struct isp_device {
 
 	unsigned int sbl_resources;
 	unsigned int subclk_resources;
-
-#define ISP_MAX_SUBDEVS		8
-	struct v4l2_subdev *subdevs[ISP_MAX_SUBDEVS];
 };
 
 struct isp_async_subdev {
-	struct v4l2_subdev *sd;
-	struct isp_bus_cfg bus;
 	struct v4l2_async_subdev asd;
+	struct isp_bus_cfg bus;
 };
+
+#define v4l2_subdev_to_bus_cfg(sd) \
+	(&container_of((sd)->asd, struct isp_async_subdev, asd)->bus)
 
 #define v4l2_dev_to_isp_device(dev) \
 	container_of(dev, struct isp_device, v4l2_dev)
@@ -266,9 +263,6 @@ void omap3isp_subclk_enable(struct isp_device *isp,
 			    enum isp_subclk_resource res);
 void omap3isp_subclk_disable(struct isp_device *isp,
 			     enum isp_subclk_resource res);
-
-int omap3isp_pipeline_pm_use(struct media_entity *entity, int use,
-			     struct media_entity_graph *graph);
 
 int omap3isp_register_entities(struct platform_device *pdev,
 			       struct v4l2_device *v4l2_dev);

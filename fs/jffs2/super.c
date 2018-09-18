@@ -147,7 +147,7 @@ static struct dentry *jffs2_get_parent(struct dentry *child)
 	JFFS2_DEBUG("Parent of directory ino #%u is #%u\n",
 		    f->inocache->ino, pino);
 
-	return d_obtain_alias(jffs2_iget(d_inode(child)->i_sb, pino));
+	return d_obtain_alias(jffs2_iget(child->d_sb, pino));
 }
 
 static const struct export_operations jffs2_export_ops = {
@@ -301,10 +301,10 @@ static int jffs2_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_op = &jffs2_super_operations;
 	sb->s_export_op = &jffs2_export_ops;
-	sb->s_flags = sb->s_flags | MS_NOATIME;
+	sb->s_flags = sb->s_flags | SB_NOATIME;
 	sb->s_xattr = jffs2_xattr_handlers;
 #ifdef CONFIG_JFFS2_FS_POSIX_ACL
-	sb->s_flags |= MS_POSIXACL;
+	sb->s_flags |= SB_POSIXACL;
 #endif
 	ret = jffs2_do_fill_super(sb, data, silent);
 	return ret;
@@ -342,7 +342,7 @@ static void jffs2_put_super (struct super_block *sb)
 static void jffs2_kill_sb(struct super_block *sb)
 {
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(sb);
-	if (!(sb->s_flags & MS_RDONLY))
+	if (c && !sb_rdonly(sb))
 		jffs2_stop_garbage_collect_thread(c);
 	kill_mtd_super(sb);
 	kfree(c);

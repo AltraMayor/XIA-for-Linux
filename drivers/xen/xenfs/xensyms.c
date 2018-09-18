@@ -1,4 +1,4 @@
-#include <linux/module.h>
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/init.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>

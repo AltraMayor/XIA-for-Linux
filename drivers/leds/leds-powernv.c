@@ -118,7 +118,7 @@ static int powernv_led_set(struct powernv_led_data *powernv_led,
 		goto out_token;
 	}
 
-	rc = be64_to_cpu(msg.params[1]);
+	rc = opal_get_async_rc(msg);
 	if (rc != OPAL_SUCCESS)
 		dev_err(dev, "%s : OAPL async call returned failed [rc=%d]\n",
 			__func__, rc);
@@ -224,12 +224,8 @@ static int powernv_led_create(struct device *dev,
 	powernv_led->cdev.name = devm_kasprintf(dev, GFP_KERNEL, "%s:%s",
 						powernv_led->loc_code,
 						led_type_desc);
-	if (!powernv_led->cdev.name) {
-		dev_err(dev,
-			"%s: Memory allocation failed for classdev name\n",
-			__func__);
+	if (!powernv_led->cdev.name)
 		return -ENOMEM;
-	}
 
 	powernv_led->cdev.brightness_set_blocking = powernv_brightness_set;
 	powernv_led->cdev.brightness_get = powernv_brightness_get;

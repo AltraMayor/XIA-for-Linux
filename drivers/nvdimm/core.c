@@ -20,12 +20,12 @@
 #include <linux/ndctl.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/io.h>
 #include "nd-core.h"
 #include "nd.h"
 
 LIST_HEAD(nvdimm_bus_list);
 DEFINE_MUTEX(nvdimm_bus_list_mutex);
-static DEFINE_IDA(nd_ida);
 
 void nvdimm_bus_lock(struct device *dev)
 {
@@ -57,6 +57,133 @@ bool is_nvdimm_bus_locked(struct device *dev)
 }
 EXPORT_SYMBOL(is_nvdimm_bus_locked);
 
+struct nvdimm_map {
+	struct nvdimm_bus *nvdimm_bus;
+	struct list_head list;
+	resource_size_t offset;
+	unsigned long flags;
+	size_t size;
+	union {
+		void *mem;
+		void __iomem *iomem;
+	};
+	struct kref kref;
+};
+
+static struct nvdimm_map *find_nvdimm_map(struct device *dev,
+		resource_size_t offset)
+{
+	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
+	struct nvdimm_map *nvdimm_map;
+
+	list_for_each_entry(nvdimm_map, &nvdimm_bus->mapping_list, list)
+		if (nvdimm_map->offset == offset)
+			return nvdimm_map;
+	return NULL;
+}
+
+static struct nvdimm_map *alloc_nvdimm_map(struct device *dev,
+		resource_size_t offset, size_t size, unsigned long flags)
+{
+	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
+	struct nvdimm_map *nvdimm_map;
+
+	nvdimm_map = kzalloc(sizeof(*nvdimm_map), GFP_KERNEL);
+	if (!nvdimm_map)
+		return NULL;
+
+	INIT_LIST_HEAD(&nvdimm_map->list);
+	nvdimm_map->nvdimm_bus = nvdimm_bus;
+	nvdimm_map->offset = offset;
+	nvdimm_map->flags = flags;
+	nvdimm_map->size = size;
+	kref_init(&nvdimm_map->kref);
+
+	if (!request_mem_region(offset, size, dev_name(&nvdimm_bus->dev))) {
+		dev_err(&nvdimm_bus->dev, "failed to request %pa + %zd for %s\n",
+				&offset, size, dev_name(dev));
+		goto err_request_region;
+	}
+
+	if (flags)
+		nvdimm_map->mem = memremap(offset, size, flags);
+	else
+		nvdimm_map->iomem = ioremap(offset, size);
+
+	if (!nvdimm_map->mem)
+		goto err_map;
+
+	dev_WARN_ONCE(dev, !is_nvdimm_bus_locked(dev), "%s: bus unlocked!",
+			__func__);
+	list_add(&nvdimm_map->list, &nvdimm_bus->mapping_list);
+
+	return nvdimm_map;
+
+ err_map:
+	release_mem_region(offset, size);
+ err_request_region:
+	kfree(nvdimm_map);
+	return NULL;
+}
+
+static void nvdimm_map_release(struct kref *kref)
+{
+	struct nvdimm_bus *nvdimm_bus;
+	struct nvdimm_map *nvdimm_map;
+
+	nvdimm_map = container_of(kref, struct nvdimm_map, kref);
+	nvdimm_bus = nvdimm_map->nvdimm_bus;
+
+	dev_dbg(&nvdimm_bus->dev, "%pa\n", &nvdimm_map->offset);
+	list_del(&nvdimm_map->list);
+	if (nvdimm_map->flags)
+		memunmap(nvdimm_map->mem);
+	else
+		iounmap(nvdimm_map->iomem);
+	release_mem_region(nvdimm_map->offset, nvdimm_map->size);
+	kfree(nvdimm_map);
+}
+
+static void nvdimm_map_put(void *data)
+{
+	struct nvdimm_map *nvdimm_map = data;
+	struct nvdimm_bus *nvdimm_bus = nvdimm_map->nvdimm_bus;
+
+	nvdimm_bus_lock(&nvdimm_bus->dev);
+	kref_put(&nvdimm_map->kref, nvdimm_map_release);
+	nvdimm_bus_unlock(&nvdimm_bus->dev);
+}
+
+/**
+ * devm_nvdimm_memremap - map a resource that is shared across regions
+ * @dev: device that will own a reference to the shared mapping
+ * @offset: physical base address of the mapping
+ * @size: mapping size
+ * @flags: memremap flags, or, if zero, perform an ioremap instead
+ */
+void *devm_nvdimm_memremap(struct device *dev, resource_size_t offset,
+		size_t size, unsigned long flags)
+{
+	struct nvdimm_map *nvdimm_map;
+
+	nvdimm_bus_lock(dev);
+	nvdimm_map = find_nvdimm_map(dev, offset);
+	if (!nvdimm_map)
+		nvdimm_map = alloc_nvdimm_map(dev, offset, size, flags);
+	else
+		kref_get(&nvdimm_map->kref);
+	nvdimm_bus_unlock(dev);
+
+	if (!nvdimm_map)
+		return NULL;
+
+	if (devm_add_action_or_reset(dev, nvdimm_map_put, nvdimm_map))
+		return NULL;
+
+	return nvdimm_map->mem;
+}
+EXPORT_SYMBOL_GPL(devm_nvdimm_memremap);
+
 u64 nd_fletcher64(void *addr, size_t len, bool le)
 {
 	u32 *buf = addr;
@@ -73,25 +200,6 @@ u64 nd_fletcher64(void *addr, size_t len, bool le)
 }
 EXPORT_SYMBOL_GPL(nd_fletcher64);
 
-static void nvdimm_bus_release(struct device *dev)
-{
-	struct nvdimm_bus *nvdimm_bus;
-
-	nvdimm_bus = container_of(dev, struct nvdimm_bus, dev);
-	ida_simple_remove(&nd_ida, nvdimm_bus->id);
-	kfree(nvdimm_bus);
-}
-
-struct nvdimm_bus *to_nvdimm_bus(struct device *dev)
-{
-	struct nvdimm_bus *nvdimm_bus;
-
-	nvdimm_bus = container_of(dev, struct nvdimm_bus, dev);
-	WARN_ON(nvdimm_bus->dev.release != nvdimm_bus_release);
-	return nvdimm_bus;
-}
-EXPORT_SYMBOL_GPL(to_nvdimm_bus);
-
 struct nvdimm_bus_descriptor *to_nd_desc(struct nvdimm_bus *nvdimm_bus)
 {
 	/* struct nvdimm_bus definition is private to libnvdimm */
@@ -99,18 +207,12 @@ struct nvdimm_bus_descriptor *to_nd_desc(struct nvdimm_bus *nvdimm_bus)
 }
 EXPORT_SYMBOL_GPL(to_nd_desc);
 
-struct nvdimm_bus *walk_to_nvdimm_bus(struct device *nd_dev)
+struct device *to_nvdimm_bus_dev(struct nvdimm_bus *nvdimm_bus)
 {
-	struct device *dev;
-
-	for (dev = nd_dev; dev; dev = dev->parent)
-		if (dev->release == nvdimm_bus_release)
-			break;
-	dev_WARN_ONCE(nd_dev, !dev, "invalid dev, not on nd bus\n");
-	if (dev)
-		return to_nvdimm_bus(dev);
-	return NULL;
+	/* struct nvdimm_bus definition is private to libnvdimm */
+	return &nvdimm_bus->dev;
 }
+EXPORT_SYMBOL_GPL(to_nvdimm_bus_dev);
 
 static bool is_uuid_sep(char sep)
 {
@@ -128,8 +230,8 @@ static int nd_uuid_parse(struct device *dev, u8 *uuid_out, const char *buf,
 
 	for (i = 0; i < 16; i++) {
 		if (!isxdigit(str[0]) || !isxdigit(str[1])) {
-			dev_dbg(dev, "%s: pos: %d buf[%zd]: %c buf[%zd]: %c\n",
-					__func__, i, str - buf, str[0],
+			dev_dbg(dev, "pos: %d buf[%zd]: %c buf[%zd]: %c\n",
+					i, str - buf, str[0],
 					str + 1 - buf, str[1]);
 			return -EINVAL;
 		}
@@ -175,14 +277,14 @@ int nd_uuid_store(struct device *dev, u8 **uuid_out, const char *buf,
 	return 0;
 }
 
-ssize_t nd_sector_size_show(unsigned long current_lbasize,
+ssize_t nd_size_select_show(unsigned long current_size,
 		const unsigned long *supported, char *buf)
 {
 	ssize_t len = 0;
 	int i;
 
 	for (i = 0; supported[i]; i++)
-		if (current_lbasize == supported[i])
+		if (current_size == supported[i])
 			len += sprintf(buf + len, "[%ld] ", supported[i]);
 		else
 			len += sprintf(buf + len, "%ld ", supported[i]);
@@ -190,8 +292,8 @@ ssize_t nd_sector_size_show(unsigned long current_lbasize,
 	return len;
 }
 
-ssize_t nd_sector_size_store(struct device *dev, const char *buf,
-		unsigned long *current_lbasize, const unsigned long *supported)
+ssize_t nd_size_select_store(struct device *dev, const char *buf,
+		unsigned long *current_size, const unsigned long *supported)
 {
 	unsigned long lbasize;
 	int rc, i;
@@ -208,41 +310,12 @@ ssize_t nd_sector_size_store(struct device *dev, const char *buf,
 			break;
 
 	if (supported[i]) {
-		*current_lbasize = lbasize;
+		*current_size = lbasize;
 		return 0;
 	} else {
 		return -EINVAL;
 	}
 }
-
-void __nd_iostat_start(struct bio *bio, unsigned long *start)
-{
-	struct gendisk *disk = bio->bi_bdev->bd_disk;
-	const int rw = bio_data_dir(bio);
-	int cpu = part_stat_lock();
-
-	*start = jiffies;
-	part_round_stats(cpu, &disk->part0);
-	part_stat_inc(cpu, &disk->part0, ios[rw]);
-	part_stat_add(cpu, &disk->part0, sectors[rw], bio_sectors(bio));
-	part_inc_in_flight(&disk->part0, rw);
-	part_stat_unlock();
-}
-EXPORT_SYMBOL(__nd_iostat_start);
-
-void nd_iostat_end(struct bio *bio, unsigned long start)
-{
-	struct gendisk *disk = bio->bi_bdev->bd_disk;
-	unsigned long duration = jiffies - start;
-	const int rw = bio_data_dir(bio);
-	int cpu = part_stat_lock();
-
-	part_stat_add(cpu, &disk->part0, ticks[rw], duration);
-	part_round_stats(cpu, &disk->part0);
-	part_dec_in_flight(&disk->part0, rw);
-	part_stat_unlock();
-}
-EXPORT_SYMBOL(nd_iostat_end);
 
 static ssize_t commands_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -251,7 +324,7 @@ static ssize_t commands_show(struct device *dev,
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 
-	for_each_set_bit(cmd, &nd_desc->dsm_mask, BITS_PER_LONG)
+	for_each_set_bit(cmd, &nd_desc->cmd_mask, BITS_PER_LONG)
 		len += sprintf(buf + len, "%s ", nvdimm_bus_cmd_name(cmd));
 	len += sprintf(buf + len, "\n");
 	return len;
@@ -298,6 +371,15 @@ static int flush_regions_dimms(struct device *dev, void *data)
 static ssize_t wait_probe_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
+	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
+	int rc;
+
+	if (nd_desc->flush_probe) {
+		rc = nd_desc->flush_probe(nd_desc);
+		if (rc)
+			return rc;
+	}
 	nd_synchronize();
 	device_for_each_child(dev, NULL, flush_regions_dimms);
 	return sprintf(buf, "1\n");
@@ -316,249 +398,11 @@ struct attribute_group nvdimm_bus_attribute_group = {
 };
 EXPORT_SYMBOL_GPL(nvdimm_bus_attribute_group);
 
-struct nvdimm_bus *__nvdimm_bus_register(struct device *parent,
-		struct nvdimm_bus_descriptor *nd_desc, struct module *module)
+int nvdimm_bus_add_badrange(struct nvdimm_bus *nvdimm_bus, u64 addr, u64 length)
 {
-	struct nvdimm_bus *nvdimm_bus;
-	int rc;
-
-	nvdimm_bus = kzalloc(sizeof(*nvdimm_bus), GFP_KERNEL);
-	if (!nvdimm_bus)
-		return NULL;
-	INIT_LIST_HEAD(&nvdimm_bus->list);
-	INIT_LIST_HEAD(&nvdimm_bus->poison_list);
-	init_waitqueue_head(&nvdimm_bus->probe_wait);
-	nvdimm_bus->id = ida_simple_get(&nd_ida, 0, 0, GFP_KERNEL);
-	mutex_init(&nvdimm_bus->reconfig_mutex);
-	if (nvdimm_bus->id < 0) {
-		kfree(nvdimm_bus);
-		return NULL;
-	}
-	nvdimm_bus->nd_desc = nd_desc;
-	nvdimm_bus->module = module;
-	nvdimm_bus->dev.parent = parent;
-	nvdimm_bus->dev.release = nvdimm_bus_release;
-	nvdimm_bus->dev.groups = nd_desc->attr_groups;
-	dev_set_name(&nvdimm_bus->dev, "ndbus%d", nvdimm_bus->id);
-	rc = device_register(&nvdimm_bus->dev);
-	if (rc) {
-		dev_dbg(&nvdimm_bus->dev, "registration failed: %d\n", rc);
-		goto err;
-	}
-
-	rc = nvdimm_bus_create_ndctl(nvdimm_bus);
-	if (rc)
-		goto err;
-
-	mutex_lock(&nvdimm_bus_list_mutex);
-	list_add_tail(&nvdimm_bus->list, &nvdimm_bus_list);
-	mutex_unlock(&nvdimm_bus_list_mutex);
-
-	return nvdimm_bus;
- err:
-	put_device(&nvdimm_bus->dev);
-	return NULL;
+	return badrange_add(&nvdimm_bus->badrange, addr, length);
 }
-EXPORT_SYMBOL_GPL(__nvdimm_bus_register);
-
-static void set_badblock(struct badblocks *bb, sector_t s, int num)
-{
-	dev_dbg(bb->dev, "Found a poison range (0x%llx, 0x%llx)\n",
-			(u64) s * 512, (u64) num * 512);
-	/* this isn't an error as the hardware will still throw an exception */
-	if (badblocks_set(bb, s, num, 1))
-		dev_info_once(bb->dev, "%s: failed for sector %llx\n",
-				__func__, (u64) s);
-}
-
-/**
- * __add_badblock_range() - Convert a physical address range to bad sectors
- * @bb:		badblocks instance to populate
- * @ns_offset:	namespace offset where the error range begins (in bytes)
- * @len:	number of bytes of poison to be added
- *
- * This assumes that the range provided with (ns_offset, len) is within
- * the bounds of physical addresses for this namespace, i.e. lies in the
- * interval [ns_start, ns_start + ns_size)
- */
-static void __add_badblock_range(struct badblocks *bb, u64 ns_offset, u64 len)
-{
-	const unsigned int sector_size = 512;
-	sector_t start_sector;
-	u64 num_sectors;
-	u32 rem;
-
-	start_sector = div_u64(ns_offset, sector_size);
-	num_sectors = div_u64_rem(len, sector_size, &rem);
-	if (rem)
-		num_sectors++;
-
-	if (unlikely(num_sectors > (u64)INT_MAX)) {
-		u64 remaining = num_sectors;
-		sector_t s = start_sector;
-
-		while (remaining) {
-			int done = min_t(u64, remaining, INT_MAX);
-
-			set_badblock(bb, s, done);
-			remaining -= done;
-			s += done;
-		}
-	} else
-		set_badblock(bb, start_sector, num_sectors);
-}
-
-/**
- * nvdimm_namespace_add_poison() - Convert a list of poison ranges to badblocks
- * @ndns:	the namespace containing poison ranges
- * @bb:		badblocks instance to populate
- * @offset:	offset at the start of the namespace before 'sector 0'
- *
- * The poison list generated during NFIT initialization may contain multiple,
- * possibly overlapping ranges in the SPA (System Physical Address) space.
- * Compare each of these ranges to the namespace currently being initialized,
- * and add badblocks to the gendisk for all matching sub-ranges
- */
-void nvdimm_namespace_add_poison(struct nd_namespace_common *ndns,
-		struct badblocks *bb, resource_size_t offset)
-{
-	struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
-	struct nd_region *nd_region = to_nd_region(ndns->dev.parent);
-	struct nvdimm_bus *nvdimm_bus;
-	struct list_head *poison_list;
-	u64 ns_start, ns_end, ns_size;
-	struct nd_poison *pl;
-
-	ns_size = nvdimm_namespace_capacity(ndns) - offset;
-	ns_start = nsio->res.start + offset;
-	ns_end = nsio->res.end;
-
-	nvdimm_bus = to_nvdimm_bus(nd_region->dev.parent);
-	poison_list = &nvdimm_bus->poison_list;
-	if (list_empty(poison_list))
-		return;
-
-	list_for_each_entry(pl, poison_list, list) {
-		u64 pl_end = pl->start + pl->length - 1;
-
-		/* Discard intervals with no intersection */
-		if (pl_end < ns_start)
-			continue;
-		if (pl->start > ns_end)
-			continue;
-		/* Deal with any overlap after start of the namespace */
-		if (pl->start >= ns_start) {
-			u64 start = pl->start;
-			u64 len;
-
-			if (pl_end <= ns_end)
-				len = pl->length;
-			else
-				len = ns_start + ns_size - pl->start;
-			__add_badblock_range(bb, start - ns_start, len);
-			continue;
-		}
-		/* Deal with overlap for poison starting before the namespace */
-		if (pl->start < ns_start) {
-			u64 len;
-
-			if (pl_end < ns_end)
-				len = pl->start + pl->length - ns_start;
-			else
-				len = ns_size;
-			__add_badblock_range(bb, 0, len);
-		}
-	}
-}
-EXPORT_SYMBOL_GPL(nvdimm_namespace_add_poison);
-
-static int __add_poison(struct nvdimm_bus *nvdimm_bus, u64 addr, u64 length)
-{
-	struct nd_poison *pl;
-
-	pl = kzalloc(sizeof(*pl), GFP_KERNEL);
-	if (!pl)
-		return -ENOMEM;
-
-	pl->start = addr;
-	pl->length = length;
-	list_add_tail(&pl->list, &nvdimm_bus->poison_list);
-
-	return 0;
-}
-
-int nvdimm_bus_add_poison(struct nvdimm_bus *nvdimm_bus, u64 addr, u64 length)
-{
-	struct nd_poison *pl;
-
-	if (list_empty(&nvdimm_bus->poison_list))
-		return __add_poison(nvdimm_bus, addr, length);
-
-	/*
-	 * There is a chance this is a duplicate, check for those first.
-	 * This will be the common case as ARS_STATUS returns all known
-	 * errors in the SPA space, and we can't query it per region
-	 */
-	list_for_each_entry(pl, &nvdimm_bus->poison_list, list)
-		if (pl->start == addr) {
-			/* If length has changed, update this list entry */
-			if (pl->length != length)
-				pl->length = length;
-			return 0;
-		}
-
-	/*
-	 * If not a duplicate or a simple length update, add the entry as is,
-	 * as any overlapping ranges will get resolved when the list is consumed
-	 * and converted to badblocks
-	 */
-	return __add_poison(nvdimm_bus, addr, length);
-}
-EXPORT_SYMBOL_GPL(nvdimm_bus_add_poison);
-
-static void free_poison_list(struct list_head *poison_list)
-{
-	struct nd_poison *pl, *next;
-
-	list_for_each_entry_safe(pl, next, poison_list, list) {
-		list_del(&pl->list);
-		kfree(pl);
-	}
-	list_del_init(poison_list);
-}
-
-static int child_unregister(struct device *dev, void *data)
-{
-	/*
-	 * the singular ndctl class device per bus needs to be
-	 * "device_destroy"ed, so skip it here
-	 *
-	 * i.e. remove classless children
-	 */
-	if (dev->class)
-		/* pass */;
-	else
-		nd_device_unregister(dev, ND_SYNC);
-	return 0;
-}
-
-void nvdimm_bus_unregister(struct nvdimm_bus *nvdimm_bus)
-{
-	if (!nvdimm_bus)
-		return;
-
-	mutex_lock(&nvdimm_bus_list_mutex);
-	list_del_init(&nvdimm_bus->list);
-	mutex_unlock(&nvdimm_bus_list_mutex);
-
-	nd_synchronize();
-	device_for_each_child(&nvdimm_bus->dev, NULL, child_unregister);
-	free_poison_list(&nvdimm_bus->poison_list);
-	nvdimm_bus_destroy_ndctl(nvdimm_bus);
-
-	device_unregister(&nvdimm_bus->dev);
-}
-EXPORT_SYMBOL_GPL(nvdimm_bus_unregister);
+EXPORT_SYMBOL_GPL(nvdimm_bus_add_badrange);
 
 #ifdef CONFIG_BLK_DEV_INTEGRITY
 int nd_integrity_init(struct gendisk *disk, unsigned long meta_size)
@@ -568,7 +412,8 @@ int nd_integrity_init(struct gendisk *disk, unsigned long meta_size)
 	if (meta_size == 0)
 		return 0;
 
-	bi.profile = NULL;
+	memset(&bi, 0, sizeof(bi));
+
 	bi.tuple_size = meta_size;
 	bi.tag_size = meta_size;
 
@@ -601,6 +446,9 @@ static __init int libnvdimm_init(void)
 	rc = nd_region_init();
 	if (rc)
 		goto err_region;
+
+	nd_label_init();
+
 	return 0;
  err_region:
 	nvdimm_exit();
@@ -615,6 +463,8 @@ static __exit void libnvdimm_exit(void)
 	nd_region_exit();
 	nvdimm_exit();
 	nvdimm_bus_exit();
+	nd_region_devs_exit();
+	nvdimm_devs_exit();
 }
 
 MODULE_LICENSE("GPL v2");

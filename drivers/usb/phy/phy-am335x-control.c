@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/err.h>
@@ -134,10 +135,12 @@ struct phy_control *am335x_get_phy_control(struct device *dev)
 		return NULL;
 
 	dev = bus_find_device(&platform_bus_type, NULL, node, match);
+	of_node_put(node);
 	if (!dev)
 		return NULL;
 
 	ctrl_usb = dev_get_drvdata(dev);
+	put_device(dev);
 	if (!ctrl_usb)
 		return NULL;
 	return &ctrl_usb->phy_ctrl;

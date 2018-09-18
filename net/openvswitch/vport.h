@@ -149,7 +149,6 @@ struct vport_ops {
 struct vport *ovs_vport_alloc(int priv_size, const struct vport_ops *,
 			      const struct vport_parms *);
 void ovs_vport_free(struct vport *);
-void ovs_vport_deferred_free(struct vport *vport);
 
 #define VPORT_ALIGN 8
 
@@ -185,13 +184,6 @@ static inline struct vport *vport_from_priv(void *priv)
 int ovs_vport_receive(struct vport *, struct sk_buff *,
 		      const struct ip_tunnel_info *);
 
-static inline void ovs_skb_postpush_rcsum(struct sk_buff *skb,
-				      const void *start, unsigned int len)
-{
-	if (skb->ip_summed == CHECKSUM_COMPLETE)
-		skb->csum = csum_add(skb->csum, csum_partial(start, len, 0));
-}
-
 static inline const char *ovs_vport_name(struct vport *vport)
 {
 	return vport->dev->name;
@@ -205,6 +197,6 @@ int __ovs_vport_ops_register(struct vport_ops *ops);
 	})
 
 void ovs_vport_ops_unregister(struct vport_ops *ops);
-void ovs_vport_send(struct vport *vport, struct sk_buff *skb);
+void ovs_vport_send(struct vport *vport, struct sk_buff *skb, u8 mac_proto);
 
 #endif /* vport.h */

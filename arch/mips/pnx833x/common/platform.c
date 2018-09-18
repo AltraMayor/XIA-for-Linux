@@ -30,7 +30,7 @@
 #include <linux/resource.h>
 #include <linux/serial.h>
 #include <linux/serial_pnx8xxx.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 
 #include <irq.h>
@@ -232,12 +232,8 @@ static struct platform_device *pnx833x_platform_devices[] __initdata = {
 
 static int __init pnx833x_platform_init(void)
 {
-	int res;
-
-	res = platform_add_devices(pnx833x_platform_devices,
-				   ARRAY_SIZE(pnx833x_platform_devices));
-
-	return res;
+	return platform_add_devices(pnx833x_platform_devices,
+				    ARRAY_SIZE(pnx833x_platform_devices));
 }
 
 arch_initcall(pnx833x_platform_init);

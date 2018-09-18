@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * comedi/drivers/cb_pcidda.c
  * Driver for the ComputerBoards / MeasurementComputing PCI-DDA series.
@@ -7,16 +8,6 @@
  *
  * COMEDI - Linux Control and Measurement Device Interface
  * Copyright (C) 1997-8 David A. Schleef <ds@schleef.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 /*
@@ -248,8 +239,8 @@ static void cb_pcidda_write_caldac(struct comedi_device *dev,
 	cb_pcidda_serial_out(dev, value, num_caldac_bits);
 
 /*
-* latch stream into appropriate caldac deselect reference dac
-*/
+ * latch stream into appropriate caldac deselect reference dac
+ */
 	cal2_bits = DESELECT_REF_DAC_BIT | DUMMY_BIT;
 	/*  deactivate caldacs (one caldac for every two channels) */
 	for (i = 0; i < max_num_caldacs; i++)

@@ -20,7 +20,7 @@
 #include <linux/leds.h>
 #include <linux/regmap.h>
 #include <linux/regulator/driver.h>
-#include <linux/extcon.h>
+#include <linux/extcon-provider.h>
 #include <linux/of_gpio.h>
 #include <linux/usb/phy_companion.h>
 
@@ -250,6 +250,7 @@ enum tps65917_regulators {
 	TPS65917_REG_SMPS3,
 	TPS65917_REG_SMPS4,
 	TPS65917_REG_SMPS5,
+	TPS65917_REG_SMPS12,
 	/* LDO regulators */
 	TPS65917_REG_LDO1,
 	TPS65917_REG_LDO2,
@@ -317,6 +318,7 @@ enum tps65917_external_requestor_id {
 	TPS65917_EXTERNAL_REQSTR_ID_SMPS3,
 	TPS65917_EXTERNAL_REQSTR_ID_SMPS4,
 	TPS65917_EXTERNAL_REQSTR_ID_SMPS5,
+	TPS65917_EXTERNAL_REQSTR_ID_SMPS12,
 	TPS65917_EXTERNAL_REQSTR_ID_LDO1,
 	TPS65917_EXTERNAL_REQSTR_ID_LDO2,
 	TPS65917_EXTERNAL_REQSTR_ID_LDO3,
@@ -580,7 +582,9 @@ struct palmas_usb {
 	int vbus_irq;
 
 	int gpio_id_irq;
+	int gpio_vbus_irq;
 	struct gpio_desc *id_gpiod;
+	struct gpio_desc *vbus_gpiod;
 	unsigned long sw_debounce_jiffies;
 	struct delayed_work wq_detectid;
 
@@ -589,6 +593,7 @@ struct palmas_usb {
 	bool enable_vbus_detection;
 	bool enable_id_detection;
 	bool enable_gpio_id_detection;
+	bool enable_gpio_vbus_detection;
 };
 
 #define comparator_to_palmas(x) container_of((x), struct palmas_usb, comparator)
@@ -3727,6 +3732,9 @@ enum usb_irq_events {
 #define TPS65917_REGEN3_CTRL_MODE_SLEEP_SHIFT			0x02
 #define TPS65917_REGEN3_CTRL_MODE_ACTIVE			0x01
 #define TPS65917_REGEN3_CTRL_MODE_ACTIVE_SHIFT			0x00
+
+/* POWERHOLD Mask field for PRIMARY_SECONDARY_PAD2 register */
+#define TPS65917_PRIMARY_SECONDARY_PAD2_GPIO_5_MASK		0xC
 
 /* Registers for function RESOURCE */
 #define TPS65917_REGEN1_CTRL					0x2

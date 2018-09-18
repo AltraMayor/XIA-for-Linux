@@ -4,14 +4,14 @@
  * by the Free Software Foundation.
  *
  * Copyright (C) 2015 Nikolay Martynov <mar.kolya@gmail.com>
- * Copyright (C) 2015 John Crispin <blogic@openwrt.org>
+ * Copyright (C) 2015 John Crispin <john@phrozen.org>
  */
 
 #include <linux/init.h>
 
 #include <linux/of.h>
 #include <linux/irqchip.h>
-#include <linux/irqchip/mips-gic.h>
+#include <asm/mips-cps.h>
 
 int get_c0_perfcount_int(void)
 {

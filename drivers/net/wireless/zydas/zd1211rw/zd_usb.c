@@ -35,7 +35,7 @@
 #include "zd_mac.h"
 #include "zd_usb.h"
 
-static struct usb_device_id usb_ids[] = {
+static const struct usb_device_id usb_ids[] = {
 	/* ZD1211 */
 	{ USB_DEVICE(0x0105, 0x145f), .driver_info = DEVICE_ZD1211 },
 	{ USB_DEVICE(0x0586, 0x3401), .driver_info = DEVICE_ZD1211 },
@@ -193,7 +193,7 @@ static int upload_code(struct usb_device *udev,
 			0, 0, p, sizeof(ret), 5000 /* ms */);
 		if (r != sizeof(ret)) {
 			dev_err(&udev->dev,
-				"control request firmeware confirmation failed."
+				"control request firmware confirmation failed."
 				" Return value %d\n", r);
 			if (r >= 0)
 				r = -ENODEV;
@@ -371,25 +371,27 @@ static inline void handle_regs_int_override(struct urb *urb)
 {
 	struct zd_usb *usb = urb->context;
 	struct zd_usb_interrupt *intr = &usb->intr;
+	unsigned long flags;
 
-	spin_lock(&intr->lock);
+	spin_lock_irqsave(&intr->lock, flags);
 	if (atomic_read(&intr->read_regs_enabled)) {
 		atomic_set(&intr->read_regs_enabled, 0);
 		intr->read_regs_int_overridden = 1;
 		complete(&intr->read_regs.completion);
 	}
-	spin_unlock(&intr->lock);
+	spin_unlock_irqrestore(&intr->lock, flags);
 }
 
 static inline void handle_regs_int(struct urb *urb)
 {
 	struct zd_usb *usb = urb->context;
 	struct zd_usb_interrupt *intr = &usb->intr;
+	unsigned long flags;
 	int len;
 	u16 int_num;
 
 	ZD_ASSERT(in_interrupt());
-	spin_lock(&intr->lock);
+	spin_lock_irqsave(&intr->lock, flags);
 
 	int_num = le16_to_cpu(*(__le16 *)(urb->transfer_buffer+2));
 	if (int_num == CR_INTERRUPT) {
@@ -425,7 +427,7 @@ static inline void handle_regs_int(struct urb *urb)
 	}
 
 out:
-	spin_unlock(&intr->lock);
+	spin_unlock_irqrestore(&intr->lock, flags);
 
 	/* CR_INTERRUPT might override read_reg too. */
 	if (int_num == CR_INTERRUPT && atomic_read(&intr->read_regs_enabled))
@@ -665,6 +667,7 @@ static void rx_urb_complete(struct urb *urb)
 	struct zd_usb_rx *rx;
 	const u8 *buffer;
 	unsigned int length;
+	unsigned long flags;
 
 	switch (urb->status) {
 	case 0:
@@ -693,14 +696,14 @@ static void rx_urb_complete(struct urb *urb)
 		/* If there is an old first fragment, we don't care. */
 		dev_dbg_f(urb_dev(urb), "*** first fragment ***\n");
 		ZD_ASSERT(length <= ARRAY_SIZE(rx->fragment));
-		spin_lock(&rx->lock);
+		spin_lock_irqsave(&rx->lock, flags);
 		memcpy(rx->fragment, buffer, length);
 		rx->fragment_length = length;
-		spin_unlock(&rx->lock);
+		spin_unlock_irqrestore(&rx->lock, flags);
 		goto resubmit;
 	}
 
-	spin_lock(&rx->lock);
+	spin_lock_irqsave(&rx->lock, flags);
 	if (rx->fragment_length > 0) {
 		/* We are on a second fragment, we believe */
 		ZD_ASSERT(length + rx->fragment_length <=
@@ -710,9 +713,9 @@ static void rx_urb_complete(struct urb *urb)
 		handle_rx_packet(usb, rx->fragment,
 			         rx->fragment_length + length);
 		rx->fragment_length = 0;
-		spin_unlock(&rx->lock);
+		spin_unlock_irqrestore(&rx->lock, flags);
 	} else {
-		spin_unlock(&rx->lock);
+		spin_unlock_irqrestore(&rx->lock, flags);
 		handle_rx_packet(usb, buffer, length);
 	}
 
@@ -1277,6 +1280,9 @@ static int eject_installer(struct usb_interface *intf)
 	unsigned char *cmd;
 	u8 bulk_out_ep;
 	int r;
+
+	if (iface_desc->desc.bNumEndpoints < 2)
+		return -ENODEV;
 
 	/* Find bulk out endpoint */
 	for (r = 1; r >= 0; r--) {

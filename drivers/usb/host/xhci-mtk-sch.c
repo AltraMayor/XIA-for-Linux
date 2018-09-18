@@ -1,18 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2015 MediaTek Inc.
  * Author:
  *  Zhigang.Wei <zhigang.wei@mediatek.com>
  *  Chunfeng.Yun <chunfeng.yun@mediatek.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #include <linux/kernel.h>
@@ -67,7 +58,7 @@ static int get_bw_index(struct xhci_hcd *xhci, struct usb_device *udev,
 			bw_index = (virt_dev->real_port - 1) * 2 + 1;
 	} else {
 		/* add one more for each SS port */
-		bw_index = virt_dev->real_port + xhci->num_usb3_ports - 1;
+		bw_index = virt_dev->real_port + xhci->usb3_rhub.num_ports - 1;
 	}
 
 	return bw_index;
@@ -287,12 +278,13 @@ static bool need_bw_sch(struct usb_host_endpoint *ep,
 
 int xhci_mtk_sch_init(struct xhci_hcd_mtk *mtk)
 {
+	struct xhci_hcd *xhci = hcd_to_xhci(mtk->hcd);
 	struct mu3h_sch_bw_info *sch_array;
 	int num_usb_bus;
 	int i;
 
 	/* ss IN and OUT are separated */
-	num_usb_bus = mtk->num_u3_ports * 2 + mtk->num_u2_ports;
+	num_usb_bus = xhci->usb3_rhub.num_ports * 2 + xhci->usb2_rhub.num_ports;
 
 	sch_array = kcalloc(num_usb_bus, sizeof(*sch_array), GFP_KERNEL);
 	if (sch_array == NULL)
@@ -337,7 +329,7 @@ int xhci_mtk_add_ep_quirk(struct usb_hcd *hcd, struct usb_device *udev,
 
 	xhci_dbg(xhci, "%s() type:%d, speed:%d, mpkt:%d, dir:%d, ep:%p\n",
 		__func__, usb_endpoint_type(&ep->desc), udev->speed,
-		GET_MAX_PACKET(usb_endpoint_maxp(&ep->desc)),
+		usb_endpoint_maxp(&ep->desc),
 		usb_endpoint_dir_in(&ep->desc), ep);
 
 	if (!need_bw_sch(ep, udev->speed, slot_ctx->tt_info & TT_SLOT)) {
@@ -403,7 +395,7 @@ void xhci_mtk_drop_ep_quirk(struct usb_hcd *hcd, struct usb_device *udev,
 
 	xhci_dbg(xhci, "%s() type:%d, speed:%d, mpks:%d, dir:%d, ep:%p\n",
 		__func__, usb_endpoint_type(&ep->desc), udev->speed,
-		GET_MAX_PACKET(usb_endpoint_maxp(&ep->desc)),
+		usb_endpoint_maxp(&ep->desc),
 		usb_endpoint_dir_in(&ep->desc), ep);
 
 	if (!need_bw_sch(ep, udev->speed, slot_ctx->tt_info & TT_SLOT))

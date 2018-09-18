@@ -6,53 +6,55 @@
  * published by the Free Software Foundation.
  */
 
-/*
- * DMA Coherent API Notes
- *
- * I/O is inherently non-coherent on ARC. So a coherent DMA buffer is
- * implemented by accessintg it using a kernel virtual address, with
- * Cache bit off in the TLB entry.
- *
- * The default DMA address == Phy address which is 0x8000_0000 based.
- */
-
-#include <linux/dma-mapping.h>
+#include <linux/dma-noncoherent.h>
 #include <asm/cache.h>
 #include <asm/cacheflush.h>
 
-
-static void *arc_dma_alloc(struct device *dev, size_t size,
-		dma_addr_t *dma_handle, gfp_t gfp, struct dma_attrs *attrs)
+/*
+ * ARCH specific callbacks for generic noncoherent DMA ops (dma/noncoherent.c)
+ *  - hardware IOC not available (or "dma-coherent" not set for device in DT)
+ *  - But still handle both coherent and non-coherent requests from caller
+ *
+ * For DMA coherent hardware (IOC) generic code suffices
+ */
+void *arch_dma_alloc(struct device *dev, size_t size, dma_addr_t *dma_handle,
+		gfp_t gfp, unsigned long attrs)
 {
-	void *paddr, *kvaddr;
-
-	/* This is linear addr (0x8000_0000 based) */
-	paddr = alloc_pages_exact(size, gfp);
-	if (!paddr)
-		return NULL;
-
-	/* This is bus address, platform dependent */
-	*dma_handle = (dma_addr_t)paddr;
+	unsigned long order = get_order(size);
+	struct page *page;
+	phys_addr_t paddr;
+	void *kvaddr;
+	bool need_coh = !(attrs & DMA_ATTR_NON_CONSISTENT);
 
 	/*
-	 * IOC relies on all data (even coherent DMA data) being in cache
-	 * Thus allocate normal cached memory
-	 *
-	 * The gains with IOC are two pronged:
-	 *   -For streaming data, elides needs for cache maintenance, saving
-	 *    cycles in flush code, and bus bandwidth as all the lines of a
-	 *    buffer need to be flushed out to memory
-	 *   -For coherent data, Read/Write to buffers terminate early in cache
-	 *   (vs. always going to memory - thus are faster)
+	 * __GFP_HIGHMEM flag is cleared by upper layer functions
+	 * (in include/linux/dma-mapping.h) so we should never get a
+	 * __GFP_HIGHMEM here.
 	 */
-	if ((is_isa_arcv2() && ioc_exists) ||
-	    dma_get_attr(DMA_ATTR_NON_CONSISTENT, attrs))
-		return paddr;
+	BUG_ON(gfp & __GFP_HIGHMEM);
 
-	/* This is kernel Virtual address (0x7000_0000 based) */
-	kvaddr = ioremap_nocache((unsigned long)paddr, size);
-	if (kvaddr == NULL)
+	page = alloc_pages(gfp, order);
+	if (!page)
 		return NULL;
+
+	/* This is linear addr (0x8000_0000 based) */
+	paddr = page_to_phys(page);
+
+	*dma_handle = paddr;
+
+	/*
+	 * A coherent buffer needs MMU mapping to enforce non-cachability.
+	 * kvaddr is kernel Virtual address (0x7000_0000 based).
+	 */
+	if (need_coh) {
+		kvaddr = ioremap_nocache(paddr, size);
+		if (kvaddr == NULL) {
+			__free_pages(page, order);
+			return NULL;
+		}
+	} else {
+		kvaddr = (void *)(u32)paddr;
+	}
 
 	/*
 	 * Evict any existing L1 and/or L2 lines for the backing page
@@ -64,115 +66,122 @@ static void *arc_dma_alloc(struct device *dev, size_t size,
 	 * Currently flush_cache_vmap nukes the L1 cache completely which
 	 * will be optimized as a separate commit
 	 */
-	dma_cache_wback_inv((unsigned long)paddr, size);
+	if (need_coh)
+		dma_cache_wback_inv(paddr, size);
 
 	return kvaddr;
 }
 
-static void arc_dma_free(struct device *dev, size_t size, void *vaddr,
-		dma_addr_t dma_handle, struct dma_attrs *attrs)
+void arch_dma_free(struct device *dev, size_t size, void *vaddr,
+		dma_addr_t dma_handle, unsigned long attrs)
 {
-	if (!dma_get_attr(DMA_ATTR_NON_CONSISTENT, attrs) &&
-	    !(is_isa_arcv2() && ioc_exists))
+	phys_addr_t paddr = dma_handle;
+	struct page *page = virt_to_page(paddr);
+
+	if (!(attrs & DMA_ATTR_NON_CONSISTENT))
 		iounmap((void __force __iomem *)vaddr);
 
-	free_pages_exact((void *)dma_handle, size);
+	__free_pages(page, get_order(size));
+}
+
+int arch_dma_mmap(struct device *dev, struct vm_area_struct *vma,
+		void *cpu_addr, dma_addr_t dma_addr, size_t size,
+		unsigned long attrs)
+{
+	unsigned long user_count = vma_pages(vma);
+	unsigned long count = PAGE_ALIGN(size) >> PAGE_SHIFT;
+	unsigned long pfn = __phys_to_pfn(dma_addr);
+	unsigned long off = vma->vm_pgoff;
+	int ret = -ENXIO;
+
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
+	if (dma_mmap_from_dev_coherent(dev, vma, cpu_addr, size, &ret))
+		return ret;
+
+	if (off < count && user_count <= (count - off)) {
+		ret = remap_pfn_range(vma, vma->vm_start,
+				      pfn + off,
+				      user_count << PAGE_SHIFT,
+				      vma->vm_page_prot);
+	}
+
+	return ret;
 }
 
 /*
- * streaming DMA Mapping API...
- * CPU accesses page via normal paddr, thus needs to explicitly made
- * consistent before each use
+ * Cache operations depending on function and direction argument, inspired by
+ * https://lkml.org/lkml/2018/5/18/979
+ * "dma_sync_*_for_cpu and direction=TO_DEVICE (was Re: [PATCH 02/20]
+ * dma-mapping: provide a generic dma-noncoherent implementation)"
+ *
+ *          |   map          ==  for_device     |   unmap     ==  for_cpu
+ *          |----------------------------------------------------------------
+ * TO_DEV   |   writeback        writeback      |   none          none
+ * FROM_DEV |   invalidate       invalidate     |   invalidate*   invalidate*
+ * BIDIR    |   writeback+inv    writeback+inv  |   invalidate    invalidate
+ *
+ *     [*] needed for CPU speculative prefetches
+ *
+ * NOTE: we don't check the validity of direction argument as it is done in
+ * upper layer functions (in include/linux/dma-mapping.h)
  */
-static void _dma_cache_sync(unsigned long paddr, size_t size,
-		enum dma_data_direction dir)
+
+void arch_sync_dma_for_device(struct device *dev, phys_addr_t paddr,
+		size_t size, enum dma_data_direction dir)
 {
 	switch (dir) {
-	case DMA_FROM_DEVICE:
-		dma_cache_inv(paddr, size);
-		break;
 	case DMA_TO_DEVICE:
 		dma_cache_wback(paddr, size);
 		break;
+
+	case DMA_FROM_DEVICE:
+		dma_cache_inv(paddr, size);
+		break;
+
 	case DMA_BIDIRECTIONAL:
 		dma_cache_wback_inv(paddr, size);
 		break;
+
 	default:
-		pr_err("Invalid DMA dir [%d] for OP @ %lx\n", dir, paddr);
+		break;
 	}
 }
 
-static dma_addr_t arc_dma_map_page(struct device *dev, struct page *page,
-		unsigned long offset, size_t size, enum dma_data_direction dir,
-		struct dma_attrs *attrs)
+void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
+		size_t size, enum dma_data_direction dir)
 {
-	unsigned long paddr = page_to_phys(page) + offset;
-	_dma_cache_sync(paddr, size, dir);
-	return (dma_addr_t)paddr;
+	switch (dir) {
+	case DMA_TO_DEVICE:
+		break;
+
+	/* FROM_DEVICE invalidate needed if speculative CPU prefetch only */
+	case DMA_FROM_DEVICE:
+	case DMA_BIDIRECTIONAL:
+		dma_cache_inv(paddr, size);
+		break;
+
+	default:
+		break;
+	}
 }
 
-static int arc_dma_map_sg(struct device *dev, struct scatterlist *sg,
-	   int nents, enum dma_data_direction dir, struct dma_attrs *attrs)
+/*
+ * Plug in coherent or noncoherent dma ops
+ */
+void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
+			const struct iommu_ops *iommu, bool coherent)
 {
-	struct scatterlist *s;
-	int i;
-
-	for_each_sg(sg, s, nents, i)
-		s->dma_address = dma_map_page(dev, sg_page(s), s->offset,
-					       s->length, dir);
-
-	return nents;
+	/*
+	 * IOC hardware snoops all DMA traffic keeping the caches consistent
+	 * with memory - eliding need for any explicit cache maintenance of
+	 * DMA buffers - so we can use dma_direct cache ops.
+	 */
+	if (is_isa_arcv2() && ioc_enable && coherent) {
+		set_dma_ops(dev, &dma_direct_ops);
+		dev_info(dev, "use dma_direct_ops cache ops\n");
+	} else {
+		set_dma_ops(dev, &dma_noncoherent_ops);
+		dev_info(dev, "use dma_noncoherent_ops cache ops\n");
+	}
 }
-
-static void arc_dma_sync_single_for_cpu(struct device *dev,
-		dma_addr_t dma_handle, size_t size, enum dma_data_direction dir)
-{
-	_dma_cache_sync(dma_handle, size, DMA_FROM_DEVICE);
-}
-
-static void arc_dma_sync_single_for_device(struct device *dev,
-		dma_addr_t dma_handle, size_t size, enum dma_data_direction dir)
-{
-	_dma_cache_sync(dma_handle, size, DMA_TO_DEVICE);
-}
-
-static void arc_dma_sync_sg_for_cpu(struct device *dev,
-		struct scatterlist *sglist, int nelems,
-		enum dma_data_direction dir)
-{
-	int i;
-	struct scatterlist *sg;
-
-	for_each_sg(sglist, sg, nelems, i)
-		_dma_cache_sync((unsigned int)sg_virt(sg), sg->length, dir);
-}
-
-static void arc_dma_sync_sg_for_device(struct device *dev,
-		struct scatterlist *sglist, int nelems,
-		enum dma_data_direction dir)
-{
-	int i;
-	struct scatterlist *sg;
-
-	for_each_sg(sglist, sg, nelems, i)
-		_dma_cache_sync((unsigned int)sg_virt(sg), sg->length, dir);
-}
-
-static int arc_dma_supported(struct device *dev, u64 dma_mask)
-{
-	/* Support 32 bit DMA mask exclusively */
-	return dma_mask == DMA_BIT_MASK(32);
-}
-
-struct dma_map_ops arc_dma_ops = {
-	.alloc			= arc_dma_alloc,
-	.free			= arc_dma_free,
-	.map_page		= arc_dma_map_page,
-	.map_sg			= arc_dma_map_sg,
-	.sync_single_for_device	= arc_dma_sync_single_for_device,
-	.sync_single_for_cpu	= arc_dma_sync_single_for_cpu,
-	.sync_sg_for_cpu	= arc_dma_sync_sg_for_cpu,
-	.sync_sg_for_device	= arc_dma_sync_sg_for_device,
-	.dma_supported		= arc_dma_supported,
-};
-EXPORT_SYMBOL(arc_dma_ops);

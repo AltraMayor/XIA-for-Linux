@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_ARM_CPUIDLE_H
 #define __ASM_ARM_CPUIDLE_H
 
@@ -36,7 +37,7 @@ struct cpuidle_ops {
 
 struct of_cpuidle_method {
 	const char *method;
-	struct cpuidle_ops *ops;
+	const struct cpuidle_ops *ops;
 };
 
 #define CPUIDLE_METHOD_OF_DECLARE(name, _method, _ops)			\

@@ -53,7 +53,7 @@ static const struct file_operations tracefs_file_operations = {
 static struct tracefs_dir_ops {
 	int (*mkdir)(const char *name);
 	int (*rmdir)(const char *name);
-} tracefs_ops;
+} tracefs_ops __ro_after_init;
 
 static char *get_dname(struct dentry *dentry)
 {
@@ -133,7 +133,7 @@ static struct inode *tracefs_get_inode(struct super_block *sb)
 	struct inode *inode = new_inode(sb);
 	if (inode) {
 		inode->i_ino = get_next_ino();
-		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+		inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 	}
 	return inode;
 }
@@ -266,11 +266,9 @@ static const struct super_operations tracefs_super_operations = {
 
 static int trace_fill_super(struct super_block *sb, void *data, int silent)
 {
-	static struct tree_descr trace_files[] = {{""}};
+	static const struct tree_descr trace_files[] = {{""}};
 	struct tracefs_fs_info *fsi;
 	int err;
-
-	save_mount_options(sb, data);
 
 	fsi = kzalloc(sizeof(struct tracefs_fs_info), GFP_KERNEL);
 	sb->s_fs_info = fsi;
@@ -480,7 +478,8 @@ struct dentry *tracefs_create_dir(const char *name, struct dentry *parent)
  *
  * Returns the dentry of the instances directory.
  */
-struct dentry *tracefs_create_instance_dir(const char *name, struct dentry *parent,
+__init struct dentry *tracefs_create_instance_dir(const char *name,
+					  struct dentry *parent,
 					  int (*mkdir)(const char *name),
 					  int (*rmdir)(const char *name))
 {
@@ -541,9 +540,6 @@ void tracefs_remove(struct dentry *dentry)
 		return;
 
 	parent = dentry->d_parent;
-	if (!parent || !parent->d_inode)
-		return;
-
 	inode_lock(parent->d_inode);
 	ret = __tracefs_remove(dentry, parent);
 	inode_unlock(parent->d_inode);
@@ -564,10 +560,6 @@ void tracefs_remove_recursive(struct dentry *dentry)
 	struct dentry *child, *parent;
 
 	if (IS_ERR_OR_NULL(dentry))
-		return;
-
-	parent = dentry->d_parent;
-	if (!parent || !parent->d_inode)
 		return;
 
 	parent = dentry;

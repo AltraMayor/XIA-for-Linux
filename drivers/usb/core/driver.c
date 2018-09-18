@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * drivers/usb/driver.c - most of the driver model stuff for usb
  *
@@ -14,6 +15,8 @@
  *	(C) Copyright Yggdrasil Computing, Inc. 2000
  *		(usb_device_id matching changes by Adam J. Richter)
  *	(C) Copyright Greg Kroah-Hartman 2002-2003
+ *
+ * Released under the GPLv2 only.
  *
  * NOTE! This is not actually a driver at all, rather this is
  * just a collection of helper routines that implement the
@@ -284,7 +287,7 @@ static int usb_probe_interface(struct device *dev)
 	struct usb_device *udev = interface_to_usbdev(intf);
 	const struct usb_device_id *id;
 	int error = -ENODEV;
-	int lpm_disable_error;
+	int lpm_disable_error = -ENODEV;
 
 	dev_dbg(dev, "%s\n", __func__);
 
@@ -336,12 +339,14 @@ static int usb_probe_interface(struct device *dev)
 	 * setting during probe, that should also be fine.  usb_set_interface()
 	 * will attempt to disable LPM, and fail if it can't disable it.
 	 */
-	lpm_disable_error = usb_unlocked_disable_lpm(udev);
-	if (lpm_disable_error && driver->disable_hub_initiated_lpm) {
-		dev_err(&intf->dev, "%s Failed to disable LPM for driver %s\n.",
+	if (driver->disable_hub_initiated_lpm) {
+		lpm_disable_error = usb_unlocked_disable_lpm(udev);
+		if (lpm_disable_error) {
+			dev_err(&intf->dev, "%s Failed to disable LPM for driver %s\n",
 				__func__, driver->name);
-		error = lpm_disable_error;
-		goto err;
+			error = lpm_disable_error;
+			goto err;
+		}
 	}
 
 	/* Carry out a deferred switch to altsetting 0 */
@@ -391,7 +396,8 @@ static int usb_unbind_interface(struct device *dev)
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct usb_host_endpoint *ep, **eps = NULL;
 	struct usb_device *udev;
-	int i, j, error, r, lpm_disable_error;
+	int i, j, error, r;
+	int lpm_disable_error = -ENODEV;
 
 	intf->condition = USB_INTERFACE_UNBINDING;
 
@@ -399,12 +405,13 @@ static int usb_unbind_interface(struct device *dev)
 	udev = interface_to_usbdev(intf);
 	error = usb_autoresume_device(udev);
 
-	/* Hub-initiated LPM policy may change, so attempt to disable LPM until
+	/* If hub-initiated LPM policy may change, attempt to disable LPM until
 	 * the driver is unbound.  If LPM isn't disabled, that's fine because it
 	 * wouldn't be enabled unless all the bound interfaces supported
 	 * hub-initiated LPM.
 	 */
-	lpm_disable_error = usb_unlocked_disable_lpm(udev);
+	if (driver->disable_hub_initiated_lpm)
+		lpm_disable_error = usb_unlocked_disable_lpm(udev);
 
 	/*
 	 * Terminate all URBs for this interface unless the driver
@@ -502,11 +509,15 @@ static int usb_unbind_interface(struct device *dev)
 int usb_driver_claim_interface(struct usb_driver *driver,
 				struct usb_interface *iface, void *priv)
 {
-	struct device *dev = &iface->dev;
+	struct device *dev;
 	struct usb_device *udev;
 	int retval = 0;
-	int lpm_disable_error;
+	int lpm_disable_error = -ENODEV;
 
+	if (!iface)
+		return -ENODEV;
+
+	dev = &iface->dev;
 	if (dev->driver)
 		return -EBUSY;
 
@@ -522,12 +533,14 @@ int usb_driver_claim_interface(struct usb_driver *driver,
 
 	iface->condition = USB_INTERFACE_BOUND;
 
-	/* Disable LPM until this driver is bound. */
-	lpm_disable_error = usb_unlocked_disable_lpm(udev);
-	if (lpm_disable_error && driver->disable_hub_initiated_lpm) {
-		dev_err(&iface->dev, "%s Failed to disable LPM for driver %s\n.",
+	/* See the comment about disabling LPM in usb_probe_interface(). */
+	if (driver->disable_hub_initiated_lpm) {
+		lpm_disable_error = usb_unlocked_disable_lpm(udev);
+		if (lpm_disable_error) {
+			dev_err(&iface->dev, "%s Failed to disable LPM for driver %s\n",
 				__func__, driver->name);
-		return -ENOMEM;
+			return -ENOMEM;
+		}
 	}
 
 	/* Claimed interfaces are initially inactive (suspended) and
@@ -1057,7 +1070,7 @@ static void usb_rebind_intf(struct usb_interface *intf)
 	if (!intf->dev.power.is_prepared) {
 		intf->needs_binding = 0;
 		rc = device_attach(&intf->dev);
-		if (rc < 0)
+		if (rc < 0 && rc != -EPROBE_DEFER)
 			dev_warn(&intf->dev, "rebind failed: %d\n", rc);
 	}
 }
@@ -1318,6 +1331,24 @@ static int usb_suspend_both(struct usb_device *udev, pm_message_t msg)
 		 */
 		if (udev->parent && !PMSG_IS_AUTO(msg))
 			status = 0;
+
+		/*
+		 * If the device is inaccessible, don't try to resume
+		 * suspended interfaces and just return the error.
+		 */
+		if (status && status != -EBUSY) {
+			int err;
+			u16 devstat;
+
+			err = usb_get_std_status(udev, USB_RECIP_DEVICE, 0,
+						 &devstat);
+			if (err) {
+				dev_err(&udev->dev,
+					"Failed to suspend device, error %d\n",
+					status);
+				goto done;
+			}
+		}
 	}
 
 	/* If the suspend failed, resume interfaces that did get suspended */
@@ -1430,6 +1461,7 @@ static void choose_wakeup(struct usb_device *udev, pm_message_t msg)
 int usb_suspend(struct device *dev, pm_message_t msg)
 {
 	struct usb_device	*udev = to_usb_device(dev);
+	int r;
 
 	unbind_no_pm_drivers_interfaces(udev);
 
@@ -1438,7 +1470,14 @@ int usb_suspend(struct device *dev, pm_message_t msg)
 	 * so we may still need to unbind and rebind upon resume
 	 */
 	choose_wakeup(udev, msg);
-	return usb_suspend_both(udev, msg);
+	r = usb_suspend_both(udev, msg);
+	if (r)
+		return r;
+
+	if (udev->quirks & USB_QUIRK_DISCONNECT_SUSPEND)
+		usb_port_disable(udev);
+
+	return 0;
 }
 
 /* The device lock is held by the PM core */
@@ -1750,6 +1789,9 @@ static int autosuspend_check(struct usb_device *udev)
 	int			w, i;
 	struct usb_interface	*intf;
 
+	if (udev->state == USB_STATE_NOTATTACHED)
+		return -ENODEV;
+
 	/* Fail if autosuspend is disabled, or any interfaces are in use, or
 	 * any interface drivers require remote wakeup but it isn't available.
 	 */
@@ -1880,4 +1922,5 @@ struct bus_type usb_bus_type = {
 	.name =		"usb",
 	.match =	usb_device_match,
 	.uevent =	usb_uevent,
+	.need_parent_lock =	true,
 };

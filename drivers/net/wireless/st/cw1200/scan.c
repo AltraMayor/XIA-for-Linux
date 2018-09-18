@@ -84,7 +84,7 @@ int cw1200_hw_scan(struct ieee80211_hw *hw,
 		return -ENOMEM;
 
 	if (req->ie_len)
-		memcpy(skb_put(frame.skb, req->ie_len), req->ie, req->ie_len);
+		skb_put_data(frame.skb, req->ie, req->ie_len);
 
 	/* will be unlocked in cw1200_scan_work() */
 	down(&priv->scan.lock);
@@ -167,6 +167,10 @@ void cw1200_scan_work(struct work_struct *work)
 	}
 
 	if (!priv->scan.req || (priv->scan.curr == priv->scan.end)) {
+		struct cfg80211_scan_info info = {
+			.aborted = priv->scan.status ? 1 : 0,
+		};
+
 		if (priv->scan.output_power != priv->output_power)
 			wsm_set_output_power(priv, priv->output_power * 10);
 		if (priv->join_status == CW1200_JOIN_STATUS_STA &&
@@ -188,7 +192,7 @@ void cw1200_scan_work(struct work_struct *work)
 		cw1200_scan_restart_delayed(priv);
 		wsm_unlock_tx(priv);
 		mutex_unlock(&priv->conf_mutex);
-		ieee80211_scan_completed(priv->hw, priv->scan.status ? 1 : 0);
+		ieee80211_scan_completed(priv->hw, &info);
 		up(&priv->scan.lock);
 		return;
 	} else {
@@ -226,9 +230,9 @@ void cw1200_scan_work(struct work_struct *work)
 			scan.type = WSM_SCAN_TYPE_BACKGROUND;
 			scan.flags = WSM_SCAN_FLAG_FORCE_BACKGROUND;
 		}
-		scan.ch = kzalloc(
-			sizeof(struct wsm_scan_ch) * (it - priv->scan.curr),
-			GFP_KERNEL);
+		scan.ch = kcalloc(it - priv->scan.curr,
+				  sizeof(struct wsm_scan_ch),
+				  GFP_KERNEL);
 		if (!scan.ch) {
 			priv->scan.status = -ENOMEM;
 			goto fail;
@@ -402,7 +406,7 @@ void cw1200_probe_work(struct work_struct *work)
 	}
 	wsm = (struct wsm_tx *)frame.skb->data;
 	scan.max_tx_rate = wsm->max_tx_rate;
-	scan.band = (priv->channel->band == IEEE80211_BAND_5GHZ) ?
+	scan.band = (priv->channel->band == NL80211_BAND_5GHZ) ?
 		WSM_PHY_BAND_5G : WSM_PHY_BAND_2_4G;
 	if (priv->join_status == CW1200_JOIN_STATUS_STA ||
 	    priv->join_status == CW1200_JOIN_STATUS_IBSS) {

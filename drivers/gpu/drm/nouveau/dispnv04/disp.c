@@ -25,7 +25,7 @@
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
 
-#include "nouveau_drm.h"
+#include "nouveau_drv.h"
 #include "nouveau_reg.h"
 #include "hw.h"
 #include "nouveau_encoder.h"
@@ -35,7 +35,7 @@ int
 nv04_display_create(struct drm_device *dev)
 {
 	struct nouveau_drm *drm = nouveau_drm(dev);
-	struct nvkm_i2c *i2c = nvxx_i2c(&drm->device);
+	struct nvkm_i2c *i2c = nvxx_i2c(&drm->client.device);
 	struct dcb_table *dcb = &drm->vbios.dcb;
 	struct drm_connector *connector, *ct;
 	struct drm_encoder *encoder;
@@ -48,12 +48,15 @@ nv04_display_create(struct drm_device *dev)
 	if (!disp)
 		return -ENOMEM;
 
-	nvif_object_map(&drm->device.object);
+	nvif_object_map(&drm->client.device.object, NULL, 0);
 
 	nouveau_display(dev)->priv = disp;
 	nouveau_display(dev)->dtor = nv04_display_destroy;
 	nouveau_display(dev)->init = nv04_display_init;
 	nouveau_display(dev)->fini = nv04_display_fini;
+
+	/* Pre-nv50 doesn't support atomic, so don't expose the ioctls */
+	dev->driver->driver_features &= ~DRIVER_ATOMIC;
 
 	nouveau_hw_save_vga_fonts(dev, 1);
 
@@ -125,17 +128,7 @@ nv04_display_destroy(struct drm_device *dev)
 	struct nv04_display *disp = nv04_display(dev);
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nouveau_encoder *encoder;
-	struct drm_crtc *crtc;
 	struct nouveau_crtc *nv_crtc;
-
-	/* Turn every CRTC off. */
-	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
-		struct drm_mode_set modeset = {
-			.crtc = crtc,
-		};
-
-		drm_mode_set_config_internal(&modeset);
-	}
 
 	/* Restore state */
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, base.base.head)
@@ -149,7 +142,7 @@ nv04_display_destroy(struct drm_device *dev)
 	nouveau_display(dev)->priv = NULL;
 	kfree(disp);
 
-	nvif_object_unmap(&drm->device.object);
+	nvif_object_unmap(&drm->client.device.object);
 }
 
 int

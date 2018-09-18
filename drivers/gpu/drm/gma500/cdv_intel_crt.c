@@ -64,7 +64,7 @@ static void cdv_intel_crt_dpms(struct drm_encoder *encoder, int mode)
 	REG_WRITE(reg, temp);
 }
 
-static int cdv_intel_crt_mode_valid(struct drm_connector *connector,
+static enum drm_mode_status cdv_intel_crt_mode_valid(struct drm_connector *connector,
 				struct drm_display_mode *mode)
 {
 	if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
@@ -217,7 +217,6 @@ static int cdv_intel_crt_set_property(struct drm_connector *connector,
 
 static const struct drm_encoder_helper_funcs cdv_intel_crt_helper_funcs = {
 	.dpms = cdv_intel_crt_dpms,
-	.mode_fixup = gma_encoder_mode_fixup,
 	.prepare = gma_encoder_prepare,
 	.commit = gma_encoder_commit,
 	.mode_set = cdv_intel_crt_mode_set,

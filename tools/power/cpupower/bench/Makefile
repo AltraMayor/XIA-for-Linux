@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 OUTPUT := ./
 ifeq ("$(origin O)", "command line")
 ifneq ($(O),)
@@ -22,7 +23,7 @@ $(OUTPUT)%.o : %.c
 
 $(OUTPUT)cpufreq-bench: $(OBJS)
 	$(ECHO) "  CC      " $@
-	$(QUIET) $(CC) -o $@ $(CFLAGS) $(OBJS) $(LIBS)
+	$(QUIET) $(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(OBJS) $(LIBS)
 
 all: $(OUTPUT)cpufreq-bench
 

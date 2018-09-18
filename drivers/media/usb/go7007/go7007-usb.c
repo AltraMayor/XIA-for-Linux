@@ -932,7 +932,7 @@ static void go7007_usb_release(struct go7007 *go)
 	kfree(go->hpi_context);
 }
 
-static struct go7007_hpi_ops go7007_usb_ezusb_hpi_ops = {
+static const struct go7007_hpi_ops go7007_usb_ezusb_hpi_ops = {
 	.interface_reset	= go7007_usb_interface_reset,
 	.write_interrupt	= go7007_usb_ezusb_write_interrupt,
 	.read_interrupt		= go7007_usb_read_interrupt,
@@ -942,7 +942,7 @@ static struct go7007_hpi_ops go7007_usb_ezusb_hpi_ops = {
 	.release		= go7007_usb_release,
 };
 
-static struct go7007_hpi_ops go7007_usb_onboard_hpi_ops = {
+static const struct go7007_hpi_ops go7007_usb_onboard_hpi_ops = {
 	.interface_reset	= go7007_usb_interface_reset,
 	.write_interrupt	= go7007_usb_onboard_write_interrupt,
 	.read_interrupt		= go7007_usb_read_interrupt,
@@ -1032,7 +1032,7 @@ static u32 go7007_usb_functionality(struct i2c_adapter *adapter)
 	return (I2C_FUNC_SMBUS_EMUL) & ~I2C_FUNC_SMBUS_QUICK;
 }
 
-static struct i2c_algorithm go7007_usb_algo = {
+static const struct i2c_algorithm go7007_usb_algo = {
 	.master_xfer	= go7007_usb_i2c_master_xfer,
 	.functionality	= go7007_usb_functionality,
 };
@@ -1143,7 +1143,8 @@ static int go7007_usb_probe(struct usb_interface *intf,
 	usb->intr_urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (usb->intr_urb == NULL)
 		goto allocfail;
-	usb->intr_urb->transfer_buffer = kmalloc(2*sizeof(u16), GFP_KERNEL);
+	usb->intr_urb->transfer_buffer = kmalloc_array(2, sizeof(u16),
+						       GFP_KERNEL);
 	if (usb->intr_urb->transfer_buffer == NULL)
 		goto allocfail;
 

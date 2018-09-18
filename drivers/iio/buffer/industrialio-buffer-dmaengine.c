@@ -14,6 +14,7 @@
 
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
+#include <linux/iio/buffer_impl.h>
 #include <linux/iio/buffer-dma.h>
 #include <linux/iio/buffer-dmaengine.h>
 
@@ -93,12 +94,7 @@ static void iio_dmaengine_buffer_abort(struct iio_dma_buffer_queue *queue)
 	struct dmaengine_buffer *dmaengine_buffer =
 		iio_buffer_to_dmaengine_buffer(&queue->buffer);
 
-	dmaengine_terminate_all(dmaengine_buffer->chan);
-	/* FIXME: There is a slight chance of a race condition here.
-	 * dmaengine_terminate_all() does not guarantee that all transfer
-	 * callbacks have finished running. Need to introduce a
-	 * dmaengine_terminate_all_sync().
-	 */
+	dmaengine_terminate_sync(dmaengine_buffer->chan);
 	iio_dma_buffer_block_list_abort(queue, &dmaengine_buffer->active);
 }
 

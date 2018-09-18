@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 1996, 2003 VIA Networking Technologies, Inc.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  *
  * File: int.c
  *
@@ -97,7 +87,7 @@ static int vnt_int_report_rate(struct vnt_private *priv, u8 pkt_no, u8 tsr)
 		else if (context->fb_option == AUTO_FB_1)
 			tx_rate = fallback_rate1[tx_rate][retry];
 
-		if (info->band == IEEE80211_BAND_5GHZ)
+		if (info->band == NL80211_BAND_5GHZ)
 			idx = tx_rate - RATE_6M;
 		else
 			idx = tx_rate;
@@ -142,7 +132,7 @@ void vnt_int_process_data(struct vnt_private *priv)
 
 	if (int_data->isr0 != 0) {
 		if (int_data->isr0 & ISR_BNTX &&
-				priv->op_mode == NL80211_IFTYPE_AP)
+		    priv->op_mode == NL80211_IFTYPE_AP)
 			vnt_schedule_command(priv, WLAN_CMD_BECON_SEND);
 
 		if (int_data->isr0 & ISR_TBTT &&

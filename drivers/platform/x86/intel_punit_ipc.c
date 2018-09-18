@@ -12,11 +12,13 @@
  */
 
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/bitops.h>
 #include <linux/device.h>
 #include <linux/interrupt.h>
+#include <linux/io.h>
 #include <linux/platform_device.h>
 #include <asm/intel_punit_ipc.h>
 
@@ -227,6 +229,11 @@ static int intel_punit_get_bars(struct platform_device *pdev)
 	struct resource *res;
 	void __iomem *addr;
 
+	/*
+	 * The following resources are required
+	 * - BIOS_IPC BASE_DATA
+	 * - BIOS_IPC BASE_IFACE
+	 */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	addr = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(addr))
@@ -239,29 +246,40 @@ static int intel_punit_get_bars(struct platform_device *pdev)
 		return PTR_ERR(addr);
 	punit_ipcdev->base[BIOS_IPC][BASE_IFACE] = addr;
 
+	/*
+	 * The following resources are optional
+	 * - ISPDRIVER_IPC BASE_DATA
+	 * - ISPDRIVER_IPC BASE_IFACE
+	 * - GTDRIVER_IPC BASE_DATA
+	 * - GTDRIVER_IPC BASE_IFACE
+	 */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
-	addr = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(addr))
-		return PTR_ERR(addr);
-	punit_ipcdev->base[ISPDRIVER_IPC][BASE_DATA] = addr;
+	if (res && resource_size(res) > 1) {
+		addr = devm_ioremap_resource(&pdev->dev, res);
+		if (!IS_ERR(addr))
+			punit_ipcdev->base[ISPDRIVER_IPC][BASE_DATA] = addr;
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 3);
-	addr = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(addr))
-		return PTR_ERR(addr);
-	punit_ipcdev->base[ISPDRIVER_IPC][BASE_IFACE] = addr;
+	if (res && resource_size(res) > 1) {
+		addr = devm_ioremap_resource(&pdev->dev, res);
+		if (!IS_ERR(addr))
+			punit_ipcdev->base[ISPDRIVER_IPC][BASE_IFACE] = addr;
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 4);
-	addr = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(addr))
-		return PTR_ERR(addr);
-	punit_ipcdev->base[GTDRIVER_IPC][BASE_DATA] = addr;
+	if (res && resource_size(res) > 1) {
+		addr = devm_ioremap_resource(&pdev->dev, res);
+		if (!IS_ERR(addr))
+			punit_ipcdev->base[GTDRIVER_IPC][BASE_DATA] = addr;
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 5);
-	addr = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(addr))
-		return PTR_ERR(addr);
-	punit_ipcdev->base[GTDRIVER_IPC][BASE_IFACE] = addr;
+	if (res && resource_size(res) > 1) {
+		addr = devm_ioremap_resource(&pdev->dev, res);
+		if (!IS_ERR(addr))
+			punit_ipcdev->base[GTDRIVER_IPC][BASE_IFACE] = addr;
+	}
 
 	return 0;
 }

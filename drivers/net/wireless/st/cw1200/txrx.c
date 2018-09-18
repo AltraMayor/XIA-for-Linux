@@ -574,7 +574,7 @@ cw1200_tx_h_wsm(struct cw1200_common *priv,
 		return NULL;
 	}
 
-	wsm = (struct wsm_tx *)skb_push(t->skb, sizeof(struct wsm_tx));
+	wsm = skb_push(t->skb, sizeof(struct wsm_tx));
 	t->txpriv.offset += sizeof(struct wsm_tx);
 	memset(wsm, 0, sizeof(*wsm));
 	wsm->hdr.len = __cpu_to_le16(t->skb->len);
@@ -1069,7 +1069,7 @@ void cw1200_rx_cb(struct cw1200_common *priv,
 	}
 
 	if (skb->len < sizeof(struct ieee80211_pspoll)) {
-		wiphy_warn(priv->hw->wiphy, "Mailformed SDU rx'ed. Size is lesser than IEEE header.\n");
+		wiphy_warn(priv->hw->wiphy, "Malformed SDU rx'ed. Size is lesser than IEEE header.\n");
 		goto drop;
 	}
 
@@ -1079,13 +1079,13 @@ void cw1200_rx_cb(struct cw1200_common *priv,
 
 	hdr->band = ((arg->channel_number & 0xff00) ||
 		     (arg->channel_number > 14)) ?
-			IEEE80211_BAND_5GHZ : IEEE80211_BAND_2GHZ;
+			NL80211_BAND_5GHZ : NL80211_BAND_2GHZ;
 	hdr->freq = ieee80211_channel_to_frequency(
 			arg->channel_number,
 			hdr->band);
 
 	if (arg->rx_rate >= 14) {
-		hdr->flag |= RX_FLAG_HT;
+		hdr->encoding = RX_ENC_HT;
 		hdr->rate_idx = arg->rx_rate - 14;
 	} else if (arg->rx_rate >= 4) {
 		hdr->rate_idx = arg->rx_rate - 2;

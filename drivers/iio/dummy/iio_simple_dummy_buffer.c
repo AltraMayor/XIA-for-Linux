@@ -20,6 +20,7 @@
 
 #include <linux/iio/iio.h>
 #include <linux/iio/trigger_consumer.h>
+#include <linux/iio/buffer.h>
 #include <linux/iio/kfifo_buf.h>
 
 #include "iio_simple_dummy.h"
@@ -85,7 +86,8 @@ static irqreturn_t iio_simple_dummy_trigger_h(int irq, void *p)
 		}
 	}
 
-	iio_push_to_buffers_with_timestamp(indio_dev, data, iio_get_time_ns());
+	iio_push_to_buffers_with_timestamp(indio_dev, data,
+					   iio_get_time_ns(indio_dev));
 
 	kfree(data);
 
@@ -129,9 +131,6 @@ int iio_simple_dummy_configure_buffer(struct iio_dev *indio_dev)
 	}
 
 	iio_device_attach_buffer(indio_dev, buffer);
-
-	/* Enable timestamps by default */
-	buffer->scan_timestamp = true;
 
 	/*
 	 * Tell the core what device type specific functions should

@@ -1,7 +1,5 @@
 /*
- * linux/drivers/video/omap2/dss/dispc_coefs.c
- *
- * Copyright (C) 2011 Texas Instruments
+ * Copyright (C) 2011 Texas Instruments Incorporated - http://www.ti.com/
  * Author: Chandrabhanu Mahapatra <cmahapatra@ti.com>
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,8 +16,8 @@
  */
 
 #include <linux/kernel.h>
-#include <video/omapdss.h>
 
+#include "omapdss.h"
 #include "dispc.h"
 
 static const struct dispc_coef coef3_M8[8] = {

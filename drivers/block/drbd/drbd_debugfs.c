@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #define pr_fmt(fmt) "drbd debugfs: " fmt
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -236,15 +237,7 @@ static void seq_print_peer_request_flags(struct seq_file *m, struct drbd_peer_re
 	seq_print_rq_state_bit(m, f & EE_CALL_AL_COMPLETE_IO, &sep, "in-AL");
 	seq_print_rq_state_bit(m, f & EE_SEND_WRITE_ACK, &sep, "C");
 	seq_print_rq_state_bit(m, f & EE_MAY_SET_IN_SYNC, &sep, "set-in-sync");
-
-	if (f & EE_IS_TRIM) {
-		seq_putc(m, sep);
-		sep = '|';
-		if (f & EE_IS_TRIM_USE_ZEROOUT)
-			seq_puts(m, "zero-out");
-		else
-			seq_puts(m, "trim");
-	}
+	seq_print_rq_state_bit(m, f & EE_WRITE_SAME, &sep, "write-same");
 	seq_putc(m, '\n');
 }
 
@@ -430,9 +423,6 @@ static int drbd_single_open(struct file *file, int (*show)(struct seq_file *, vo
 	/* Are we still linked,
 	 * or has debugfs_remove() already been called? */
 	parent = file->f_path.dentry->d_parent;
-	/* not sure if this can happen: */
-	if (!parent || d_really_is_negative(parent))
-		goto out;
 	/* serialize with d_delete() */
 	inode_lock(d_inode(parent));
 	/* Make sure the object is still alive */
@@ -445,7 +435,6 @@ static int drbd_single_open(struct file *file, int (*show)(struct seq_file *, vo
 		if (ret)
 			kref_put(kref, release);
 	}
-out:
 	return ret;
 }
 
@@ -492,9 +481,9 @@ void drbd_debugfs_resource_add(struct drbd_resource *resource)
 		goto fail;
 	resource->debugfs_res_connections = dentry;
 
-	dentry = debugfs_create_file("in_flight_summary", S_IRUSR|S_IRGRP,
-			resource->debugfs_res, resource,
-			&in_flight_summary_fops);
+	dentry = debugfs_create_file("in_flight_summary", 0440,
+				     resource->debugfs_res, resource,
+				     &in_flight_summary_fops);
 	if (IS_ERR_OR_NULL(dentry))
 		goto fail;
 	resource->debugfs_res_in_flight_summary = dentry;
@@ -656,16 +645,16 @@ void drbd_debugfs_connection_add(struct drbd_connection *connection)
 		goto fail;
 	connection->debugfs_conn = dentry;
 
-	dentry = debugfs_create_file("callback_history", S_IRUSR|S_IRGRP,
-			connection->debugfs_conn, connection,
-			&connection_callback_history_fops);
+	dentry = debugfs_create_file("callback_history", 0440,
+				     connection->debugfs_conn, connection,
+				     &connection_callback_history_fops);
 	if (IS_ERR_OR_NULL(dentry))
 		goto fail;
 	connection->debugfs_conn_callback_history = dentry;
 
-	dentry = debugfs_create_file("oldest_requests", S_IRUSR|S_IRGRP,
-			connection->debugfs_conn, connection,
-			&connection_oldest_requests_fops);
+	dentry = debugfs_create_file("oldest_requests", 0440,
+				     connection->debugfs_conn, connection,
+				     &connection_oldest_requests_fops);
 	if (IS_ERR_OR_NULL(dentry))
 		goto fail;
 	connection->debugfs_conn_oldest_requests = dentry;
@@ -835,7 +824,7 @@ void drbd_debugfs_device_add(struct drbd_device *device)
 	device->debugfs_minor = dentry;
 
 #define DCF(name)	do {					\
-	dentry = debugfs_create_file(#name, S_IRUSR|S_IRGRP,	\
+	dentry = debugfs_create_file(#name, 0440,	\
 			device->debugfs_vol, device,		\
 			&device_ ## name ## _fops);		\
 	if (IS_ERR_OR_NULL(dentry))				\
@@ -908,7 +897,7 @@ static int drbd_version_open(struct inode *inode, struct file *file)
 	return single_open(file, drbd_version_show, NULL);
 }
 
-static struct file_operations drbd_version_fops = {
+static const struct file_operations drbd_version_fops = {
 	.owner = THIS_MODULE,
 	.open = drbd_version_open,
 	.llseek = seq_lseek,

@@ -4,7 +4,7 @@
  * by the Free Software Foundation.
  *
  * Copyright (C) 2015 Nikolay Martynov <mar.kolya@gmail.com>
- * Copyright (C) 2015 John Crispin <blogic@openwrt.org>
+ * Copyright (C) 2015 John Crispin <john@phrozen.org>
  */
 
 #include <linux/init.h>
@@ -20,5 +20,5 @@ void __init plat_time_init(void)
 	ralink_of_remap();
 
 	of_clk_init(NULL);
-	clocksource_probe();
+	timer_probe();
 }

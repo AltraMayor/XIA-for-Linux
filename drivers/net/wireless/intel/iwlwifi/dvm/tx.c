@@ -81,7 +81,7 @@ static void iwlagn_tx_cmd_build_basic(struct iwl_priv *priv,
 		tx_flags |= TX_CMD_FLG_TSF_MSK;
 	else if (ieee80211_is_back_req(fc))
 		tx_flags |= TX_CMD_FLG_ACK_MSK | TX_CMD_FLG_IMM_BA_RSP_MASK;
-	else if (info->band == IEEE80211_BAND_2GHZ &&
+	else if (info->band == NL80211_BAND_2GHZ &&
 		 priv->lib->bt_params &&
 		 priv->lib->bt_params->advanced_bt_coexist &&
 		 (ieee80211_is_auth(fc) || ieee80211_is_assoc_req(fc) ||
@@ -177,7 +177,7 @@ static void iwlagn_tx_cmd_build_rate(struct iwl_priv *priv,
 		rate_idx = rate_lowest_index(
 				&priv->nvm_data->bands[info->band], sta);
 	/* For 5 GHZ band, remap mac80211 rate indices into driver indices */
-	if (info->band == IEEE80211_BAND_5GHZ)
+	if (info->band == NL80211_BAND_5GHZ)
 		rate_idx += IWL_FIRST_OFDM_RATE;
 	/* Get PLCP rate for tx_cmd->rate_n_flags */
 	rate_plcp = iwl_rates[rate_idx].plcp;
@@ -319,8 +319,7 @@ int iwlagn_tx_skb(struct iwl_priv *priv,
 		if (noa_data &&
 		    pskb_expand_head(skb, 0, noa_data->length,
 				     GFP_ATOMIC) == 0) {
-			memcpy(skb_put(skb, noa_data->length),
-			       noa_data->data, noa_data->length);
+			skb_put_data(skb, noa_data->data, noa_data->length);
 			hdr = (struct ieee80211_hdr *)skb->data;
 		}
 	}
@@ -1190,11 +1189,11 @@ void iwlagn_rx_reply_tx(struct iwl_priv *priv, struct iwl_rx_cmd_buffer *rxb)
 				next_reclaimed;
 			IWL_DEBUG_TX_REPLY(priv, "Next reclaimed packet:%d\n",
 						  next_reclaimed);
+			iwlagn_check_ratid_empty(priv, sta_id, tid);
 		}
 
 		iwl_trans_reclaim(priv->trans, txq_id, ssn, &skbs);
 
-		iwlagn_check_ratid_empty(priv, sta_id, tid);
 		freed = 0;
 
 		/* process frames */

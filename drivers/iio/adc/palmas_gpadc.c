@@ -430,7 +430,6 @@ out:
 
 static const struct iio_info palmas_gpadc_iio_info = {
 	.read_raw = palmas_gpadc_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 #define PALMAS_ADC_CHAN_IIO(chan, _type, chan_info)	\
@@ -534,7 +533,7 @@ static int palmas_gpadc_probe(struct platform_device *pdev)
 	}
 	ret = request_threaded_irq(adc->irq, NULL,
 		palmas_gpadc_irq,
-		IRQF_ONESHOT | IRQF_EARLY_RESUME, dev_name(adc->dev),
+		IRQF_ONESHOT, dev_name(adc->dev),
 		adc);
 	if (ret < 0) {
 		dev_err(adc->dev,
@@ -549,7 +548,7 @@ static int palmas_gpadc_probe(struct platform_device *pdev)
 		adc->irq_auto_0 =  platform_get_irq(pdev, 1);
 		ret = request_threaded_irq(adc->irq_auto_0, NULL,
 				palmas_gpadc_irq_auto,
-				IRQF_ONESHOT | IRQF_EARLY_RESUME,
+				IRQF_ONESHOT,
 				"palmas-adc-auto-0", adc);
 		if (ret < 0) {
 			dev_err(adc->dev, "request auto0 irq %d failed: %d\n",
@@ -565,7 +564,7 @@ static int palmas_gpadc_probe(struct platform_device *pdev)
 		adc->irq_auto_1 =  platform_get_irq(pdev, 2);
 		ret = request_threaded_irq(adc->irq_auto_1, NULL,
 				palmas_gpadc_irq_auto,
-				IRQF_ONESHOT | IRQF_EARLY_RESUME,
+				IRQF_ONESHOT,
 				"palmas-adc-auto-1", adc);
 		if (ret < 0) {
 			dev_err(adc->dev, "request auto1 irq %d failed: %d\n",
@@ -775,7 +774,7 @@ static int palmas_adc_wakeup_reset(struct palmas_gpadc *adc)
 
 static int palmas_gpadc_suspend(struct device *dev)
 {
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct palmas_gpadc *adc = iio_priv(indio_dev);
 	int wakeup = adc->wakeup1_enable || adc->wakeup2_enable;
 	int ret;
@@ -798,7 +797,7 @@ static int palmas_gpadc_suspend(struct device *dev)
 
 static int palmas_gpadc_resume(struct device *dev)
 {
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct palmas_gpadc *adc = iio_priv(indio_dev);
 	int wakeup = adc->wakeup1_enable || adc->wakeup2_enable;
 	int ret;

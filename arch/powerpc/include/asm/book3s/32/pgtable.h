@@ -1,12 +1,32 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_POWERPC_BOOK3S_32_PGTABLE_H
 #define _ASM_POWERPC_BOOK3S_32_PGTABLE_H
 
+#define __ARCH_USE_5LEVEL_HACK
 #include <asm-generic/pgtable-nopmd.h>
 
 #include <asm/book3s/32/hash.h>
 
 /* And here we include common definitions */
 #include <asm/pte-common.h>
+
+#define PTE_INDEX_SIZE	PTE_SHIFT
+#define PMD_INDEX_SIZE	0
+#define PUD_INDEX_SIZE	0
+#define PGD_INDEX_SIZE	(32 - PGDIR_SHIFT)
+
+#define PMD_CACHE_INDEX	PMD_INDEX_SIZE
+#define PUD_CACHE_INDEX	PUD_INDEX_SIZE
+
+#ifndef __ASSEMBLY__
+#define PTE_TABLE_SIZE	(sizeof(pte_t) << PTE_INDEX_SIZE)
+#define PMD_TABLE_SIZE	0
+#define PUD_TABLE_SIZE	0
+#define PGD_TABLE_SIZE	(sizeof(pgd_t) << PGD_INDEX_SIZE)
+#endif	/* __ASSEMBLY__ */
+
+#define PTRS_PER_PTE	(1 << PTE_INDEX_SIZE)
+#define PTRS_PER_PGD	(1 << PGD_INDEX_SIZE)
 
 /*
  * The normal case is that PTEs are 32-bits and we have a 1-page
@@ -19,13 +39,9 @@
  * -Matt
  */
 /* PGDIR_SHIFT determines what a top-level page table entry can map */
-#define PGDIR_SHIFT	(PAGE_SHIFT + PTE_SHIFT)
+#define PGDIR_SHIFT	(PAGE_SHIFT + PTE_INDEX_SIZE)
 #define PGDIR_SIZE	(1UL << PGDIR_SHIFT)
 #define PGDIR_MASK	(~(PGDIR_SIZE-1))
-
-#define PTRS_PER_PTE	(1 << PTE_SHIFT)
-#define PTRS_PER_PMD	1
-#define PTRS_PER_PGD	(1 << (32 - PGDIR_SHIFT))
 
 #define USER_PTRS_PER_PGD	(TASK_SIZE / PGDIR_SIZE)
 /*
@@ -68,26 +84,17 @@
  * of RAM.  -- Cort
  */
 #define VMALLOC_OFFSET (0x1000000) /* 16M */
-#ifdef PPC_PIN_SIZE
-#define VMALLOC_START (((_ALIGN((long)high_memory, PPC_PIN_SIZE) + VMALLOC_OFFSET) & ~(VMALLOC_OFFSET-1)))
-#else
 #define VMALLOC_START ((((long)high_memory + VMALLOC_OFFSET) & ~(VMALLOC_OFFSET-1)))
-#endif
 #define VMALLOC_END	ioremap_bot
 
 #ifndef __ASSEMBLY__
 #include <linux/sched.h>
 #include <linux/threads.h>
-#include <asm/io.h>			/* For sub-arch specific PPC_PIN_SIZE */
 
 extern unsigned long ioremap_bot;
 
-/*
- * entries per page directory level: our page-table tree is two-level, so
- * we don't really have any PMD directory.
- */
-#define PTE_TABLE_SIZE	(sizeof(pte_t) << PTE_SHIFT)
-#define PGD_TABLE_SIZE	(sizeof(pgd_t) << (32 - PGDIR_SHIFT))
+/* Bits to mask out from a PGD to get to the PUD page */
+#define PGD_MASKED_BITS		0
 
 #define pte_ERROR(e) \
 	pr_err("%s:%d: bad pte %llx.\n", __FILE__, __LINE__, \
@@ -152,7 +159,6 @@ static inline unsigned long pte_update(pte_t *p,
 1:	lwarx	%0,0,%3\n\
 	andc	%1,%0,%4\n\
 	or	%1,%1,%5\n"
-	PPC405_ERR77(0,%3)
 "	stwcx.	%1,0,%3\n\
 	bne-	1b"
 	: "=&r" (old), "=&r" (tmp), "=m" (*p)
@@ -174,7 +180,6 @@ static inline unsigned long long pte_update(pte_t *p,
 	lwzx	%0,0,%3\n\
 	andc	%1,%L0,%5\n\
 	or	%1,%1,%6\n"
-	PPC405_ERR77(0,%3)
 "	stwcx.	%1,0,%4\n\
 	bne-	1b"
 	: "=&r" (old), "=&r" (tmp), "=m" (*p)
@@ -223,13 +228,18 @@ static inline void huge_ptep_set_wrprotect(struct mm_struct *mm,
 }
 
 
-static inline void __ptep_set_access_flags(pte_t *ptep, pte_t entry)
+static inline void __ptep_set_access_flags(struct vm_area_struct *vma,
+					   pte_t *ptep, pte_t entry,
+					   unsigned long address,
+					   int psize)
 {
 	unsigned long set = pte_val(entry) &
 		(_PAGE_DIRTY | _PAGE_ACCESSED | _PAGE_RW | _PAGE_EXEC);
 	unsigned long clr = ~pte_val(entry) & _PAGE_RO;
 
 	pte_update(ptep, clr, set);
+
+	flush_tlb_page(vma, address);
 }
 
 #define __HAVE_ARCH_PTE_SAME
@@ -282,20 +292,11 @@ static inline void __ptep_set_access_flags(pte_t *ptep, pte_t entry)
 #define __pte_to_swp_entry(pte)		((swp_entry_t) { pte_val(pte) >> 3 })
 #define __swp_entry_to_pte(x)		((pte_t) { (x).val << 3 })
 
-#ifndef CONFIG_PPC_4K_PAGES
-void pgtable_cache_init(void);
-#else
-/*
- * No page table caches to initialise
- */
-#define pgtable_cache_init()	do { } while (0)
-#endif
-
-extern int get_pteptr(struct mm_struct *mm, unsigned long addr, pte_t **ptep,
-		      pmd_t **pmdp);
+int map_kernel_page(unsigned long va, phys_addr_t pa, int flags);
 
 /* Generic accessors to PTE bits */
 static inline int pte_write(pte_t pte)		{ return !!(pte_val(pte) & _PAGE_RW);}
+static inline int pte_read(pte_t pte)		{ return 1; }
 static inline int pte_dirty(pte_t pte)		{ return !!(pte_val(pte) & _PAGE_DIRTY); }
 static inline int pte_young(pte_t pte)		{ return !!(pte_val(pte) & _PAGE_ACCESSED); }
 static inline int pte_special(pte_t pte)	{ return !!(pte_val(pte) & _PAGE_SPECIAL); }
@@ -305,6 +306,29 @@ static inline pgprot_t pte_pgprot(pte_t pte)	{ return __pgprot(pte_val(pte) & PA
 static inline int pte_present(pte_t pte)
 {
 	return pte_val(pte) & _PAGE_PRESENT;
+}
+
+/*
+ * We only find page table entry in the last level
+ * Hence no need for other accessors
+ */
+#define pte_access_permitted pte_access_permitted
+static inline bool pte_access_permitted(pte_t pte, bool write)
+{
+	unsigned long pteval = pte_val(pte);
+	/*
+	 * A read-only access is controlled by _PAGE_USER bit.
+	 * We have _PAGE_READ set for WRITE and EXECUTE
+	 */
+	unsigned long need_pte_bits = _PAGE_PRESENT | _PAGE_USER;
+
+	if (write)
+		need_pte_bits |= _PAGE_WRITE;
+
+	if ((pteval & need_pte_bits) != need_pte_bits)
+		return false;
+
+	return true;
 }
 
 /* Conversion functions: convert a page and protection to a page entry,

@@ -5,15 +5,20 @@ The HiSilicon SAS controller supports SAS/SATA.
 Main node required properties:
   - compatible : value should be as follows:
 	(a) "hisilicon,hip05-sas-v1" for v1 hw in hip05 chipset
+	(b) "hisilicon,hip06-sas-v2" for v2 hw in hip06 chipset
+	(c) "hisilicon,hip07-sas-v2" for v2 hw in hip07 chipset
   - sas-addr : array of 8 bytes for host SAS address
-  - reg : Address and length of the SAS register
+  - reg : Contains two regions. The first is the address and length of the SAS
+          register. The second is the address and length of CPLD register for
+          SGPIO control. The second is optional, and should be set only when
+          we use a CPLD for directly attached disk LED control.
   - hisilicon,sas-syscon: phandle of syscon used for sas control
   - ctrl-reset-reg : offset to controller reset register in ctrl reg
   - ctrl-reset-sts-reg : offset to controller reset status register in ctrl reg
   - ctrl-clock-ena-reg : offset to controller clock enable register in ctrl reg
   - queue-count : number of delivery and completion queues in the controller
   - phy-count : number of phys accessible by the controller
-  - interrupts : Interrupts for phys, completion queues, and fatal
+  - interrupts : For v1 hw: Interrupts for phys, completion queues, and fatal
 		sources; the interrupts are ordered in 3 groups, as follows:
 			- Phy interrupts
 			- Completion queue interrupts
@@ -30,6 +35,31 @@ Main node required properties:
 		Fatal interrupts : the fatal interrupts are ordered as follows:
 			- ECC
 			- AXI bus
+		For v2 hw: Interrupts for phys, Sata, and completion queues;
+		the interrupts are ordered in 3 groups, as follows:
+			- Phy interrupts
+			- Sata interrupts
+			- Completion queue interrupts
+		Phy interrupts : Each controller has 2 phy interrupts:
+			- phy up/down
+			- channel interrupt
+		Sata interrupts : Each phy on the controller has 1 Sata
+			interrupt. The interrupts are ordered in increasing
+			order.
+		Completion queue interrupts : each completion queue has 1
+			interrupt source. The interrupts are ordered in
+			increasing order.
+
+Optional main node properties:
+ - hip06-sas-v2-quirk-amt : when set, indicates that the v2 controller has the
+			    "am-max-transmissions" limitation.
+ - hisilicon,signal-attenuation : array of 3 32-bit values, containing de-emphasis,
+		preshoot, and boost attenuation readings for the board. They
+		are used to describe the signal attenuation of the board. These
+		values' range is 7600 to 12400, and used to represent -24dB to
+		24dB.
+		The formula is "y = (x-10000)/10000". For example, 10478
+		means 4.78dB.
 
 Example:
 	sas0: sas@c1000000 {
@@ -65,5 +95,4 @@ Example:
 				<366 1>,<367 1>/* cq30-31 */
 				<376 4>,/* fatal ecc */
 				<381 4>;/* fatal axi */
-		status = "disabled";
 	};

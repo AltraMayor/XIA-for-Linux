@@ -27,6 +27,7 @@
  * @chip: chip identifier.
  * @chiprev: chip revision.
  * @cc_caps: chipcommon core capabilities.
+ * @cc_caps_ext: chipcommon core extended capabilities.
  * @pmucaps: PMU capabilities.
  * @pmurev: PMU revision.
  * @rambase: RAM base address (only applicable for ARM CR4 chips).
@@ -38,12 +39,13 @@ struct brcmf_chip {
 	u32 chip;
 	u32 chiprev;
 	u32 cc_caps;
+	u32 cc_caps_ext;
 	u32 pmucaps;
 	u32 pmurev;
 	u32 rambase;
 	u32 ramsize;
 	u32 srsize;
-	char name[8];
+	char name[12];
 };
 
 /**
@@ -83,6 +85,7 @@ struct brcmf_chip *brcmf_chip_attach(void *ctx,
 void brcmf_chip_detach(struct brcmf_chip *chip);
 struct brcmf_core *brcmf_chip_get_core(struct brcmf_chip *chip, u16 coreid);
 struct brcmf_core *brcmf_chip_get_chipcommon(struct brcmf_chip *chip);
+struct brcmf_core *brcmf_chip_get_pmu(struct brcmf_chip *pub);
 bool brcmf_chip_iscoreup(struct brcmf_core *core);
 void brcmf_chip_coredisable(struct brcmf_core *core, u32 prereset, u32 reset);
 void brcmf_chip_resetcore(struct brcmf_core *core, u32 prereset, u32 reset,
@@ -90,5 +93,6 @@ void brcmf_chip_resetcore(struct brcmf_core *core, u32 prereset, u32 reset,
 void brcmf_chip_set_passive(struct brcmf_chip *ci);
 bool brcmf_chip_set_active(struct brcmf_chip *ci, u32 rstvec);
 bool brcmf_chip_sr_capable(struct brcmf_chip *pub);
+char *brcmf_chip_name(u32 chipid, u32 chiprev, char *buf, uint len);
 
 #endif /* BRCMF_AXIDMP_H */

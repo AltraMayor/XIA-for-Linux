@@ -66,6 +66,7 @@
 
 #include <asm/pgtable.h>
 #include <asm/unwind.h>
+#include <asm/sections.h>
 
 #if 0
 #define DEBUGP printk
@@ -218,7 +219,7 @@ void *module_alloc(unsigned long size)
 	 * easier than trying to map the text, data, init_text and
 	 * init_data correctly */
 	return __vmalloc_node_range(size, 1, VMALLOC_START, VMALLOC_END,
-				    GFP_KERNEL | __GFP_HIGHMEM,
+				    GFP_KERNEL,
 				    PAGE_KERNEL_RWX, 0, NUMA_NO_NODE,
 				    __builtin_return_address(0));
 }
@@ -620,6 +621,10 @@ int apply_relocate_add(Elf_Shdr *sechdrs,
 			 */
 			*loc = fsel(val, addend); 
 			break;
+		case R_PARISC_SECREL32:
+			/* 32-bit section relative address. */
+			*loc = fsel(val, addend);
+			break;
 		case R_PARISC_DPREL21L:
 			/* left 21 bit of relative address */
 			val = lrsel(val - dp, addend);
@@ -659,6 +664,10 @@ int apply_relocate_add(Elf_Shdr *sechdrs,
 				CHECK_RELOC(val, 22);
 			}
 			*loc = (*loc & ~0x3ff1ffd) | reassemble_22(val);
+			break;
+		case R_PARISC_PCREL32:
+			/* 32-bit PC relative address */
+			*loc = val - dot - 8 + addend;
 			break;
 
 		default:
@@ -788,6 +797,10 @@ int apply_relocate_add(Elf_Shdr *sechdrs,
 			CHECK_RELOC(val, 22);
 			*loc = (*loc & ~0x3ff1ffd) | reassemble_22(val);
 			break;
+		case R_PARISC_PCREL32:
+			/* 32-bit PC relative address */
+			*loc = val - dot - 8 + addend;
+			break;
 		case R_PARISC_DIR64:
 			/* 64-bit effective address */
 			*loc64 = val + addend;
@@ -798,6 +811,10 @@ int apply_relocate_add(Elf_Shdr *sechdrs,
 			 * the beginning of this file.
 			 */
 			*loc = fsel(val, addend); 
+			break;
+		case R_PARISC_SECREL32:
+			/* 32-bit section relative address. */
+			*loc = fsel(val, addend);
 			break;
 		case R_PARISC_FPTR64:
 			/* 64-bit function address */
@@ -938,3 +955,18 @@ void module_arch_cleanup(struct module *mod)
 {
 	deregister_unwind_table(mod);
 }
+
+#ifdef CONFIG_64BIT
+void *dereference_module_function_descriptor(struct module *mod, void *ptr)
+{
+	unsigned long start_opd = (Elf64_Addr)mod->core_layout.base +
+				   mod->arch.fdesc_offset;
+	unsigned long end_opd = start_opd +
+				mod->arch.fdesc_count * sizeof(Elf64_Fdesc);
+
+	if (ptr < (void *)start_opd || ptr >= (void *)end_opd)
+		return ptr;
+
+	return dereference_function_descriptor(ptr);
+}
+#endif

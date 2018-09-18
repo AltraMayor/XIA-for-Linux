@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright IBM Corp. 1999, 2009
  *
@@ -7,15 +8,30 @@
 #ifndef __ASM_FACILITY_H
 #define __ASM_FACILITY_H
 
-#include <generated/facilities.h>
-
-#ifndef __ASSEMBLY__
-
+#include <asm/facility-defs.h>
 #include <linux/string.h>
 #include <linux/preempt.h>
 #include <asm/lowcore.h>
 
-#define MAX_FACILITY_BIT (256*8)	/* stfle_fac_list has 256 bytes */
+#define MAX_FACILITY_BIT (sizeof(((struct lowcore *)0)->stfle_fac_list) * 8)
+
+static inline void __set_facility(unsigned long nr, void *facilities)
+{
+	unsigned char *ptr = (unsigned char *) facilities;
+
+	if (nr >= MAX_FACILITY_BIT)
+		return;
+	ptr[nr >> 3] |= 0x80 >> (nr & 7);
+}
+
+static inline void __clear_facility(unsigned long nr, void *facilities)
+{
+	unsigned char *ptr = (unsigned char *) facilities;
+
+	if (nr >= MAX_FACILITY_BIT)
+		return;
+	ptr[nr >> 3] &= ~(0x80 >> (nr & 7));
+}
 
 static inline int __test_facility(unsigned long nr, void *facilities)
 {
@@ -72,5 +88,4 @@ static inline void stfle(u64 *stfle_fac_list, int size)
 	preempt_enable();
 }
 
-#endif /* __ASSEMBLY__ */
 #endif /* __ASM_FACILITY_H */

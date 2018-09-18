@@ -46,7 +46,7 @@ MODULE_ALIAS("cw1200_core");
 
 /* Accept MAC address of the form macaddr=0x00,0x80,0xE1,0x30,0x40,0x50 */
 static u8 cw1200_mac_template[ETH_ALEN] = {0x02, 0x80, 0xe1, 0x00, 0x00, 0x00};
-module_param_array_named(macaddr, cw1200_mac_template, byte, NULL, S_IRUGO);
+module_param_array_named(macaddr, cw1200_mac_template, byte, NULL, 0444);
 MODULE_PARM_DESC(macaddr, "Override platform_data MAC address");
 
 static char *cw1200_sdd_path;
@@ -102,7 +102,7 @@ static struct ieee80211_rate cw1200_mcs_rates[] = {
 
 
 #define CHAN2G(_channel, _freq, _flags) {			\
-	.band			= IEEE80211_BAND_2GHZ,		\
+	.band			= NL80211_BAND_2GHZ,		\
 	.center_freq		= (_freq),			\
 	.hw_value		= (_channel),			\
 	.flags			= (_flags),			\
@@ -111,7 +111,7 @@ static struct ieee80211_rate cw1200_mcs_rates[] = {
 }
 
 #define CHAN5G(_channel, _flags) {				\
-	.band			= IEEE80211_BAND_5GHZ,		\
+	.band			= NL80211_BAND_5GHZ,		\
 	.center_freq	= 5000 + (5 * (_channel)),		\
 	.hw_value		= (_channel),			\
 	.flags			= (_flags),			\
@@ -311,12 +311,12 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 
 	hw->sta_data_size = sizeof(struct cw1200_sta_priv);
 
-	hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &cw1200_band_2ghz;
+	hw->wiphy->bands[NL80211_BAND_2GHZ] = &cw1200_band_2ghz;
 	if (have_5ghz)
-		hw->wiphy->bands[IEEE80211_BAND_5GHZ] = &cw1200_band_5ghz;
+		hw->wiphy->bands[NL80211_BAND_5GHZ] = &cw1200_band_5ghz;
 
 	/* Channel params have to be cleared before registering wiphy again */
-	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		struct ieee80211_supported_band *sband = hw->wiphy->bands[band];
 		if (!sband)
 			continue;
@@ -373,8 +373,7 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
 	INIT_WORK(&priv->update_filtering_work, cw1200_update_filtering_work);
 	INIT_WORK(&priv->set_beacon_wakeup_period_work,
 		  cw1200_set_beacon_wakeup_period_work);
-	setup_timer(&priv->mcast_timeout, cw1200_mcast_timeout,
-		    (unsigned long)priv);
+	timer_setup(&priv->mcast_timeout, cw1200_mcast_timeout, 0);
 
 	if (cw1200_queue_stats_init(&priv->tx_queue_stats,
 				    CW1200_LINK_ID_MAX,

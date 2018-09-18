@@ -32,7 +32,6 @@
 
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/types.h>
 #include <linux/gpio.h>
 #include <asm/mach-au1x00/gpio-au1000.h>
@@ -160,14 +159,14 @@ static int __init alchemy_gpiochip_init(void)
 
 	switch (alchemy_get_cputype()) {
 	case ALCHEMY_CPU_AU1000:
-		ret = gpiochip_add(&alchemy_gpio_chip[0]);
+		ret = gpiochip_add_data(&alchemy_gpio_chip[0], NULL);
 		break;
 	case ALCHEMY_CPU_AU1500...ALCHEMY_CPU_AU1200:
-		ret = gpiochip_add(&alchemy_gpio_chip[0]);
-		ret |= gpiochip_add(&alchemy_gpio_chip[1]);
+		ret = gpiochip_add_data(&alchemy_gpio_chip[0], NULL);
+		ret |= gpiochip_add_data(&alchemy_gpio_chip[1], NULL);
 		break;
 	case ALCHEMY_CPU_AU1300:
-		ret = gpiochip_add(&au1300_gpiochip);
+		ret = gpiochip_add_data(&au1300_gpiochip, NULL);
 		break;
 	}
 	return ret;

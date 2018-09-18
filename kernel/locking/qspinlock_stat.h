@@ -23,11 +23,13 @@
  *   pv_latency_kick	- average latency (ns) of vCPU kick operation
  *   pv_latency_wake	- average latency (ns) from vCPU kick to wakeup
  *   pv_lock_stealing	- # of lock stealing operations
- *   pv_spurious_wakeup	- # of spurious wakeups
- *   pv_wait_again	- # of vCPU wait's that happened after a vCPU kick
+ *   pv_spurious_wakeup	- # of spurious wakeups in non-head vCPUs
+ *   pv_wait_again	- # of wait's after a queue head vCPU kick
  *   pv_wait_early	- # of early vCPU wait's
  *   pv_wait_head	- # of vCPU wait's at the queue head
  *   pv_wait_node	- # of vCPU wait's at a non-head queue node
+ *   lock_pending	- # of locking operations via pending code
+ *   lock_slowpath	- # of locking operations via MCS lock queue
  *
  * Writing to the "reset_counters" file will reset all the above counter
  * values.
@@ -51,6 +53,8 @@ enum qlock_stats {
 	qstat_pv_wait_early,
 	qstat_pv_wait_head,
 	qstat_pv_wait_node,
+	qstat_lock_pending,
+	qstat_lock_slowpath,
 	qstat_num,	/* Total number of statistical counters */
 	qstat_reset_cnts = qstat_num,
 };
@@ -61,6 +65,7 @@ enum qlock_stats {
  */
 #include <linux/debugfs.h>
 #include <linux/sched.h>
+#include <linux/sched/clock.h>
 #include <linux/fs.h>
 
 static const char * const qstat_names[qstat_num + 1] = {
@@ -75,6 +80,8 @@ static const char * const qstat_names[qstat_num + 1] = {
 	[qstat_pv_wait_early]      = "pv_wait_early",
 	[qstat_pv_wait_head]       = "pv_wait_head",
 	[qstat_pv_wait_node]       = "pv_wait_node",
+	[qstat_lock_pending]       = "lock_pending",
+	[qstat_lock_slowpath]      = "lock_slowpath",
 	[qstat_reset_cnts]         = "reset_counters",
 };
 
@@ -105,11 +112,7 @@ static ssize_t qstat_read(struct file *file, char __user *user_buf,
 	/*
 	 * Get the counter ID stored in file->f_inode->i_private
 	 */
-	if (!file->f_inode) {
-		WARN_ON_ONCE(1);
-		return -EBADF;
-	}
-	counter = (long)(file->f_inode->i_private);
+	counter = (long)file_inode(file)->i_private;
 
 	if (counter >= qstat_num)
 		return -EBADF;
@@ -133,10 +136,12 @@ static ssize_t qstat_read(struct file *file, char __user *user_buf,
 	}
 
 	if (counter == qstat_pv_hash_hops) {
-		u64 frac;
+		u64 frac = 0;
 
-		frac = 100ULL * do_div(stat, kicks);
-		frac = DIV_ROUND_CLOSEST_ULL(frac, kicks);
+		if (kicks) {
+			frac = 100ULL * do_div(stat, kicks);
+			frac = DIV_ROUND_CLOSEST_ULL(frac, kicks);
+		}
 
 		/*
 		 * Return a X.XX decimal number
@@ -148,7 +153,6 @@ static ssize_t qstat_read(struct file *file, char __user *user_buf,
 		 */
 		if ((counter == qstat_pv_latency_kick) ||
 		    (counter == qstat_pv_latency_wake)) {
-			stat = 0;
 			if (kicks)
 				stat = DIV_ROUND_CLOSEST_ULL(stat, kicks);
 		}
@@ -173,19 +177,13 @@ static ssize_t qstat_write(struct file *file, const char __user *user_buf,
 	/*
 	 * Get the counter ID stored in file->f_inode->i_private
 	 */
-	if (!file->f_inode) {
-		WARN_ON_ONCE(1);
-		return -EBADF;
-	}
-	if ((long)(file->f_inode->i_private) != qstat_reset_cnts)
+	if ((long)file_inode(file)->i_private != qstat_reset_cnts)
 		return count;
 
 	for_each_possible_cpu(cpu) {
 		int i;
 		unsigned long *ptr = per_cpu_ptr(qstats, cpu);
 
-		for (i = 0 ; i < qstat_num; i++)
-			WRITE_ONCE(ptr[i], 0);
 		for (i = 0 ; i < qstat_num; i++)
 			WRITE_ONCE(ptr[i], 0);
 	}
@@ -209,10 +207,8 @@ static int __init init_qspinlock_stat(void)
 	struct dentry *d_qstat = debugfs_create_dir("qlockstat", NULL);
 	int i;
 
-	if (!d_qstat) {
-		pr_warn("Could not create 'qlockstat' debugfs directory\n");
-		return 0;
-	}
+	if (!d_qstat)
+		goto out;
 
 	/*
 	 * Create the debugfs files
@@ -222,12 +218,20 @@ static int __init init_qspinlock_stat(void)
 	 * performance.
 	 */
 	for (i = 0; i < qstat_num; i++)
-		debugfs_create_file(qstat_names[i], 0400, d_qstat,
-				   (void *)(long)i, &fops_qstat);
+		if (!debugfs_create_file(qstat_names[i], 0400, d_qstat,
+					 (void *)(long)i, &fops_qstat))
+			goto fail_undo;
 
-	debugfs_create_file(qstat_names[qstat_reset_cnts], 0200, d_qstat,
-			   (void *)(long)qstat_reset_cnts, &fops_qstat);
+	if (!debugfs_create_file(qstat_names[qstat_reset_cnts], 0200, d_qstat,
+				 (void *)(long)qstat_reset_cnts, &fops_qstat))
+		goto fail_undo;
+
 	return 0;
+fail_undo:
+	debugfs_remove_recursive(d_qstat);
+out:
+	pr_warn("Could not create 'qlockstat' debugfs entries\n");
+	return -ENOMEM;
 }
 fs_initcall(init_qspinlock_stat);
 
@@ -278,19 +282,6 @@ static inline void __pv_wait(u8 *ptr, u8 val)
 
 #define pv_kick(c)	__pv_kick(c)
 #define pv_wait(p, v)	__pv_wait(p, v)
-
-/*
- * PV unfair trylock count tracking function
- */
-static inline int qstat_spin_steal_lock(struct qspinlock *lock)
-{
-	int ret = pv_queued_spin_steal_lock(lock);
-
-	qstat_inc(qstat_pv_lock_stealing, ret);
-	return ret;
-}
-#undef  queued_spin_trylock
-#define queued_spin_trylock(l)	qstat_spin_steal_lock(l)
 
 #else /* CONFIG_QUEUED_LOCK_STAT */
 

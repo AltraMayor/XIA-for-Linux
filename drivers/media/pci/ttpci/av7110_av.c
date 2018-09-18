@@ -18,11 +18,8 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
- * Or, point your browser to http://www.gnu.org/copyleft/gpl.html
+ * To obtain the license, point your browser to
+ * http://www.gnu.org/copyleft/gpl.html
  *
  *
  * the project's page is at https://linuxtv.org
@@ -102,7 +99,7 @@ int av7110_record_cb(struct dvb_filter_pes2ts *p2t, u8 *buf, size_t len)
 		buf[4] = buf[5] = 0;
 	if (dvbdmxfeed->ts_type & TS_PAYLOAD_ONLY)
 		return dvbdmxfeed->cb.ts(buf, len, NULL, 0,
-					 &dvbdmxfeed->feed.ts);
+					 &dvbdmxfeed->feed.ts, NULL);
 	else
 		return dvb_filter_pes2ts(p2t, buf, len, 1);
 }
@@ -112,7 +109,7 @@ static int dvb_filter_pes2ts_cb(void *priv, unsigned char *data)
 	struct dvb_demux_feed *dvbdmxfeed = (struct dvb_demux_feed *) priv;
 
 	dvbdmxfeed->cb.ts(data, 188, NULL, 0,
-			  &dvbdmxfeed->feed.ts);
+			  &dvbdmxfeed->feed.ts, NULL);
 	return 0;
 }
 
@@ -817,7 +814,7 @@ static void p_to_t(u8 const *buf, long int length, u16 pid, u8 *counter,
 			memcpy(obuf + l, buf + c, TS_SIZE - l);
 			c = length;
 		}
-		feed->cb.ts(obuf, 188, NULL, 0, &feed->feed.ts);
+		feed->cb.ts(obuf, 188, NULL, 0, &feed->feed.ts, NULL);
 		pes_start = 0;
 	}
 }
@@ -940,11 +937,11 @@ static int dvb_video_get_event (struct av7110 *av7110, struct video_event *event
  * DVB device file operations
  ******************************************************************************/
 
-static unsigned int dvb_video_poll(struct file *file, poll_table *wait)
+static __poll_t dvb_video_poll(struct file *file, poll_table *wait)
 {
 	struct dvb_device *dvbdev = file->private_data;
 	struct av7110 *av7110 = dvbdev->priv;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	dprintk(2, "av7110:%p, \n", av7110);
 
@@ -954,15 +951,15 @@ static unsigned int dvb_video_poll(struct file *file, poll_table *wait)
 	poll_wait(file, &av7110->video_events.wait_queue, wait);
 
 	if (av7110->video_events.eventw != av7110->video_events.eventr)
-		mask = POLLPRI;
+		mask = EPOLLPRI;
 
 	if ((file->f_flags & O_ACCMODE) != O_RDONLY) {
 		if (av7110->playing) {
 			if (FREE_COND)
-				mask |= (POLLOUT | POLLWRNORM);
+				mask |= (EPOLLOUT | EPOLLWRNORM);
 		} else {
 			/* if not playing: may play if asked for */
-			mask |= (POLLOUT | POLLWRNORM);
+			mask |= (EPOLLOUT | EPOLLWRNORM);
 		}
 	}
 
@@ -992,11 +989,11 @@ static ssize_t dvb_video_write(struct file *file, const char __user *buf,
 		return dvb_play(av7110, buf, count, file->f_flags & O_NONBLOCK, 1);
 }
 
-static unsigned int dvb_audio_poll(struct file *file, poll_table *wait)
+static __poll_t dvb_audio_poll(struct file *file, poll_table *wait)
 {
 	struct dvb_device *dvbdev = file->private_data;
 	struct av7110 *av7110 = dvbdev->priv;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	dprintk(2, "av7110:%p, \n", av7110);
 
@@ -1004,9 +1001,9 @@ static unsigned int dvb_audio_poll(struct file *file, poll_table *wait)
 
 	if (av7110->playing) {
 		if (dvb_ringbuffer_free(&av7110->aout) >= 20 * 1024)
-			mask |= (POLLOUT | POLLWRNORM);
+			mask |= (EPOLLOUT | EPOLLWRNORM);
 	} else /* if not playing: may play if asked for */
-		mask = (POLLOUT | POLLWRNORM);
+		mask = (EPOLLOUT | EPOLLWRNORM);
 
 	return mask;
 }

@@ -13,7 +13,7 @@
  * anybody does please mail me.
  *
  * For the pdf file see:
- * http://www.nxp.com/acrobat_download2/expired_datasheets/TEA5757_5759_3.pdf 
+ * http://www.nxp.com/acrobat_download2/expired_datasheets/TEA5757_5759_3.pdf
  *
  *
  * CHANGES:
@@ -27,7 +27,7 @@
  * BUGS:
  *   - card unmutes if you change frequency
  *
- * (c) 2006, 2007 by Mauro Carvalho Chehab <mchehab@infradead.org>:
+ * (c) 2006, 2007 by Mauro Carvalho Chehab <mchehab@kernel.org>:
  *	- Conversion to V4L2 API
  *      - Uses video_ioctl2 for parsing and to add debug support
  */
@@ -183,9 +183,10 @@ static void maxiradio_remove(struct pci_dev *pdev)
 	outb(0, dev->io);
 	v4l2_device_unregister(v4l2_dev);
 	release_region(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0));
+	kfree(dev);
 }
 
-static struct pci_device_id maxiradio_pci_tbl[] = {
+static const struct pci_device_id maxiradio_pci_tbl[] = {
 	{ PCI_VENDOR_ID_GUILLEMOT, PCI_DEVICE_ID_GUILLEMOT_MAXIRADIO,
 		PCI_ANY_ID, PCI_ANY_ID, },
 	{ 0 }

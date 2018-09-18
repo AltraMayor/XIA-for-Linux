@@ -42,7 +42,7 @@
 #include <linux/of_platform.h>
 #include <linux/component.h>
 
-#include <video/omapdss.h>
+#include <video/omapfb_dss.h>
 #include <video/mipi_display.h>
 
 #include "dss.h"
@@ -1167,7 +1167,6 @@ static int dsi_regulator_init(struct platform_device *dsidev)
 {
 	struct dsi_data *dsi = dsi_get_dsidrv_data(dsidev);
 	struct regulator *vdds_dsi;
-	int r;
 
 	if (dsi->vdds_dsi_reg != NULL)
 		return 0;
@@ -1178,15 +1177,6 @@ static int dsi_regulator_init(struct platform_device *dsidev)
 		if (PTR_ERR(vdds_dsi) != -EPROBE_DEFER)
 			DSSERR("can't get DSI VDD regulator\n");
 		return PTR_ERR(vdds_dsi);
-	}
-
-	if (regulator_can_change_voltage(vdds_dsi)) {
-		r = regulator_set_voltage(vdds_dsi, 1800000, 1800000);
-		if (r) {
-			devm_regulator_put(vdds_dsi);
-			DSSERR("can't set the DSI regulator voltage\n");
-			return r;
-		}
 	}
 
 	dsi->vdds_dsi_reg = vdds_dsi;
@@ -3998,7 +3988,7 @@ static void dsi_update_screen_dispc(struct platform_device *dsidev)
 }
 
 #ifdef DSI_CATCH_MISSING_TE
-static void dsi_te_timeout(unsigned long arg)
+static void dsi_te_timeout(struct timer_list *unused)
 {
 	DSSERR("TE not received for 250ms!\n");
 }
@@ -5308,9 +5298,7 @@ static int dsi_bind(struct device *dev, struct device *master, void *data)
 			     dsi_framedone_timeout_work_callback);
 
 #ifdef DSI_CATCH_MISSING_TE
-	init_timer(&dsi->te_timer);
-	dsi->te_timer.function = dsi_te_timeout;
-	dsi->te_timer.data = 0;
+	timer_setup(&dsi->te_timer, dsi_te_timeout, 0);
 #endif
 
 	res = platform_get_resource_byname(dsidev, IORESOURCE_MEM, "proto");
@@ -5350,7 +5338,7 @@ static int dsi_bind(struct device *dev, struct device *master, void *data)
 
 	dsi->phy_base = devm_ioremap(&dsidev->dev, res->start,
 		resource_size(res));
-	if (!dsi->proto_base) {
+	if (!dsi->phy_base) {
 		DSSERR("can't ioremap DSI PHY\n");
 		return -ENOMEM;
 	}
@@ -5370,7 +5358,7 @@ static int dsi_bind(struct device *dev, struct device *master, void *data)
 
 	dsi->pll_base = devm_ioremap(&dsidev->dev, res->start,
 		resource_size(res));
-	if (!dsi->proto_base) {
+	if (!dsi->pll_base) {
 		DSSERR("can't ioremap DSI PLL\n");
 		return -ENOMEM;
 	}

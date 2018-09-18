@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __GF100_FIFO_H__
 #define __GF100_FIFO_H__
 #define gf100_fifo(p) container_of((p), struct gf100_fifo, base)
@@ -11,8 +12,12 @@ struct gf100_fifo {
 
 	struct list_head chan;
 
-	struct work_struct fault;
-	u64 mask;
+	struct {
+		struct work_struct work;
+		u64 mask;
+	} recover;
+
+	int pbdma_nr;
 
 	struct {
 		struct nvkm_memory *mem[2];
@@ -22,9 +27,8 @@ struct gf100_fifo {
 
 	struct {
 		struct nvkm_memory *mem;
-		struct nvkm_vma bar;
+		struct nvkm_vma *bar;
 	} user;
-	int spoon_nr;
 };
 
 void gf100_fifo_intr_engine(struct gf100_fifo *);

@@ -27,7 +27,7 @@
 #include <linux/timer.h>
 #include <linux/ieee80211.h>
 #include <uapi/linux/if_arp.h>
-#include <net/mac80211.h>
+#include <net/cfg80211.h>
 
 #define MWIFIEX_BSS_COEX_COUNT	     2
 #define MWIFIEX_MAX_BSS_NUM         (3)
@@ -121,6 +121,8 @@
 #define SDIO_MAX_AGGR_BUF_SIZE		(256 * 255)
 #define BLOCK_NUMBER_OFFSET		15
 #define SDIO_HEADER_OFFSET		28
+
+#define MWIFIEX_SIZE_4K 0x4000
 
 enum mwifiex_bss_type {
 	MWIFIEX_BSS_TYPE_STA = 0,
@@ -270,4 +272,43 @@ struct mwifiex_11h_intf_state {
 	bool is_11h_enabled;
 	bool is_11h_active;
 } __packed;
+
+#define MWIFIEX_FW_DUMP_IDX		0xff
+#define MWIFIEX_FW_DUMP_MAX_MEMSIZE     0x160000
+#define MWIFIEX_DRV_INFO_IDX		20
+#define FW_DUMP_MAX_NAME_LEN		8
+#define FW_DUMP_HOST_READY      0xEE
+#define FW_DUMP_DONE			0xFF
+#define FW_DUMP_READ_DONE		0xFE
+
+struct memory_type_mapping {
+	u8 mem_name[FW_DUMP_MAX_NAME_LEN];
+	u8 *mem_ptr;
+	u32 mem_size;
+	u8 done_flag;
+};
+
+enum rdwr_status {
+	RDWR_STATUS_SUCCESS = 0,
+	RDWR_STATUS_FAILURE = 1,
+	RDWR_STATUS_DONE = 2
+};
+
+enum mwifiex_chan_width {
+	CHAN_BW_20MHZ = 0,
+	CHAN_BW_10MHZ,
+	CHAN_BW_40MHZ,
+	CHAN_BW_80MHZ,
+	CHAN_BW_8080MHZ,
+	CHAN_BW_160MHZ,
+	CHAN_BW_5MHZ,
+};
+
+enum mwifiex_chan_offset {
+	SEC_CHAN_NONE = 0,
+	SEC_CHAN_ABOVE = 1,
+	SEC_CHAN_5MHZ = 2,
+	SEC_CHAN_BELOW = 3
+};
+
 #endif /* !_MWIFIEX_DECL_H_ */

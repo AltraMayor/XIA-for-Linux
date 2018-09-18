@@ -25,6 +25,9 @@
 #ifndef __HCI_CORE_H
 #define __HCI_CORE_H
 
+#include <linux/leds.h>
+#include <linux/rculist.h>
+
 #include <net/bluetooth/hci.h>
 #include <net/bluetooth/hci_sock.h>
 
@@ -168,6 +171,10 @@ struct adv_info {
 	__u8	adv_data[HCI_MAX_AD_LENGTH];
 	__u16	scan_rsp_len;
 	__u8	scan_rsp_data[HCI_MAX_AD_LENGTH];
+	__s8	tx_power;
+	bdaddr_t	random_addr;
+	bool 		rpa_expired;
+	struct delayed_work	rpa_expired_cb;
 };
 
 #define HCI_MAX_ADV_INSTANCES		5
@@ -210,6 +217,7 @@ struct hci_dev {
 	__u8		dev_name[HCI_MAX_NAME_LENGTH];
 	__u8		short_name[HCI_MAX_SHORT_NAME_LENGTH];
 	__u8		eir[HCI_MAX_EIR_LENGTH];
+	__u16		appearance;
 	__u8		dev_class[3];
 	__u8		major_class;
 	__u8		minor_class;
@@ -217,6 +225,8 @@ struct hci_dev {
 	__u8		features[HCI_MAX_PAGES][8];
 	__u8		le_features[8];
 	__u8		le_white_list_size;
+	__u8		le_resolv_list_size;
+	__u8		le_num_of_adv_sets;
 	__u8		le_states[8];
 	__u8		commands[64];
 	__u8		hci_ver;
@@ -310,6 +320,9 @@ struct hci_dev {
 	unsigned long	sco_last_tx;
 	unsigned long	le_last_tx;
 
+	__u8		le_tx_def_phys;
+	__u8		le_rx_def_phys;
+
 	struct workqueue_struct	*workqueue;
 	struct workqueue_struct	*req_workqueue;
 
@@ -363,6 +376,7 @@ struct hci_dev {
 	struct list_head	identity_resolving_keys;
 	struct list_head	remote_oob_data;
 	struct list_head	le_white_list;
+	struct list_head	le_resolv_list;
 	struct list_head	le_conn_params;
 	struct list_head	pend_le_conns;
 	struct list_head	pend_le_reports;
@@ -371,6 +385,8 @@ struct hci_dev {
 
 	atomic_t		promisc;
 
+	const char		*hw_info;
+	const char		*fw_info;
 	struct dentry		*debugfs;
 
 	struct device		dev;
@@ -395,6 +411,10 @@ struct hci_dev {
 	__u32			rpa_timeout;
 	struct delayed_work	rpa_expired;
 	bdaddr_t		rpa;
+
+#if IS_ENABLED(CONFIG_BT_LEDS)
+	struct led_trigger	*power_led;
+#endif
 
 	int (*open)(struct hci_dev *hdev);
 	int (*close)(struct hci_dev *hdev);
@@ -651,6 +671,7 @@ enum {
 	HCI_CONN_PARAM_REMOVAL_PEND,
 	HCI_CONN_NEW_LINK_KEY,
 	HCI_CONN_SCANNING,
+	HCI_CONN_AUTH_FAILURE,
 };
 
 static inline bool hci_conn_ssp_enabled(struct hci_conn *conn)
@@ -884,7 +905,7 @@ struct hci_conn *hci_connect_le_scan(struct hci_dev *hdev, bdaddr_t *dst,
 				     u16 conn_timeout);
 struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 				u8 dst_type, u8 sec_level, u16 conn_timeout,
-				u8 role);
+				u8 role, bdaddr_t *direct_rpa);
 struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 				 u8 sec_level, u8 auth_type);
 struct hci_conn *hci_connect_sco(struct hci_dev *hdev, int type, bdaddr_t *dst,
@@ -978,7 +999,7 @@ static inline void hci_conn_drop(struct hci_conn *conn)
 static inline void hci_dev_put(struct hci_dev *d)
 {
 	BT_DBG("%s orig refcnt %d", d->name,
-	       atomic_read(&d->dev.kobj.kref.refcount));
+	       kref_read(&d->dev.kobj.kref));
 
 	put_device(&d->dev);
 }
@@ -986,7 +1007,7 @@ static inline void hci_dev_put(struct hci_dev *d)
 static inline struct hci_dev *hci_dev_hold(struct hci_dev *d)
 {
 	BT_DBG("%s orig refcnt %d", d->name,
-	       atomic_read(&d->dev.kobj.kref.refcount));
+	       kref_read(&d->dev.kobj.kref));
 
 	get_device(&d->dev);
 	return d;
@@ -1009,7 +1030,7 @@ static inline void hci_set_drvdata(struct hci_dev *hdev, void *data)
 }
 
 struct hci_dev *hci_dev_get(int index);
-struct hci_dev *hci_get_route(bdaddr_t *dst, bdaddr_t *src);
+struct hci_dev *hci_get_route(bdaddr_t *dst, bdaddr_t *src, u8 src_type);
 
 struct hci_dev *hci_alloc_dev(void);
 void hci_free_dev(struct hci_dev *hdev);
@@ -1018,6 +1039,10 @@ void hci_unregister_dev(struct hci_dev *hdev);
 int hci_suspend_dev(struct hci_dev *hdev);
 int hci_resume_dev(struct hci_dev *hdev);
 int hci_reset_dev(struct hci_dev *hdev);
+int hci_recv_frame(struct hci_dev *hdev, struct sk_buff *skb);
+int hci_recv_diag(struct hci_dev *hdev, struct sk_buff *skb);
+__printf(2, 3) void hci_set_hw_info(struct hci_dev *hdev, const char *fmt, ...);
+__printf(2, 3) void hci_set_fw_info(struct hci_dev *hdev, const char *fmt, ...);
 int hci_dev_open(__u16 dev);
 int hci_dev_close(__u16 dev);
 int hci_dev_do_close(struct hci_dev *hdev);
@@ -1091,11 +1116,9 @@ int hci_add_adv_instance(struct hci_dev *hdev, u8 instance, u32 flags,
 			 u16 scan_rsp_len, u8 *scan_rsp_data,
 			 u16 timeout, u16 duration);
 int hci_remove_adv_instance(struct hci_dev *hdev, u8 instance);
+void hci_adv_instances_set_rpa_expired(struct hci_dev *hdev, bool rpa_expired);
 
 void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb);
-
-int hci_recv_frame(struct hci_dev *hdev, struct sk_buff *skb);
-int hci_recv_diag(struct hci_dev *hdev, struct sk_buff *skb);
 
 void hci_init_sysfs(struct hci_dev *hdev);
 void hci_conn_init_sysfs(struct hci_conn *conn);
@@ -1124,6 +1147,10 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
 #define lmp_inq_tx_pwr_capable(dev) ((dev)->features[0][7] & LMP_INQ_TX_PWR)
 #define lmp_ext_feat_capable(dev)  ((dev)->features[0][7] & LMP_EXTFEATURES)
 #define lmp_transp_capable(dev)    ((dev)->features[0][2] & LMP_TRANSPARENT)
+#define lmp_edr_2m_capable(dev)    ((dev)->features[0][3] & LMP_EDR_2M)
+#define lmp_edr_3m_capable(dev)    ((dev)->features[0][3] & LMP_EDR_3M)
+#define lmp_edr_3slot_capable(dev) ((dev)->features[0][4] & LMP_EDR_3SLOT)
+#define lmp_edr_5slot_capable(dev) ((dev)->features[0][5] & LMP_EDR_5SLOT)
 
 /* ----- Extended LMP capabilities ----- */
 #define lmp_csb_master_capable(dev) ((dev)->features[2][0] & LMP_CSB_MASTER)
@@ -1143,6 +1170,24 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
 				!hci_dev_test_flag(dev, HCI_AUTO_OFF))
 #define bredr_sc_enabled(dev)  (lmp_sc_capable(dev) && \
 				hci_dev_test_flag(dev, HCI_SC_ENABLED))
+
+#define scan_1m(dev) (((dev)->le_tx_def_phys & HCI_LE_SET_PHY_1M) || \
+		      ((dev)->le_rx_def_phys & HCI_LE_SET_PHY_1M))
+
+#define scan_2m(dev) (((dev)->le_tx_def_phys & HCI_LE_SET_PHY_2M) || \
+		      ((dev)->le_rx_def_phys & HCI_LE_SET_PHY_2M))
+
+#define scan_coded(dev) (((dev)->le_tx_def_phys & HCI_LE_SET_PHY_CODED) || \
+			 ((dev)->le_rx_def_phys & HCI_LE_SET_PHY_CODED))
+
+/* Use ext scanning if set ext scan param and ext scan enable is supported */
+#define use_ext_scan(dev) (((dev)->commands[37] & 0x20) && \
+			   ((dev)->commands[37] & 0x40))
+/* Use ext create connection if command is supported */
+#define use_ext_conn(dev) ((dev)->commands[37] & 0x80)
+
+/* Extended advertising support */
+#define ext_adv_capable(dev) (((dev)->le_features[1] & HCI_LE_EXT_ADV))
 
 /* ----- HCI protocols ----- */
 #define HCI_PROTO_DEFER             0x01
@@ -1381,6 +1426,8 @@ struct sk_buff *__hci_cmd_sync(struct hci_dev *hdev, u16 opcode, u32 plen,
 			       const void *param, u32 timeout);
 struct sk_buff *__hci_cmd_sync_ev(struct hci_dev *hdev, u16 opcode, u32 plen,
 				  const void *param, u8 event, u32 timeout);
+int __hci_cmd_send(struct hci_dev *hdev, u16 opcode, u32 plen,
+		   const void *param);
 
 int hci_send_cmd(struct hci_dev *hdev, __u16 opcode, __u32 plen,
 		 const void *param);
@@ -1397,6 +1444,9 @@ void hci_send_to_sock(struct hci_dev *hdev, struct sk_buff *skb);
 void hci_send_to_channel(unsigned short channel, struct sk_buff *skb,
 			 int flag, struct sock *skip_sk);
 void hci_send_to_monitor(struct hci_dev *hdev, struct sk_buff *skb);
+void hci_send_monitor_ctrl_event(struct hci_dev *hdev, u16 event,
+				 void *data, u16 data_len, ktime_t tstamp,
+				 int flag, struct sock *skip_sk);
 
 void hci_sock_dev_event(struct hci_dev *hdev, int event);
 
@@ -1442,6 +1492,7 @@ void hci_mgmt_chan_unregister(struct hci_mgmt_chan *c);
 #define DISCOV_BREDR_INQUIRY_LEN	0x08
 #define DISCOV_LE_RESTART_DELAY		msecs_to_jiffies(200)	/* msec */
 
+void mgmt_fill_version_info(void *ver);
 int mgmt_new_settings(struct hci_dev *hdev);
 void mgmt_index_added(struct hci_dev *hdev);
 void mgmt_index_removed(struct hci_dev *hdev);
@@ -1511,6 +1562,7 @@ void mgmt_advertising_added(struct sock *sk, struct hci_dev *hdev,
 			    u8 instance);
 void mgmt_advertising_removed(struct sock *sk, struct hci_dev *hdev,
 			      u8 instance);
+int mgmt_phy_configuration_changed(struct hci_dev *hdev, struct sock *skip);
 
 u8 hci_le_conn_update(struct hci_conn *conn, u16 min, u16 max, u16 latency,
 		      u16 to_multiplier);

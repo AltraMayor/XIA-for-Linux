@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Cadence WDT driver - Used by Xilinx Zynq
  *
  * Copyright (C) 2010 - 2014 Xilinx, Inc.
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/clk.h>
@@ -49,15 +46,15 @@
 /* Counter maximum value */
 #define CDNS_WDT_COUNTER_MAX 0xFFF
 
-static int wdt_timeout = CDNS_WDT_DEFAULT_TIMEOUT;
+static int wdt_timeout;
 static int nowayout = WATCHDOG_NOWAYOUT;
 
-module_param(wdt_timeout, int, 0);
+module_param(wdt_timeout, int, 0644);
 MODULE_PARM_DESC(wdt_timeout,
 		 "Watchdog time in seconds. (default="
 		 __MODULE_STRING(CDNS_WDT_DEFAULT_TIMEOUT) ")");
 
-module_param(nowayout, int, 0);
+module_param(nowayout, int, 0644);
 MODULE_PARM_DESC(nowayout,
 		 "Watchdog cannot be stopped once started (default="
 		 __MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -262,14 +259,14 @@ static irqreturn_t cdns_wdt_irq_handler(int irq, void *dev_id)
  * Info structure used to indicate the features supported by the device
  * to the upper layers. This is defined in watchdog.h header file.
  */
-static struct watchdog_info cdns_wdt_info = {
+static const struct watchdog_info cdns_wdt_info = {
 	.identity	= "cdns_wdt watchdog",
 	.options	= WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING |
 			  WDIOF_MAGICCLOSE,
 };
 
 /* Watchdog Core Ops */
-static struct watchdog_ops cdns_wdt_ops = {
+static const struct watchdog_ops cdns_wdt_ops = {
 	.owner = THIS_MODULE,
 	.start = cdns_wdt_start,
 	.stop = cdns_wdt_stop,
@@ -368,7 +365,7 @@ static int cdns_wdt_probe(struct platform_device *pdev)
 	}
 	platform_set_drvdata(pdev, wdt);
 
-	dev_dbg(&pdev->dev, "Xilinx Watchdog Timer at %p with timeout %ds%s\n",
+	dev_info(&pdev->dev, "Xilinx Watchdog Timer at %p with timeout %ds%s\n",
 		 wdt->regs, cdns_wdt_device->timeout,
 		 nowayout ? ", nowayout" : "");
 
@@ -421,11 +418,12 @@ static void cdns_wdt_shutdown(struct platform_device *pdev)
  */
 static int __maybe_unused cdns_wdt_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct cdns_wdt *wdt = platform_get_drvdata(pdev);
+	struct cdns_wdt *wdt = dev_get_drvdata(dev);
 
-	cdns_wdt_stop(&wdt->cdns_wdt_device);
-	clk_disable_unprepare(wdt->clk);
+	if (watchdog_active(&wdt->cdns_wdt_device)) {
+		cdns_wdt_stop(&wdt->cdns_wdt_device);
+		clk_disable_unprepare(wdt->clk);
+	}
 
 	return 0;
 }
@@ -439,22 +437,23 @@ static int __maybe_unused cdns_wdt_suspend(struct device *dev)
 static int __maybe_unused cdns_wdt_resume(struct device *dev)
 {
 	int ret;
-	struct platform_device *pdev = to_platform_device(dev);
-	struct cdns_wdt *wdt = platform_get_drvdata(pdev);
+	struct cdns_wdt *wdt = dev_get_drvdata(dev);
 
-	ret = clk_prepare_enable(wdt->clk);
-	if (ret) {
-		dev_err(dev, "unable to enable clock\n");
-		return ret;
+	if (watchdog_active(&wdt->cdns_wdt_device)) {
+		ret = clk_prepare_enable(wdt->clk);
+		if (ret) {
+			dev_err(dev, "unable to enable clock\n");
+			return ret;
+		}
+		cdns_wdt_start(&wdt->cdns_wdt_device);
 	}
-	cdns_wdt_start(&wdt->cdns_wdt_device);
 
 	return 0;
 }
 
 static SIMPLE_DEV_PM_OPS(cdns_wdt_pm_ops, cdns_wdt_suspend, cdns_wdt_resume);
 
-static struct of_device_id cdns_wdt_of_match[] = {
+static const struct of_device_id cdns_wdt_of_match[] = {
 	{ .compatible = "cdns,wdt-r1p2", },
 	{ /* end of table */ }
 };

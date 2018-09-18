@@ -289,6 +289,9 @@ static void idma64_desc_fill(struct idma64_chan *idma64c,
 
 	/* Trigger an interrupt after the last block is transfered */
 	lli->ctllo |= IDMA64C_CTLL_INT_EN;
+
+	/* Disable LLP transfer in the last block */
+	lli->ctllo &= ~(IDMA64C_CTLL_LLP_S_EN | IDMA64C_CTLL_LLP_D_EN);
 }
 
 static struct dma_async_tx_descriptor *idma64_prep_slave_sg(
@@ -493,6 +496,13 @@ static int idma64_terminate_all(struct dma_chan *chan)
 	return 0;
 }
 
+static void idma64_synchronize(struct dma_chan *chan)
+{
+	struct idma64_chan *idma64c = to_idma64_chan(chan);
+
+	vchan_synchronize(&idma64c->vchan);
+}
+
 static int idma64_alloc_chan_resources(struct dma_chan *chan)
 {
 	struct idma64_chan *idma64c = to_idma64_chan(chan);
@@ -580,6 +590,7 @@ static int idma64_probe(struct idma64_chip *chip)
 	idma64->dma.device_pause = idma64_pause;
 	idma64->dma.device_resume = idma64_resume;
 	idma64->dma.device_terminate_all = idma64_terminate_all;
+	idma64->dma.device_synchronize = idma64_synchronize;
 
 	idma64->dma.src_addr_widths = IDMA64_BUSWIDTHS;
 	idma64->dma.dst_addr_widths = IDMA64_BUSWIDTHS;
@@ -667,8 +678,7 @@ static int idma64_platform_remove(struct platform_device *pdev)
 
 static int idma64_pm_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct idma64_chip *chip = platform_get_drvdata(pdev);
+	struct idma64_chip *chip = dev_get_drvdata(dev);
 
 	idma64_off(chip->idma64);
 	return 0;
@@ -676,8 +686,7 @@ static int idma64_pm_suspend(struct device *dev)
 
 static int idma64_pm_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct idma64_chip *chip = platform_get_drvdata(pdev);
+	struct idma64_chip *chip = dev_get_drvdata(dev);
 
 	idma64_on(chip->idma64);
 	return 0;

@@ -16,7 +16,6 @@
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
-#include <linux/fb.h>
 #include <linux/leds.h>
 #include <linux/err.h>
 #include <linux/pwm.h>
@@ -29,7 +28,6 @@ struct led_pwm_data {
 	unsigned int		active_low;
 	unsigned int		period;
 	int			duty;
-	bool			can_sleep;
 };
 
 struct led_pwm_priv {
@@ -49,8 +47,8 @@ static void __led_pwm_set(struct led_pwm_data *led_dat)
 		pwm_enable(led_dat->pwm);
 }
 
-static void led_pwm_set(struct led_classdev *led_cdev,
-	enum led_brightness brightness)
+static int led_pwm_set(struct led_classdev *led_cdev,
+		       enum led_brightness brightness)
 {
 	struct led_pwm_data *led_dat =
 		container_of(led_cdev, struct led_pwm_data, cdev);
@@ -66,12 +64,7 @@ static void led_pwm_set(struct led_classdev *led_cdev,
 	led_dat->duty = duty;
 
 	__led_pwm_set(led_dat);
-}
 
-static int led_pwm_set_blocking(struct led_classdev *led_cdev,
-	enum led_brightness brightness)
-{
-	led_pwm_set(led_cdev, brightness);
 	return 0;
 }
 
@@ -91,6 +84,7 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 		       struct led_pwm *led, struct device_node *child)
 {
 	struct led_pwm_data *led_data = &priv->leds[priv->num_leds];
+	struct pwm_args pargs;
 	int ret;
 
 	led_data->active_low = led->active_low;
@@ -111,13 +105,17 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 		return ret;
 	}
 
-	led_data->can_sleep = pwm_can_sleep(led_data->pwm);
-	if (!led_data->can_sleep)
-		led_data->cdev.brightness_set = led_pwm_set;
-	else
-		led_data->cdev.brightness_set_blocking = led_pwm_set_blocking;
+	led_data->cdev.brightness_set_blocking = led_pwm_set;
 
-	led_data->period = pwm_get_period(led_data->pwm);
+	/*
+	 * FIXME: pwm_apply_args() should be removed when switching to the
+	 * atomic PWM API.
+	 */
+	pwm_apply_args(led_data->pwm);
+
+	pwm_get_args(led_data->pwm, &pargs);
+
+	led_data->period = pargs.period;
 	if (!led_data->period && (led->pwm_period_ns > 0))
 		led_data->period = led->pwm_period_ns;
 

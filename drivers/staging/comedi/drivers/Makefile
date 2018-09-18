@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 # Makefile for individual comedi drivers
 #
 ccflags-$(CONFIG_COMEDI_DEBUG)		:= -DDEBUG
@@ -10,7 +11,6 @@ obj-$(CONFIG_COMEDI_ISADMA)		+= comedi_isadma.o
 obj-$(CONFIG_COMEDI_BOND)		+= comedi_bond.o
 obj-$(CONFIG_COMEDI_TEST)		+= comedi_test.o
 obj-$(CONFIG_COMEDI_PARPORT)		+= comedi_parport.o
-obj-$(CONFIG_COMEDI_SERIAL2002)		+= serial2002.o
 
 # Comedi ISA drivers
 obj-$(CONFIG_COMEDI_AMPLC_DIO200_ISA)	+= amplc_dio200.o

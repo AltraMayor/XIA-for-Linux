@@ -138,7 +138,7 @@ int iwlagn_mac_setup_register(struct iwl_priv *priv,
 	 * packets, so enabling it with software crypto isn't safe)
 	 */
 	if (priv->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_MFP &&
-	    !iwlwifi_mod_params.sw_crypto)
+	    !iwlwifi_mod_params.swcrypto)
 		ieee80211_hw_set(hw, MFP_CAPABLE);
 
 	hw->sta_data_size = sizeof(struct iwl_station_priv);
@@ -163,7 +163,7 @@ int iwlagn_mac_setup_register(struct iwl_priv *priv,
 				       REGULATORY_DISABLE_BEACON_HINTS;
 
 #ifdef CONFIG_PM_SLEEP
-	if (priv->fw->img[IWL_UCODE_WOWLAN].sec[0].len &&
+	if (priv->fw->img[IWL_UCODE_WOWLAN].num_sec &&
 	    priv->trans->ops->d3_suspend &&
 	    priv->trans->ops->d3_resume &&
 	    device_can_wakeup(priv->trans->dev)) {
@@ -171,7 +171,7 @@ int iwlagn_mac_setup_register(struct iwl_priv *priv,
 					     WIPHY_WOWLAN_DISCONNECT |
 					     WIPHY_WOWLAN_EAP_IDENTITY_REQ |
 					     WIPHY_WOWLAN_RFKILL_RELEASE;
-		if (!iwlwifi_mod_params.sw_crypto)
+		if (!iwlwifi_mod_params.swcrypto)
 			priv->wowlan_support.flags |=
 				WIPHY_WOWLAN_SUPPORTS_GTK_REKEY |
 				WIPHY_WOWLAN_GTK_REKEY_FAILURE;
@@ -202,16 +202,18 @@ int iwlagn_mac_setup_register(struct iwl_priv *priv,
 
 	hw->max_listen_interval = IWL_CONN_MAX_LISTEN_INTERVAL;
 
-	if (priv->nvm_data->bands[IEEE80211_BAND_2GHZ].n_channels)
-		priv->hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
-			&priv->nvm_data->bands[IEEE80211_BAND_2GHZ];
-	if (priv->nvm_data->bands[IEEE80211_BAND_5GHZ].n_channels)
-		priv->hw->wiphy->bands[IEEE80211_BAND_5GHZ] =
-			&priv->nvm_data->bands[IEEE80211_BAND_5GHZ];
+	if (priv->nvm_data->bands[NL80211_BAND_2GHZ].n_channels)
+		priv->hw->wiphy->bands[NL80211_BAND_2GHZ] =
+			&priv->nvm_data->bands[NL80211_BAND_2GHZ];
+	if (priv->nvm_data->bands[NL80211_BAND_5GHZ].n_channels)
+		priv->hw->wiphy->bands[NL80211_BAND_5GHZ] =
+			&priv->nvm_data->bands[NL80211_BAND_5GHZ];
 
 	hw->wiphy->hw_version = priv->trans->hw_id;
 
 	iwl_leds_init(priv);
+
+	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 
 	ret = ieee80211_register_hw(priv->hw);
 	if (ret) {
@@ -346,7 +348,7 @@ static void iwlagn_mac_set_rekey_data(struct ieee80211_hw *hw,
 {
 	struct iwl_priv *priv = IWL_MAC80211_GET_DVM(hw);
 
-	if (iwlwifi_mod_params.sw_crypto)
+	if (iwlwifi_mod_params.swcrypto)
 		return;
 
 	IWL_DEBUG_MAC80211(priv, "enter\n");
@@ -396,7 +398,7 @@ static int iwlagn_mac_suspend(struct ieee80211_hw *hw,
 	iwl_write32(priv->trans, CSR_UCODE_DRV_GP1_SET,
 		    CSR_UCODE_DRV_GP1_BIT_D3_CFG_COMPLETE);
 
-	iwl_trans_d3_suspend(priv->trans, false);
+	iwl_trans_d3_suspend(priv->trans, false, true);
 
 	goto out;
 
@@ -469,7 +471,7 @@ static int iwlagn_mac_resume(struct ieee80211_hw *hw)
 	/* we'll clear ctx->vif during iwlagn_prepare_restart() */
 	vif = ctx->vif;
 
-	ret = iwl_trans_d3_resume(priv->trans, &d3_status, false);
+	ret = iwl_trans_d3_resume(priv->trans, &d3_status, false, true);
 	if (ret)
 		goto out_unlock;
 
@@ -622,7 +624,7 @@ static int iwlagn_mac_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 
 	IWL_DEBUG_MAC80211(priv, "enter\n");
 
-	if (iwlwifi_mod_params.sw_crypto) {
+	if (iwlwifi_mod_params.swcrypto) {
 		IWL_DEBUG_MAC80211(priv, "leave - hwcrypto disabled\n");
 		return -EOPNOTSUPP;
 	}
@@ -732,12 +734,15 @@ static inline bool iwl_enable_tx_ampdu(const struct iwl_cfg *cfg)
 
 static int iwlagn_mac_ampdu_action(struct ieee80211_hw *hw,
 				   struct ieee80211_vif *vif,
-				   enum ieee80211_ampdu_mlme_action action,
-				   struct ieee80211_sta *sta, u16 tid, u16 *ssn,
-				   u8 buf_size, bool amsdu)
+				   struct ieee80211_ampdu_params *params)
 {
 	struct iwl_priv *priv = IWL_MAC80211_GET_DVM(hw);
 	int ret = -EINVAL;
+	struct ieee80211_sta *sta = params->sta;
+	enum ieee80211_ampdu_mlme_action action = params->action;
+	u16 tid = params->tid;
+	u16 *ssn = &params->ssn;
+	u8 buf_size = params->buf_size;
 	struct iwl_station_priv *sta_priv = (void *) sta->drv_priv;
 
 	IWL_DEBUG_HT(priv, "A-MPDU action on addr %pM tid %d\n",
@@ -1140,7 +1145,7 @@ static void iwlagn_mac_flush(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	}
 
 	IWL_DEBUG_TX_QUEUES(priv, "wait transmit/flush all frames\n");
-	iwl_trans_wait_tx_queue_empty(priv->trans, scd_queues);
+	iwl_trans_wait_tx_queues_empty(priv->trans, scd_queues);
 done:
 	mutex_unlock(&priv->mutex);
 	IWL_DEBUG_MAC80211(priv, "leave\n");

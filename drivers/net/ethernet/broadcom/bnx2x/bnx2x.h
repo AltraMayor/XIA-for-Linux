@@ -166,6 +166,12 @@ do {						\
 #define REG_RD8(bp, offset)		readb(REG_ADDR(bp, offset))
 #define REG_RD16(bp, offset)		readw(REG_ADDR(bp, offset))
 
+#define REG_WR_RELAXED(bp, offset, val)	\
+	writel_relaxed((u32)val, REG_ADDR(bp, offset))
+
+#define REG_WR16_RELAXED(bp, offset, val) \
+	writew_relaxed((u16)val, REG_ADDR(bp, offset))
+
 #define REG_WR(bp, offset, val)		writel((u32)val, REG_ADDR(bp, offset))
 #define REG_WR8(bp, offset, val)	writeb((u8)val, REG_ADDR(bp, offset))
 #define REG_WR16(bp, offset, val)	writew((u16)val, REG_ADDR(bp, offset))
@@ -758,10 +764,8 @@ struct bnx2x_fastpath {
 #if (BNX2X_DB_SHIFT < BNX2X_DB_MIN_SHIFT)
 #error "Min DB doorbell stride is 8"
 #endif
-#define DOORBELL(bp, cid, val) \
-	do { \
-		writel((u32)(val), bp->doorbells + (bp->db_size * (cid))); \
-	} while (0)
+#define DOORBELL_RELAXED(bp, cid, val) \
+	writel_relaxed((u32)(val), (bp)->doorbells + ((bp)->db_size * (cid)))
 
 /* TX CSUM helpers */
 #define SKB_CS_OFF(skb)		(offsetof(struct tcphdr, check) - \
@@ -1277,8 +1281,7 @@ enum sp_rtnl_flag {
 	BNX2X_SP_RTNL_HYPERVISOR_VLAN,
 	BNX2X_SP_RTNL_TX_STOP,
 	BNX2X_SP_RTNL_GET_DRV_VERSION,
-	BNX2X_SP_RTNL_ADD_VXLAN_PORT,
-	BNX2X_SP_RTNL_DEL_VXLAN_PORT,
+	BNX2X_SP_RTNL_CHANGE_UDP_PORT,
 };
 
 enum bnx2x_iov_flag {
@@ -1325,6 +1328,17 @@ struct bnx2x_vlan_entry {
 	struct list_head link;
 	u16 vid;
 	bool hw;
+};
+
+enum bnx2x_udp_port_type {
+	BNX2X_UDP_PORT_VXLAN,
+	BNX2X_UDP_PORT_GENEVE,
+	BNX2X_UDP_PORT_MAX,
+};
+
+struct bnx2x_udp_tunnel {
+	u16 dst_port;
+	u8 count;
 };
 
 struct bnx2x {
@@ -1386,9 +1400,9 @@ struct bnx2x {
 	int			tx_ring_size;
 
 /* L2 header size + 2*VLANs (8 bytes) + LLC SNAP (8 bytes) */
-#define ETH_OVREHEAD		(ETH_HLEN + 8 + 8)
-#define ETH_MIN_PACKET_SIZE		60
-#define ETH_MAX_PACKET_SIZE		1500
+#define ETH_OVERHEAD		(ETH_HLEN + 8 + 8)
+#define ETH_MIN_PACKET_SIZE		(ETH_ZLEN - ETH_HLEN)
+#define ETH_MAX_PACKET_SIZE		ETH_DATA_LEN
 #define ETH_MAX_JUMBO_PACKET_SIZE	9600
 /* TCP with Timestamp Option (32) + IPv6 (40) */
 #define ETH_MAX_TPA_HEADER_SIZE		72
@@ -1519,6 +1533,7 @@ struct bnx2x {
 	struct link_vars	link_vars;
 	u32			link_cnt;
 	struct bnx2x_link_report_data last_reported_link;
+	bool			force_link_down;
 
 	struct mdio_if_info	mdio;
 
@@ -1830,9 +1845,10 @@ struct bnx2x {
 	struct list_head vlan_reg;
 	u16 vlan_cnt;
 	u16 vlan_credit;
-	u16 vxlan_dst_port;
-	u8 vxlan_dst_port_count;
 	bool accept_any_vlan;
+
+	/* Vxlan/Geneve related information */
+	struct bnx2x_udp_tunnel udp_tunnel_ports[BNX2X_UDP_PORT_MAX];
 };
 
 /* Tx queues may be less or equal to Rx queues */
@@ -2266,7 +2282,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 				 GENERAL_ATTEN_OFFSET(LATCHED_ATTN_RBCP) | \
 				 GENERAL_ATTEN_OFFSET(LATCHED_ATTN_RSVD_GRC))
 
-#define HW_INTERRUT_ASSERT_SET_0 \
+#define HW_INTERRUPT_ASSERT_SET_0 \
 				(AEU_INPUTS_ATTN_BITS_TSDM_HW_INTERRUPT | \
 				 AEU_INPUTS_ATTN_BITS_TCM_HW_INTERRUPT | \
 				 AEU_INPUTS_ATTN_BITS_TSEMI_HW_INTERRUPT | \
@@ -2279,7 +2295,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 				 AEU_INPUTS_ATTN_BITS_TSEMI_PARITY_ERROR |\
 				 AEU_INPUTS_ATTN_BITS_TCM_PARITY_ERROR |\
 				 AEU_INPUTS_ATTN_BITS_PBCLIENT_PARITY_ERROR)
-#define HW_INTERRUT_ASSERT_SET_1 \
+#define HW_INTERRUPT_ASSERT_SET_1 \
 				(AEU_INPUTS_ATTN_BITS_QM_HW_INTERRUPT | \
 				 AEU_INPUTS_ATTN_BITS_TIMERS_HW_INTERRUPT | \
 				 AEU_INPUTS_ATTN_BITS_XSDM_HW_INTERRUPT | \
@@ -2307,7 +2323,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 				 AEU_INPUTS_ATTN_BITS_UPB_PARITY_ERROR | \
 				 AEU_INPUTS_ATTN_BITS_CSDM_PARITY_ERROR |\
 				 AEU_INPUTS_ATTN_BITS_CCM_PARITY_ERROR)
-#define HW_INTERRUT_ASSERT_SET_2 \
+#define HW_INTERRUPT_ASSERT_SET_2 \
 				(AEU_INPUTS_ATTN_BITS_CSEMI_HW_INTERRUPT | \
 				 AEU_INPUTS_ATTN_BITS_CDU_HW_INTERRUPT | \
 				 AEU_INPUTS_ATTN_BITS_DMAE_HW_INTERRUPT | \

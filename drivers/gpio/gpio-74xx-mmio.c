@@ -105,26 +105,21 @@ static int mmio_74xx_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
 
 static int mmio_74xx_gpio_probe(struct platform_device *pdev)
 {
-	const struct of_device_id *of_id;
 	struct mmio_74xx_gpio_priv *priv;
 	struct resource *res;
 	void __iomem *dat;
 	int err;
 
-	of_id = of_match_device(mmio_74xx_gpio_ids, &pdev->dev);
-	if (!of_id)
-		return -ENODEV;
-
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
+
+	priv->flags = (uintptr_t)of_device_get_match_data(&pdev->dev);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	dat = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dat))
 		return PTR_ERR(dat);
-
-	priv->flags = (uintptr_t) of_id->data;
 
 	err = bgpio_init(&priv->gc, &pdev->dev,
 			 DIV_ROUND_UP(MMIO_74XX_BIT_CNT(priv->flags), 8),
@@ -140,15 +135,7 @@ static int mmio_74xx_gpio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
-	return gpiochip_add_data(&priv->gc, priv);
-}
-
-static int mmio_74xx_gpio_remove(struct platform_device *pdev)
-{
-	struct mmio_74xx_gpio_priv *priv = platform_get_drvdata(pdev);
-
-	gpiochip_remove(&priv->gc);
-	return 0;
+	return devm_gpiochip_add_data(&pdev->dev, &priv->gc, priv);
 }
 
 static struct platform_driver mmio_74xx_gpio_driver = {
@@ -157,7 +144,6 @@ static struct platform_driver mmio_74xx_gpio_driver = {
 		.of_match_table	= mmio_74xx_gpio_ids,
 	},
 	.probe	= mmio_74xx_gpio_probe,
-	.remove	= mmio_74xx_gpio_remove,
 };
 module_platform_driver(mmio_74xx_gpio_driver);
 

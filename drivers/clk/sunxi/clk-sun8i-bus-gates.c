@@ -17,7 +17,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -79,6 +78,10 @@ static void __init sun8i_h3_bus_gates_init(struct device_node *node)
 			clk_parent = APB1;
 		else if (index >= 96 && index <= 127)
 			clk_parent = APB2;
+		else {
+			WARN_ON(true);
+			continue;
+		}
 
 		clk_reg = reg + 4 * (index / 32);
 		clk_bit = index % 32;
@@ -109,4 +112,6 @@ err_unmap:
 }
 
 CLK_OF_DECLARE(sun8i_h3_bus_gates, "allwinner,sun8i-h3-bus-gates-clk",
+	       sun8i_h3_bus_gates_init);
+CLK_OF_DECLARE(sun8i_a83t_bus_gates, "allwinner,sun8i-a83t-bus-gates-clk",
 	       sun8i_h3_bus_gates_init);

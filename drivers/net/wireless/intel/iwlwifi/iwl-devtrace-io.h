@@ -1,6 +1,7 @@
 /******************************************************************************
  *
  * Copyright(c) 2009 - 2014 Intel Corporation. All rights reserved.
+ * Copyright(c) 2016-2017 Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -28,6 +29,7 @@
 #define __IWLWIFI_DEVICE_TRACE_IO
 
 #include <linux/tracepoint.h>
+#include <linux/pci.h>
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM iwlwifi_io
@@ -83,6 +85,23 @@ TRACE_EVENT(iwlwifi_dev_iowrite32,
 		  __get_str(dev), __entry->offs, __entry->val)
 );
 
+TRACE_EVENT(iwlwifi_dev_iowrite64,
+	TP_PROTO(const struct device *dev, u64 offs, u64 val),
+	TP_ARGS(dev, offs, val),
+	TP_STRUCT__entry(
+		DEV_ENTRY
+		__field(u64, offs)
+		__field(u64, val)
+	),
+	TP_fast_assign(
+		DEV_ASSIGN;
+		__entry->offs = offs;
+		__entry->val = val;
+	),
+	TP_printk("[%s] write io[%llu] = %llu)",
+		  __get_str(dev), __entry->offs, __entry->val)
+);
+
 TRACE_EVENT(iwlwifi_dev_iowrite_prph32,
 	TP_PROTO(const struct device *dev, u32 offs, u32 val),
 	TP_ARGS(dev, offs, val),
@@ -97,6 +116,23 @@ TRACE_EVENT(iwlwifi_dev_iowrite_prph32,
 		__entry->val = val;
 	),
 	TP_printk("[%s] write PRPH[%#x] = %#x)",
+		  __get_str(dev), __entry->offs, __entry->val)
+);
+
+TRACE_EVENT(iwlwifi_dev_iowrite_prph64,
+	TP_PROTO(const struct device *dev, u64 offs, u64 val),
+	TP_ARGS(dev, offs, val),
+	TP_STRUCT__entry(
+		DEV_ENTRY
+		__field(u64, offs)
+		__field(u64, val)
+	),
+	TP_fast_assign(
+		DEV_ASSIGN;
+		__entry->offs = offs;
+		__entry->val = val;
+	),
+	TP_printk("[%s] write PRPH[%llu] = %llu)",
 		  __get_str(dev), __entry->offs, __entry->val)
 );
 
@@ -128,6 +164,29 @@ TRACE_EVENT(iwlwifi_dev_irq,
 	),
 	/* TP_printk("") doesn't compile */
 	TP_printk("%d", 0)
+);
+
+TRACE_EVENT(iwlwifi_dev_irq_msix,
+	TP_PROTO(const struct device *dev, struct msix_entry *msix_entry,
+		 bool defirq, u32 inta_fh, u32 inta_hw),
+	TP_ARGS(dev, msix_entry, defirq, inta_fh, inta_hw),
+	TP_STRUCT__entry(
+		DEV_ENTRY
+		__field(u32, entry)
+		__field(u8, defirq)
+		__field(u32, inta_fh)
+		__field(u32, inta_hw)
+	),
+	TP_fast_assign(
+		DEV_ASSIGN;
+		__entry->entry = msix_entry->entry;
+		__entry->defirq = defirq;
+		__entry->inta_fh = inta_fh;
+		__entry->inta_hw = inta_hw;
+	),
+	TP_printk("entry:%d defirq:%d fh:0x%x, hw:0x%x",
+		  __entry->entry, __entry->defirq,
+		  __entry->inta_fh, __entry->inta_hw)
 );
 
 TRACE_EVENT(iwlwifi_dev_ict_read,

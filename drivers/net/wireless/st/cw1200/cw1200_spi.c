@@ -352,7 +352,7 @@ static int cw1200_spi_pm(struct hwbus_priv *self, bool suspend)
 	return irq_set_irq_wake(self->func->irq, suspend);
 }
 
-static struct hwbus_ops cw1200_spi_hwbus_ops = {
+static const struct hwbus_ops cw1200_spi_hwbus_ops = {
 	.hwbus_memcpy_fromio	= cw1200_spi_memcpy_fromio,
 	.hwbus_memcpy_toio	= cw1200_spi_memcpy_toio,
 	.lock			= cw1200_spi_lock,
@@ -446,8 +446,7 @@ static int cw1200_spi_disconnect(struct spi_device *func)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int cw1200_spi_suspend(struct device *dev)
+static int __maybe_unused cw1200_spi_suspend(struct device *dev)
 {
 	struct hwbus_priv *self = spi_get_drvdata(to_spi_device(dev));
 
@@ -460,16 +459,12 @@ static int cw1200_spi_suspend(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(cw1200_pm_ops, cw1200_spi_suspend, NULL);
 
-#endif
-
 static struct spi_driver spi_driver = {
 	.probe		= cw1200_spi_probe,
 	.remove		= cw1200_spi_disconnect,
 	.driver = {
 		.name		= "cw1200_wlan_spi",
-#ifdef CONFIG_PM
-		.pm		= &cw1200_pm_ops,
-#endif
+		.pm		= IS_ENABLED(CONFIG_PM) ? &cw1200_pm_ops : NULL,
 	},
 };
 

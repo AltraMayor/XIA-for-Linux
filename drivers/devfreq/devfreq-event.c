@@ -15,7 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/err.h>
 #include <linux/init.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/of.h>
@@ -235,6 +235,11 @@ struct devfreq_event_dev *devfreq_event_get_edev_by_phandle(struct device *dev,
 
 	mutex_lock(&devfreq_event_list_lock);
 	list_for_each_entry(edev, &devfreq_event_list, node) {
+		if (edev->dev.parent && edev->dev.parent->of_node == node)
+			goto out;
+	}
+
+	list_for_each_entry(edev, &devfreq_event_list, node) {
 		if (!strcmp(edev->desc->name, node->name))
 			goto out;
 	}
@@ -272,8 +277,8 @@ int devfreq_event_get_edev_count(struct device *dev)
 						sizeof(u32));
 	if (count < 0) {
 		dev_err(dev,
-			"failed to get the count of devfreq-event in %s node\n",
-			dev->of_node->full_name);
+			"failed to get the count of devfreq-event in %pOF node\n",
+			dev->of_node);
 		return count;
 	}
 
@@ -301,7 +306,7 @@ struct devfreq_event_dev *devfreq_event_add_edev(struct device *dev,
 						struct devfreq_event_desc *desc)
 {
 	struct devfreq_event_dev *edev;
-	static atomic_t event_no = ATOMIC_INIT(0);
+	static atomic_t event_no = ATOMIC_INIT(-1);
 	int ret;
 
 	if (!dev || !desc)
@@ -324,7 +329,7 @@ struct devfreq_event_dev *devfreq_event_add_edev(struct device *dev,
 	edev->dev.class = devfreq_event_class;
 	edev->dev.release = devfreq_event_release_edev;
 
-	dev_set_name(&edev->dev, "event.%d", atomic_inc_return(&event_no) - 1);
+	dev_set_name(&edev->dev, "event%d", atomic_inc_return(&event_no));
 	ret = device_register(&edev->dev);
 	if (ret < 0) {
 		put_device(&edev->dev);
@@ -476,13 +481,3 @@ static int __init devfreq_event_init(void)
 	return 0;
 }
 subsys_initcall(devfreq_event_init);
-
-static void __exit devfreq_event_exit(void)
-{
-	class_destroy(devfreq_event_class);
-}
-module_exit(devfreq_event_exit);
-
-MODULE_AUTHOR("Chanwoo Choi <cw00.choi@samsung.com>");
-MODULE_DESCRIPTION("DEVFREQ-Event class support");
-MODULE_LICENSE("GPL");

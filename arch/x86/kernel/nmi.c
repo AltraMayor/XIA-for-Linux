@@ -13,12 +13,15 @@
 #include <linux/spinlock.h>
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
+#include <linux/sched/debug.h>
 #include <linux/nmi.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/hardirq.h>
+#include <linux/ratelimit.h>
 #include <linux/slab.h>
 #include <linux/export.h>
+#include <linux/sched/clock.h>
 
 #if defined(CONFIG_EDAC)
 #include <linux/edac.h>
@@ -30,31 +33,32 @@
 #include <asm/nmi.h>
 #include <asm/x86_init.h>
 #include <asm/reboot.h>
+#include <asm/cache.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/nmi.h>
 
 struct nmi_desc {
-	spinlock_t lock;
+	raw_spinlock_t lock;
 	struct list_head head;
 };
 
 static struct nmi_desc nmi_desc[NMI_MAX] = 
 {
 	{
-		.lock = __SPIN_LOCK_UNLOCKED(&nmi_desc[0].lock),
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(&nmi_desc[0].lock),
 		.head = LIST_HEAD_INIT(nmi_desc[0].head),
 	},
 	{
-		.lock = __SPIN_LOCK_UNLOCKED(&nmi_desc[1].lock),
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(&nmi_desc[1].lock),
 		.head = LIST_HEAD_INIT(nmi_desc[1].head),
 	},
 	{
-		.lock = __SPIN_LOCK_UNLOCKED(&nmi_desc[2].lock),
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(&nmi_desc[2].lock),
 		.head = LIST_HEAD_INIT(nmi_desc[2].head),
 	},
 	{
-		.lock = __SPIN_LOCK_UNLOCKED(&nmi_desc[3].lock),
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(&nmi_desc[3].lock),
 		.head = LIST_HEAD_INIT(nmi_desc[3].head),
 	},
 
@@ -69,7 +73,7 @@ struct nmi_stats {
 
 static DEFINE_PER_CPU(struct nmi_stats, nmi_stats);
 
-static int ignore_nmis;
+static int ignore_nmis __read_mostly;
 
 int unknown_nmi_panic;
 /*
@@ -101,7 +105,7 @@ static void nmi_max_handler(struct irq_work *w)
 {
 	struct nmiaction *a = container_of(w, struct nmiaction, irq_work);
 	int remainder_ns, decimal_msecs;
-	u64 whole_msecs = ACCESS_ONCE(a->max_duration);
+	u64 whole_msecs = READ_ONCE(a->max_duration);
 
 	remainder_ns = do_div(whole_msecs, (1000 * 1000));
 	decimal_msecs = remainder_ns / 1000;
@@ -159,14 +163,12 @@ int __register_nmi_handler(unsigned int type, struct nmiaction *action)
 
 	init_irq_work(&action->irq_work, nmi_max_handler);
 
-	spin_lock_irqsave(&desc->lock, flags);
+	raw_spin_lock_irqsave(&desc->lock, flags);
 
 	/*
-	 * most handlers of type NMI_UNKNOWN never return because
-	 * they just assume the NMI is theirs.  Just a sanity check
-	 * to manage expectations
+	 * Indicate if there are multiple registrations on the
+	 * internal NMI handler call chains (SERR and IO_CHECK).
 	 */
-	WARN_ON_ONCE(type == NMI_UNKNOWN && !list_empty(&desc->head));
 	WARN_ON_ONCE(type == NMI_SERR && !list_empty(&desc->head));
 	WARN_ON_ONCE(type == NMI_IO_CHECK && !list_empty(&desc->head));
 
@@ -179,7 +181,7 @@ int __register_nmi_handler(unsigned int type, struct nmiaction *action)
 	else
 		list_add_tail_rcu(&action->list, &desc->head);
 	
-	spin_unlock_irqrestore(&desc->lock, flags);
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
 	return 0;
 }
 EXPORT_SYMBOL(__register_nmi_handler);
@@ -190,7 +192,7 @@ void unregister_nmi_handler(unsigned int type, const char *name)
 	struct nmiaction *n;
 	unsigned long flags;
 
-	spin_lock_irqsave(&desc->lock, flags);
+	raw_spin_lock_irqsave(&desc->lock, flags);
 
 	list_for_each_entry_rcu(n, &desc->head, list) {
 		/*
@@ -205,7 +207,7 @@ void unregister_nmi_handler(unsigned int type, const char *name)
 		}
 	}
 
-	spin_unlock_irqrestore(&desc->lock, flags);
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
 	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(unregister_nmi_handler);
@@ -219,17 +221,6 @@ pci_serr_error(unsigned char reason, struct pt_regs *regs)
 
 	pr_emerg("NMI: PCI system error (SERR) for reason %02x on CPU %d.\n",
 		 reason, smp_processor_id());
-
-	/*
-	 * On some machines, PCI SERR line is used to report memory
-	 * errors. EDAC makes use of it.
-	 */
-#if defined(CONFIG_EDAC)
-	if (edac_handler_set()) {
-		edac_atomic_assert_error();
-		return;
-	}
-#endif
 
 	if (panic_on_unrecovered_nmi)
 		nmi_panic(regs, "NMI: Not continuing");

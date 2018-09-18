@@ -32,9 +32,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include "fman.h"
-#include "fman_muram.h"
-
+#include <linux/fsl/guts.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/module.h>
@@ -44,6 +42,10 @@
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include <linux/libfdt_env.h>
+
+#include "fman.h"
+#include "fman_muram.h"
+#include "fman_keygen.h"
 
 /* General defines */
 #define FMAN_LIODN_TBL			64	/* size of LIODN table */
@@ -55,9 +57,11 @@
 /* Modules registers offsets */
 #define BMI_OFFSET		0x00080000
 #define QMI_OFFSET		0x00080400
+#define KG_OFFSET		0x000C1000
 #define DMA_OFFSET		0x000C2000
 #define FPM_OFFSET		0x000C3000
 #define IMEM_OFFSET		0x000C4000
+#define HWP_OFFSET		0x000C7000
 #define CGP_OFFSET		0x000DB000
 
 /* Exceptions bit map */
@@ -216,6 +220,9 @@
 #define QMI_INTR_EN_SINGLE_ECC		0x80000000
 
 #define QMI_GS_HALT_NOT_BUSY		0x00000002
+
+/* HWP defines */
+#define HWP_RPIMAC_PEN			0x00000001
 
 /* IRAM defines */
 #define IRAM_IADD_AIE			0x80000000
@@ -474,6 +481,12 @@ struct fman_dma_regs {
 	u32 res00e0[0x400 - 56];
 };
 
+struct fman_hwp_regs {
+	u32 res0000[0x844 / 4];		/* 0x000..0x843 */
+	u32 fmprrpimac;	/* FM Parser Internal memory access control */
+	u32 res[(0x1000 - 0x848) / 4];	/* 0x848..0xFFF */
+};
+
 /* Structure that holds current FMan state.
  * Used for saving run time information.
  */
@@ -551,79 +564,6 @@ struct fman_cfg {
 	u32 total_fifo_size;
 	u32 total_num_of_tasks;
 	u32 qmi_def_tnums_thresh;
-};
-
-/* Structure that holds information received from device tree */
-struct fman_dts_params {
-	void __iomem *base_addr;		/* FMan virtual address */
-	struct resource *res;			/* FMan memory resource */
-	u8 id;					/* FMan ID */
-
-	int err_irq;				/* FMan Error IRQ */
-
-	u16 clk_freq;				/* FMan clock freq (In Mhz) */
-
-	u32 qman_channel_base;			/* QMan channels base */
-	u32 num_of_qman_channels;		/* Number of QMan channels */
-
-	struct resource muram_res;		/* MURAM resource */
-};
-
-/** fman_exceptions_cb
- * fman		- Pointer to FMan
- * exception	- The exception.
- *
- * Exceptions user callback routine, will be called upon an exception
- * passing the exception identification.
- *
- * Return: irq status
- */
-typedef irqreturn_t (fman_exceptions_cb)(struct fman *fman,
-					 enum fman_exceptions exception);
-
-/** fman_bus_error_cb
- * fman		- Pointer to FMan
- * port_id	- Port id
- * addr		- Address that caused the error
- * tnum		- Owner of error
- * liodn	- Logical IO device number
- *
- * Bus error user callback routine, will be called upon bus error,
- * passing parameters describing the errors and the owner.
- *
- * Return: IRQ status
- */
-typedef irqreturn_t (fman_bus_error_cb)(struct fman *fman, u8 port_id,
-					u64 addr, u8 tnum, u16 liodn);
-
-struct fman {
-	struct device *dev;
-	void __iomem *base_addr;
-	struct fman_intr_src intr_mng[FMAN_EV_CNT];
-
-	struct fman_fpm_regs __iomem *fpm_regs;
-	struct fman_bmi_regs __iomem *bmi_regs;
-	struct fman_qmi_regs __iomem *qmi_regs;
-	struct fman_dma_regs __iomem *dma_regs;
-	fman_exceptions_cb *exception_cb;
-	fman_bus_error_cb *bus_error_cb;
-	/* Spinlock for FMan use */
-	spinlock_t spinlock;
-	struct fman_state_struct *state;
-
-	struct fman_cfg *cfg;
-	struct muram_info *muram;
-	/* cam section in muram */
-	int cam_offset;
-	size_t cam_size;
-	/* Fifo in MURAM */
-	int fifo_offset;
-	size_t fifo_size;
-
-	u32 liodn_base[64];
-	u32 liodn_offset[64];
-
-	struct fman_dts_params dts_params;
 };
 
 static irqreturn_t fman_exceptions(struct fman *fman,
@@ -998,6 +938,12 @@ static void qmi_init(struct fman_qmi_regs __iomem *qmi_rg,
 	iowrite32be(tmp_reg, &qmi_rg->fmqm_ien);
 }
 
+static void hwp_init(struct fman_hwp_regs __iomem *hwp_rg)
+{
+	/* enable HW Parser */
+	iowrite32be(HWP_RPIMAC_PEN, &hwp_rg->fmprrpimac);
+}
+
 static int enable(struct fman *fman, struct fman_cfg *cfg)
 {
 	u32 cfg_reg = 0;
@@ -1194,7 +1140,7 @@ static int fill_soc_specific_params(struct fman_state_struct *state)
 		state->max_num_of_open_dmas	= 32;
 		state->fm_port_num_of_cg	= 256;
 		state->num_of_rx_ports	= 6;
-		state->total_fifo_size	= 122 * 1024;
+		state->total_fifo_size	= 136 * 1024;
 		break;
 
 	case 2:
@@ -1792,6 +1738,8 @@ static int fman_config(struct fman *fman)
 	fman->bmi_regs = base_addr + BMI_OFFSET;
 	fman->qmi_regs = base_addr + QMI_OFFSET;
 	fman->dma_regs = base_addr + DMA_OFFSET;
+	fman->hwp_regs = base_addr + HWP_OFFSET;
+	fman->kg_regs = base_addr + KG_OFFSET;
 	fman->base_addr = base_addr;
 
 	spin_lock_init(&fman->spinlock);
@@ -1871,6 +1819,98 @@ err_fm_state:
 	return -EINVAL;
 }
 
+static int fman_reset(struct fman *fman)
+{
+	u32 count;
+	int err = 0;
+
+	if (fman->state->rev_info.major < 6) {
+		iowrite32be(FPM_RSTC_FM_RESET, &fman->fpm_regs->fm_rstc);
+		/* Wait for reset completion */
+		count = 100;
+		do {
+			udelay(1);
+		} while (((ioread32be(&fman->fpm_regs->fm_rstc)) &
+			 FPM_RSTC_FM_RESET) && --count);
+		if (count == 0)
+			err = -EBUSY;
+
+		goto _return;
+	} else {
+#ifdef CONFIG_PPC
+		struct device_node *guts_node;
+		struct ccsr_guts __iomem *guts_regs;
+		u32 devdisr2, reg;
+
+		/* Errata A007273 */
+		guts_node =
+			of_find_compatible_node(NULL, NULL,
+						"fsl,qoriq-device-config-2.0");
+		if (!guts_node) {
+			dev_err(fman->dev, "%s: Couldn't find guts node\n",
+				__func__);
+			goto guts_node;
+		}
+
+		guts_regs = of_iomap(guts_node, 0);
+		if (!guts_regs) {
+			dev_err(fman->dev, "%s: Couldn't map %pOF regs\n",
+				__func__, guts_node);
+			goto guts_regs;
+		}
+#define FMAN1_ALL_MACS_MASK	0xFCC00000
+#define FMAN2_ALL_MACS_MASK	0x000FCC00
+		/* Read current state */
+		devdisr2 = ioread32be(&guts_regs->devdisr2);
+		if (fman->dts_params.id == 0)
+			reg = devdisr2 & ~FMAN1_ALL_MACS_MASK;
+		else
+			reg = devdisr2 & ~FMAN2_ALL_MACS_MASK;
+
+		/* Enable all MACs */
+		iowrite32be(reg, &guts_regs->devdisr2);
+#endif
+
+		/* Perform FMan reset */
+		iowrite32be(FPM_RSTC_FM_RESET, &fman->fpm_regs->fm_rstc);
+
+		/* Wait for reset completion */
+		count = 100;
+		do {
+			udelay(1);
+		} while (((ioread32be(&fman->fpm_regs->fm_rstc)) &
+			 FPM_RSTC_FM_RESET) && --count);
+		if (count == 0) {
+#ifdef CONFIG_PPC
+			iounmap(guts_regs);
+			of_node_put(guts_node);
+#endif
+			err = -EBUSY;
+			goto _return;
+		}
+#ifdef CONFIG_PPC
+
+		/* Restore devdisr2 value */
+		iowrite32be(devdisr2, &guts_regs->devdisr2);
+
+		iounmap(guts_regs);
+		of_node_put(guts_node);
+#endif
+
+		goto _return;
+
+#ifdef CONFIG_PPC
+guts_regs:
+		of_node_put(guts_node);
+guts_node:
+		dev_dbg(fman->dev, "%s: Didn't perform FManV3 reset due to Errata A007273!\n",
+			__func__);
+#endif
+	}
+_return:
+	return err;
+}
+
 static int fman_init(struct fman *fman)
 {
 	struct fman_cfg *cfg = NULL;
@@ -1914,22 +1954,9 @@ static int fman_init(struct fman *fman)
 		fman->liodn_base[i] = liodn_base;
 	}
 
-	/* FMan Reset (supported only for FMan V2) */
-	if (fman->state->rev_info.major >= 6) {
-		/* Errata A007273 */
-		dev_dbg(fman->dev, "%s: FManV3 reset is not supported!\n",
-			__func__);
-	} else {
-		iowrite32be(FPM_RSTC_FM_RESET, &fman->fpm_regs->fm_rstc);
-		/* Wait for reset completion */
-		count = 100;
-		do {
-			udelay(1);
-		} while (((ioread32be(&fman->fpm_regs->fm_rstc)) &
-			 FPM_RSTC_FM_RESET) && --count);
-		if (count == 0)
-			return -EBUSY;
-	}
+	err = fman_reset(fman);
+	if (err)
+		return err;
 
 	if (ioread32be(&fman->qmi_regs->fmqm_gs) & QMI_GS_HALT_NOT_BUSY) {
 		resume(fman->fpm_regs);
@@ -1964,7 +1991,7 @@ static int fman_init(struct fman *fman)
 	/* allocate MURAM for FIFO according to total size */
 	fman->fifo_offset = fman_muram_alloc(fman->muram,
 					     fman->state->total_fifo_size);
-	if (IS_ERR_VALUE(fman->cam_offset)) {
+	if (IS_ERR_VALUE(fman->fifo_offset)) {
 		free_init_resources(fman);
 		dev_err(fman->dev, "%s: MURAM alloc for BMI FIFO failed\n",
 			__func__);
@@ -1981,6 +2008,14 @@ static int fman_init(struct fman *fman)
 
 	/* Init QMI Registers */
 	qmi_init(fman->qmi_regs, fman->cfg);
+
+	/* Init HW Parser */
+	hwp_init(fman->hwp_regs);
+
+	/* Init KeyGen */
+	fman->keygen = keygen_init(fman->kg_regs);
+	if (!fman->keygen)
+		return -EINVAL;
 
 	err = enable(fman, cfg);
 	if (err != 0)
@@ -2043,6 +2078,7 @@ void fman_register_intr(struct fman *fman, enum fman_event_modules module,
 	fman->intr_mng[event].isr_cb = isr_cb;
 	fman->intr_mng[event].src_handle = src_arg;
 }
+EXPORT_SYMBOL(fman_register_intr);
 
 /**
  * fman_unregister_intr
@@ -2066,6 +2102,7 @@ void fman_unregister_intr(struct fman *fman, enum fman_event_modules module,
 	fman->intr_mng[event].isr_cb = NULL;
 	fman->intr_mng[event].src_handle = NULL;
 }
+EXPORT_SYMBOL(fman_unregister_intr);
 
 /**
  * fman_set_port_params
@@ -2169,6 +2206,7 @@ return_err:
 	spin_unlock_irqrestore(&fman->spinlock, flags);
 	return err;
 }
+EXPORT_SYMBOL(fman_set_port_params);
 
 /**
  * fman_reset_mac
@@ -2238,6 +2276,7 @@ int fman_reset_mac(struct fman *fman, u8 mac_id)
 
 	return 0;
 }
+EXPORT_SYMBOL(fman_reset_mac);
 
 /**
  * fman_set_mac_max_frame
@@ -2255,8 +2294,7 @@ int fman_set_mac_max_frame(struct fman *fman, u8 mac_id, u16 mfl)
 	 * or equal to the port's max
 	 */
 	if ((!fman->state->port_mfl[mac_id]) ||
-	    (fman->state->port_mfl[mac_id] &&
-	    (mfl <= fman->state->port_mfl[mac_id]))) {
+	    (mfl <= fman->state->port_mfl[mac_id])) {
 		fman->state->mac_mfl[mac_id] = mfl;
 	} else {
 		dev_warn(fman->dev, "%s: MAC max_frame_length is larger than Port max_frame_length\n",
@@ -2265,6 +2303,7 @@ int fman_set_mac_max_frame(struct fman *fman, u8 mac_id, u16 mfl)
 	}
 	return 0;
 }
+EXPORT_SYMBOL(fman_set_mac_max_frame);
 
 /**
  * fman_get_clock_freq
@@ -2291,6 +2330,7 @@ u32 fman_get_bmi_max_fifo_size(struct fman *fman)
 {
 	return fman->state->bmi_max_fifo_size;
 }
+EXPORT_SYMBOL(fman_get_bmi_max_fifo_size);
 
 /**
  * fman_get_revision
@@ -2312,6 +2352,7 @@ void fman_get_revision(struct fman *fman, struct fman_rev_info *rev_info)
 				FPM_REV1_MAJOR_SHIFT);
 	rev_info->minor = tmp & FPM_REV1_MINOR_MASK;
 }
+EXPORT_SYMBOL(fman_get_revision);
 
 /**
  * fman_get_qman_channel_id
@@ -2327,15 +2368,21 @@ u32 fman_get_qman_channel_id(struct fman *fman, u32 port_id)
 	int i;
 
 	if (fman->state->rev_info.major >= 6) {
-		u32 port_ids[] = {0x30, 0x31, 0x28, 0x29, 0x2a, 0x2b,
-				  0x2c, 0x2d, 0x2, 0x3, 0x4, 0x5, 0x7, 0x7};
+		static const u32 port_ids[] = {
+			0x30, 0x31, 0x28, 0x29, 0x2a, 0x2b,
+			0x2c, 0x2d, 0x2, 0x3, 0x4, 0x5, 0x7, 0x7
+		};
+
 		for (i = 0; i < fman->state->num_of_qman_channels; i++) {
 			if (port_ids[i] == port_id)
 				break;
 		}
 	} else {
-		u32 port_ids[] = {0x30, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x1,
-				  0x2, 0x3, 0x4, 0x5, 0x7, 0x7};
+		static const u32 port_ids[] = {
+			0x30, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x1,
+			0x2, 0x3, 0x4, 0x5, 0x7, 0x7
+		};
+
 		for (i = 0; i < fman->state->num_of_qman_channels; i++) {
 			if (port_ids[i] == port_id)
 				break;
@@ -2347,6 +2394,7 @@ u32 fman_get_qman_channel_id(struct fman *fman, u32 port_id)
 
 	return fman->state->qman_channel_base + i;
 }
+EXPORT_SYMBOL(fman_get_qman_channel_id);
 
 /**
  * fman_get_mem_region
@@ -2360,6 +2408,7 @@ struct resource *fman_get_mem_region(struct fman *fman)
 {
 	return fman->state->res;
 }
+EXPORT_SYMBOL(fman_get_mem_region);
 
 /* Bootargs defines */
 /* Extra headroom for RX buffers - Default, min and max */
@@ -2381,7 +2430,7 @@ struct resource *fman_get_mem_region(struct fman *fman)
  * particular forwarding scenarios that add extra headers to the
  * forwarded frame.
  */
-int fsl_fm_rx_extra_headroom = FSL_FM_RX_EXTRA_HEADROOM;
+static int fsl_fm_rx_extra_headroom = FSL_FM_RX_EXTRA_HEADROOM;
 module_param(fsl_fm_rx_extra_headroom, int, 0);
 MODULE_PARM_DESC(fsl_fm_rx_extra_headroom, "Extra headroom for Rx buffers");
 
@@ -2394,7 +2443,7 @@ MODULE_PARM_DESC(fsl_fm_rx_extra_headroom, "Extra headroom for Rx buffers");
  * Could be overridden once, at boot-time, via the
  * fm_set_max_frm() callback.
  */
-int fsl_fm_max_frm = FSL_FM_MAX_FRAME_SIZE;
+static int fsl_fm_max_frm = FSL_FM_MAX_FRAME_SIZE;
 module_param(fsl_fm_max_frm, int, 0);
 MODULE_PARM_DESC(fsl_fm_max_frm, "Maximum frame size, across all interfaces");
 
@@ -2466,6 +2515,7 @@ struct fman *fman_bind(struct device *fm_dev)
 {
 	return (struct fman *)(dev_get_drvdata(get_device(fm_dev)));
 }
+EXPORT_SYMBOL(fman_bind);
 
 static irqreturn_t fman_err_irq(int irq, void *handle)
 {
@@ -2655,8 +2705,8 @@ static struct fman *read_dts_node(struct platform_device *of_dev)
 	struct fman *fman;
 	struct device_node *fm_node, *muram_node;
 	struct resource *res;
-	const u32 *u32_prop;
-	int lenp, err, irq;
+	u32 val, range[2];
+	int err, irq;
 	struct clk *clk;
 	u32 clk_rate;
 	phys_addr_t phys_base_addr;
@@ -2668,16 +2718,13 @@ static struct fman *read_dts_node(struct platform_device *of_dev)
 
 	fm_node = of_node_get(of_dev->dev.of_node);
 
-	u32_prop = (const u32 *)of_get_property(fm_node, "cell-index", &lenp);
-	if (!u32_prop) {
-		dev_err(&of_dev->dev, "%s: of_get_property(%s, cell-index) failed\n",
-			__func__, fm_node->full_name);
+	err = of_property_read_u32(fm_node, "cell-index", &val);
+	if (err) {
+		dev_err(&of_dev->dev, "%s: failed to read cell-index for %pOF\n",
+			__func__, fm_node);
 		goto fman_node_put;
 	}
-	if (WARN_ON(lenp != sizeof(u32)))
-		goto fman_node_put;
-
-	fman->dts_params.id = (u8)fdt32_to_cpu(u32_prop[0]);
+	fman->dts_params.id = (u8)val;
 
 	/* Get the FM interrupt */
 	res = platform_get_resource(of_dev, IORESOURCE_IRQ, 0);
@@ -2700,7 +2747,7 @@ static struct fman *read_dts_node(struct platform_device *of_dev)
 	/* Get the FM address */
 	res = platform_get_resource(of_dev, IORESOURCE_MEM, 0);
 	if (!res) {
-		dev_err(&of_dev->dev, "%s: Can't get FMan memory resouce\n",
+		dev_err(&of_dev->dev, "%s: Can't get FMan memory resource\n",
 			__func__);
 		goto fman_node_put;
 	}
@@ -2724,18 +2771,15 @@ static struct fman *read_dts_node(struct platform_device *of_dev)
 	/* Rounding to MHz */
 	fman->dts_params.clk_freq = DIV_ROUND_UP(clk_rate, 1000000);
 
-	u32_prop = (const u32 *)of_get_property(fm_node,
-						"fsl,qman-channel-range",
-						&lenp);
-	if (!u32_prop) {
-		dev_err(&of_dev->dev, "%s: of_get_property(%s, fsl,qman-channel-range) failed\n",
-			__func__, fm_node->full_name);
+	err = of_property_read_u32_array(fm_node, "fsl,qman-channel-range",
+					 &range[0], 2);
+	if (err) {
+		dev_err(&of_dev->dev, "%s: failed to read fsl,qman-channel-range for %pOF\n",
+			__func__, fm_node);
 		goto fman_node_put;
 	}
-	if (WARN_ON(lenp != sizeof(u32) * 2))
-		goto fman_node_put;
-	fman->dts_params.qman_channel_base = fdt32_to_cpu(u32_prop[0]);
-	fman->dts_params.num_of_qman_channels = fdt32_to_cpu(u32_prop[1]);
+	fman->dts_params.qman_channel_base = range[0];
+	fman->dts_params.num_of_qman_channels = range[1];
 
 	/* Get the MURAM base address and size */
 	muram_node = of_find_matching_node(fm_node, fman_muram_match);
@@ -2757,7 +2801,8 @@ static struct fman *read_dts_node(struct platform_device *of_dev)
 	of_node_put(muram_node);
 	of_node_put(fm_node);
 
-	err = devm_request_irq(&of_dev->dev, irq, fman_irq, 0, "fman", fman);
+	err = devm_request_irq(&of_dev->dev, irq, fman_irq, IRQF_SHARED,
+			       "fman", fman);
 	if (err < 0) {
 		dev_err(&of_dev->dev, "%s: irq %d allocation failed (error = %d)\n",
 			__func__, irq, err);
@@ -2786,12 +2831,19 @@ static struct fman *read_dts_node(struct platform_device *of_dev)
 
 	fman->dts_params.base_addr =
 		devm_ioremap(&of_dev->dev, phys_base_addr, mem_size);
-	if (fman->dts_params.base_addr == 0) {
+	if (!fman->dts_params.base_addr) {
 		dev_err(&of_dev->dev, "%s: devm_ioremap() failed\n", __func__);
 		goto fman_free;
 	}
 
 	fman->dev = &of_dev->dev;
+
+	err = of_platform_populate(fm_node, NULL, NULL, &of_dev->dev);
+	if (err) {
+		dev_err(&of_dev->dev, "%s: of_platform_populate() failed\n",
+			__func__);
+		goto fman_free;
+	}
 
 	return fman;
 
@@ -2858,7 +2910,7 @@ static const struct of_device_id fman_match[] = {
 	{}
 };
 
-MODULE_DEVICE_TABLE(of, fm_match);
+MODULE_DEVICE_TABLE(of, fman_match);
 
 static struct platform_driver fman_driver = {
 	.driver = {
@@ -2868,4 +2920,25 @@ static struct platform_driver fman_driver = {
 	.probe = fman_probe,
 };
 
-builtin_platform_driver(fman_driver);
+static int __init fman_load(void)
+{
+	int err;
+
+	pr_debug("FSL DPAA FMan driver\n");
+
+	err = platform_driver_register(&fman_driver);
+	if (err < 0)
+		pr_err("Error, platform_driver_register() = %d\n", err);
+
+	return err;
+}
+module_init(fman_load);
+
+static void __exit fman_unload(void)
+{
+	platform_driver_unregister(&fman_driver);
+}
+module_exit(fman_unload);
+
+MODULE_LICENSE("Dual BSD/GPL");
+MODULE_DESCRIPTION("Freescale DPAA Frame Manager driver");

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*  linux/include/linux/clocksource.h
  *
  *  This file contains the structure definitions for clocksources.
@@ -15,6 +16,7 @@
 #include <linux/cache.h>
 #include <linux/timer.h>
 #include <linux/init.h>
+#include <linux/of.h>
 #include <asm/div64.h>
 #include <asm/io.h>
 
@@ -61,6 +63,8 @@ struct module;
  * @archdata:		arch-specific data
  * @suspend:		suspend function for the clocksource, if necessary
  * @resume:		resume function for the clocksource, if necessary
+ * @mark_unstable:	Optional function to inform the clocksource driver that
+ *			the watchdog marked the clocksource unstable
  * @owner:		module reference, must be set by clocksource in modules
  *
  * Note: This struct is not used in hotpathes of the timekeeping code
@@ -74,8 +78,8 @@ struct module;
  * structure.
  */
 struct clocksource {
-	cycle_t (*read)(struct clocksource *cs);
-	cycle_t mask;
+	u64 (*read)(struct clocksource *cs);
+	u64 mask;
 	u32 mult;
 	u32 shift;
 	u64 max_idle_ns;
@@ -92,13 +96,15 @@ struct clocksource {
 	unsigned long flags;
 	void (*suspend)(struct clocksource *cs);
 	void (*resume)(struct clocksource *cs);
+	void (*mark_unstable)(struct clocksource *cs);
+	void (*tick_stable)(struct clocksource *cs);
 
 	/* private: */
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 	/* Watchdog related data, used by the framework */
 	struct list_head wd_list;
-	cycle_t cs_last;
-	cycle_t wd_last;
+	u64 cs_last;
+	u64 wd_last;
 #endif
 	struct module *owner;
 };
@@ -116,7 +122,24 @@ struct clocksource {
 #define CLOCK_SOURCE_RESELECT			0x100
 
 /* simplify initialization of mask field */
-#define CLOCKSOURCE_MASK(bits) (cycle_t)((bits) < 64 ? ((1ULL<<(bits))-1) : -1)
+#define CLOCKSOURCE_MASK(bits) GENMASK_ULL((bits) - 1, 0)
+
+static inline u32 clocksource_freq2mult(u32 freq, u32 shift_constant, u64 from)
+{
+	/*  freq = cyc/from
+	 *  mult/2^shift  = ns/cyc
+	 *  mult = ns/cyc * 2^shift
+	 *  mult = from/freq * 2^shift
+	 *  mult = from * 2^shift / freq
+	 *  mult = (from<<shift) / freq
+	 */
+	u64 tmp = ((u64)from) << shift_constant;
+
+	tmp += freq/2; /* round for do_div */
+	do_div(tmp, freq);
+
+	return (u32)tmp;
+}
 
 /**
  * clocksource_khz2mult - calculates mult from khz and shift
@@ -128,19 +151,7 @@ struct clocksource {
  */
 static inline u32 clocksource_khz2mult(u32 khz, u32 shift_constant)
 {
-	/*  khz = cyc/(Million ns)
-	 *  mult/2^shift  = ns/cyc
-	 *  mult = ns/cyc * 2^shift
-	 *  mult = 1Million/khz * 2^shift
-	 *  mult = 1000000 * 2^shift / khz
-	 *  mult = (1000000<<shift) / khz
-	 */
-	u64 tmp = ((u64)1000000) << shift_constant;
-
-	tmp += khz/2; /* round for do_div */
-	do_div(tmp, khz);
-
-	return (u32)tmp;
+	return clocksource_freq2mult(khz, shift_constant, NSEC_PER_MSEC);
 }
 
 /**
@@ -154,19 +165,7 @@ static inline u32 clocksource_khz2mult(u32 khz, u32 shift_constant)
  */
 static inline u32 clocksource_hz2mult(u32 hz, u32 shift_constant)
 {
-	/*  hz = cyc/(Billion ns)
-	 *  mult/2^shift  = ns/cyc
-	 *  mult = ns/cyc * 2^shift
-	 *  mult = 1Billion/hz * 2^shift
-	 *  mult = 1000000000 * 2^shift / hz
-	 *  mult = (1000000000<<shift) / hz
-	 */
-	u64 tmp = ((u64)1000000000) << shift_constant;
-
-	tmp += hz/2; /* round for do_div */
-	do_div(tmp, hz);
-
-	return (u32)tmp;
+	return clocksource_freq2mult(hz, shift_constant, NSEC_PER_SEC);
 }
 
 /**
@@ -175,11 +174,14 @@ static inline u32 clocksource_hz2mult(u32 hz, u32 shift_constant)
  * @mult:	cycle to nanosecond multiplier
  * @shift:	cycle to nanosecond divisor (power of two)
  *
- * Converts cycles to nanoseconds, using the given mult and shift.
+ * Converts clocksource cycles to nanoseconds, using the given @mult and @shift.
+ * The code is optimized for performance and is not intended to work
+ * with absolute clocksource cycles (as those will easily overflow),
+ * but is only intended to be used with relative (delta) clocksource cycles.
  *
  * XXX - This could use some mult_lxl_ll() asm optimization
  */
-static inline s64 clocksource_cyc2ns(cycle_t cycles, u32 mult, u32 shift)
+static inline s64 clocksource_cyc2ns(u64 cycles, u32 mult, u32 shift)
 {
 	return ((u64) cycles * mult) >> shift;
 }
@@ -192,6 +194,9 @@ extern void clocksource_suspend(void);
 extern void clocksource_resume(void);
 extern struct clocksource * __init clocksource_default_clock(void);
 extern void clocksource_mark_unstable(struct clocksource *cs);
+extern void
+clocksource_start_suspend_timing(struct clocksource *cs, u64 start_cycles);
+extern u64 clocksource_stop_suspend_timing(struct clocksource *cs, u64 now);
 
 extern u64
 clocks_calc_max_nsecs(u32 mult, u32 shift, u32 maxadj, u64 mask, u64 *max_cycles);
@@ -239,26 +244,29 @@ static inline void __clocksource_update_freq_khz(struct clocksource *cs, u32 khz
 
 extern int timekeeping_notify(struct clocksource *clock);
 
-extern cycle_t clocksource_mmio_readl_up(struct clocksource *);
-extern cycle_t clocksource_mmio_readl_down(struct clocksource *);
-extern cycle_t clocksource_mmio_readw_up(struct clocksource *);
-extern cycle_t clocksource_mmio_readw_down(struct clocksource *);
+extern u64 clocksource_mmio_readl_up(struct clocksource *);
+extern u64 clocksource_mmio_readl_down(struct clocksource *);
+extern u64 clocksource_mmio_readw_up(struct clocksource *);
+extern u64 clocksource_mmio_readw_down(struct clocksource *);
 
 extern int clocksource_mmio_init(void __iomem *, const char *,
-	unsigned long, int, unsigned, cycle_t (*)(struct clocksource *));
+	unsigned long, int, unsigned, u64 (*)(struct clocksource *));
 
 extern int clocksource_i8253_init(void);
 
-#define CLOCKSOURCE_OF_DECLARE(name, compat, fn) \
-	OF_DECLARE_1(clksrc, name, compat, fn)
+#define TIMER_OF_DECLARE(name, compat, fn) \
+	OF_DECLARE_1_RET(timer, name, compat, fn)
 
-#ifdef CONFIG_CLKSRC_PROBE
-extern void clocksource_probe(void);
+#define CLOCKSOURCE_OF_DECLARE(name, compat, fn) \
+	TIMER_OF_DECLARE(name, compat, fn)
+
+#ifdef CONFIG_TIMER_PROBE
+extern void timer_probe(void);
 #else
-static inline void clocksource_probe(void) {}
+static inline void timer_probe(void) {}
 #endif
 
-#define CLOCKSOURCE_ACPI_DECLARE(name, table_id, fn)		\
-	ACPI_DECLARE_PROBE_ENTRY(clksrc, name, table_id, 0, NULL, 0, fn)
+#define TIMER_ACPI_DECLARE(name, table_id, fn)		\
+	ACPI_DECLARE_PROBE_ENTRY(timer, name, table_id, 0, NULL, 0, fn)
 
 #endif /* _LINUX_CLOCKSOURCE_H */

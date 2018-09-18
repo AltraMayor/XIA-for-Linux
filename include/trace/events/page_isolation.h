@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM page_isolation
 
@@ -29,7 +30,7 @@ TRACE_EVENT(test_pages_isolated,
 
 	TP_printk("start_pfn=0x%lx end_pfn=0x%lx fin_pfn=0x%lx ret=%s",
 		__entry->start_pfn, __entry->end_pfn, __entry->fin_pfn,
-		__entry->end_pfn == __entry->fin_pfn ? "success" : "fail")
+		__entry->end_pfn <= __entry->fin_pfn ? "success" : "fail")
 );
 
 #endif /* _TRACE_PAGE_ISOLATION_H */

@@ -48,8 +48,6 @@
 #include "t4_regs.h"
 #include "t4_values.h"
 
-#define VLAN_NONE 0xfff
-
 /* identifies sync vs async L2T_WRITE_REQs */
 #define SYNC_WR_S    12
 #define SYNC_WR_V(x) ((x) << SYNC_WR_S)
@@ -148,7 +146,7 @@ static int write_l2e(struct adapter *adap, struct l2t_entry *e, int sync)
 	if (!skb)
 		return -ENOMEM;
 
-	req = (struct cpl_l2t_write_req *)__skb_put(skb, sizeof(*req));
+	req = __skb_put(skb, sizeof(*req));
 	INIT_TP_WR(req, 0);
 
 	OPCODE_TID(req) = htonl(MK_OPCODE_TID(CPL_L2T_WRITE_REQ,
@@ -233,6 +231,7 @@ again:
 		if (e->state == L2T_STATE_STALE)
 			e->state = L2T_STATE_VALID;
 		spin_unlock_bh(&e->lock);
+		/* fall through */
 	case L2T_STATE_VALID:     /* fast-path, send the packet on */
 		return t4_ofld_send(adap, skb);
 	case L2T_STATE_RESOLVING:
@@ -424,7 +423,7 @@ struct l2t_entry *cxgb4_l2t_get(struct l2t_data *d, struct neighbour *neigh,
 	u8 lport;
 	u16 vlan;
 	struct l2t_entry *e;
-	int addr_len = neigh->tbl->key_len;
+	unsigned int addr_len = neigh->tbl->key_len;
 	u32 *addr = (u32 *)neigh->primary_key;
 	int ifidx = neigh->dev->ifindex;
 	int hash = addr_hash(d, addr, addr_len, ifidx);
@@ -434,7 +433,7 @@ struct l2t_entry *cxgb4_l2t_get(struct l2t_data *d, struct neighbour *neigh,
 	else
 		lport = netdev2pinfo(physdev)->lport;
 
-	if (neigh->dev->priv_flags & IFF_802_1Q_VLAN)
+	if (is_vlan_dev(neigh->dev))
 		vlan = vlan_dev_vlan_id(neigh->dev);
 	else
 		vlan = VLAN_NONE;
@@ -493,7 +492,7 @@ u64 cxgb4_select_ntuple(struct net_device *dev,
 	if (tp->protocol_shift >= 0)
 		ntuple |= (u64)IPPROTO_TCP << tp->protocol_shift;
 
-	if (tp->vnic_shift >= 0) {
+	if (tp->vnic_shift >= 0 && (tp->ingress_config & VNIC_F)) {
 		u32 viid = cxgb4_port_viid(dev);
 		u32 vf = FW_VIID_VIN_G(viid);
 		u32 pf = FW_VIID_PFN_G(viid);
@@ -538,7 +537,7 @@ void t4_l2t_update(struct adapter *adap, struct neighbour *neigh)
 	struct l2t_entry *e;
 	struct sk_buff_head *arpq = NULL;
 	struct l2t_data *d = adap->l2t;
-	int addr_len = neigh->tbl->key_len;
+	unsigned int addr_len = neigh->tbl->key_len;
 	u32 *addr = (u32 *) neigh->primary_key;
 	int ifidx = neigh->dev->ifindex;
 	int hash = addr_hash(d, addr, addr_len, ifidx);
@@ -648,7 +647,7 @@ struct l2t_data *t4_init_l2t(unsigned int l2t_start, unsigned int l2t_end)
 	if (l2t_size < L2T_MIN_HASH_BUCKETS)
 		return NULL;
 
-	d = t4_alloc_mem(sizeof(*d) + l2t_size * sizeof(struct l2t_entry));
+	d = kvzalloc(sizeof(*d) + l2t_size * sizeof(struct l2t_entry), GFP_KERNEL);
 	if (!d)
 		return NULL;
 

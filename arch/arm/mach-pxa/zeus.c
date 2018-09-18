@@ -13,6 +13,7 @@
 
 #include <linux/cpufreq.h>
 #include <linux/interrupt.h>
+#include <linux/leds.h>
 #include <linux/irq.h>
 #include <linux/pm.h>
 #include <linux/gpio.h>
@@ -25,7 +26,7 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
 #include <linux/i2c.h>
-#include <linux/i2c/pxa-i2c.h>
+#include <linux/platform_data/i2c-pxa.h>
 #include <linux/platform_data/pca953x.h>
 #include <linux/apm-emulation.h>
 #include <linux/can/platform/mcp251x.h>
@@ -39,6 +40,7 @@
 #include <asm/mach/map.h>
 
 #include "pxa27x.h"
+#include "devices.h"
 #include <mach/regs-uart.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
 #include <linux/platform_data/mmc-pxamci.h>
@@ -910,7 +912,7 @@ static void __init zeus_map_io(void)
 	PMCR = PSPR = 0;
 
 	/* enable internal 32.768Khz oscillator (ignore OSCC_OOK) */
-	OSCC |= OSCC_OON;
+	writel(readl(OSCC) | OSCC_OON, OSCC);
 
 	/* Some clock cycles later (from OSCC_ON), programme PCFR (OPDE...).
 	 * float chip selects and PCMCIA */

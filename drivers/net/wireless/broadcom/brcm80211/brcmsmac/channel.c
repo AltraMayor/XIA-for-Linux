@@ -636,7 +636,7 @@ static void brcms_reg_apply_radar_flags(struct wiphy *wiphy)
 	struct ieee80211_channel *ch;
 	int i;
 
-	sband = wiphy->bands[IEEE80211_BAND_5GHZ];
+	sband = wiphy->bands[NL80211_BAND_5GHZ];
 	if (!sband)
 		return;
 
@@ -652,7 +652,6 @@ static void brcms_reg_apply_radar_flags(struct wiphy *wiphy)
 		 */
 		if (!(ch->flags & IEEE80211_CHAN_DISABLED))
 			ch->flags |= IEEE80211_CHAN_RADAR |
-				     IEEE80211_CHAN_NO_IR |
 				     IEEE80211_CHAN_NO_IR;
 	}
 }
@@ -666,7 +665,7 @@ brcms_reg_apply_beaconing_flags(struct wiphy *wiphy,
 	const struct ieee80211_reg_rule *rule;
 	int band, i;
 
-	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		sband = wiphy->bands[band];
 		if (!sband)
 			continue;
@@ -710,7 +709,7 @@ static void brcms_reg_notifier(struct wiphy *wiphy,
 		brcms_reg_apply_beaconing_flags(wiphy, request->initiator);
 
 	/* Disable radio if all channels disallowed by regulatory */
-	for (band = 0; !ch_found && band < IEEE80211_NUM_BANDS; band++) {
+	for (band = 0; !ch_found && band < NUM_NL80211_BANDS; band++) {
 		sband = wiphy->bands[band];
 		if (!sband)
 			continue;
@@ -755,9 +754,9 @@ void brcms_c_regd_init(struct brcms_c_info *wlc)
 					      &sup_chan);
 
 		if (band_idx == BAND_2G_INDEX)
-			sband = wiphy->bands[IEEE80211_BAND_2GHZ];
+			sband = wiphy->bands[NL80211_BAND_2GHZ];
 		else
-			sband = wiphy->bands[IEEE80211_BAND_5GHZ];
+			sband = wiphy->bands[NL80211_BAND_5GHZ];
 
 		for (i = 0; i < sband->n_channels; i++) {
 			ch = &sband->channels[i];

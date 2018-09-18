@@ -302,10 +302,10 @@ am79c961_init_for_open(struct net_device *dev)
 	write_rreg (dev->base_addr, CSR0, CSR0_IENA|CSR0_STRT);
 }
 
-static void am79c961_timer(unsigned long data)
+static void am79c961_timer(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *)data;
-	struct dev_priv *priv = netdev_priv(dev);
+	struct dev_priv *priv = from_timer(priv, t, timer);
+	struct net_device *dev = priv->dev;
 	unsigned int lnkstat, carrier;
 	unsigned long flags;
 
@@ -663,7 +663,6 @@ static const struct net_device_ops am79c961_netdev_ops = {
 	.ndo_set_rx_mode	= am79c961_setmulticastlist,
 	.ndo_tx_timeout		= am79c961_timeout,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address	= eth_mac_addr,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= am79c961_poll_controller,
@@ -729,9 +728,8 @@ static int am79c961_probe(struct platform_device *pdev)
 	am79c961_banner();
 
 	spin_lock_init(&priv->chip_lock);
-	init_timer(&priv->timer);
-	priv->timer.data = (unsigned long)dev;
-	priv->timer.function = am79c961_timer;
+	priv->dev = dev;
+	timer_setup(&priv->timer, am79c961_timer, 0);
 
 	if (am79c961_hw_init(dev))
 		goto release;

@@ -1,7 +1,7 @@
 /*
  * Generic DVI Connector driver
  *
- * Copyright (C) 2013 Texas Instruments
+ * Copyright (C) 2013 Texas Instruments Incorporated - http://www.ti.com/
  * Author: Tomi Valkeinen <tomi.valkeinen@ti.com>
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -9,6 +9,7 @@
  * the Free Software Foundation.
  */
 
+#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -16,37 +17,42 @@
 
 #include <drm/drm_edid.h>
 
-#include <video/omapdss.h>
-#include <video/omap-panel-data.h>
+#include "../dss/omapdss.h"
 
-static const struct omap_video_timings dvic_default_timings = {
-	.x_res		= 640,
-	.y_res		= 480,
+static const struct videomode dvic_default_vm = {
+	.hactive	= 640,
+	.vactive	= 480,
 
 	.pixelclock	= 23500000,
 
-	.hfp		= 48,
-	.hsw		= 32,
-	.hbp		= 80,
+	.hfront_porch	= 48,
+	.hsync_len	= 32,
+	.hback_porch	= 80,
 
-	.vfp		= 3,
-	.vsw		= 4,
-	.vbp		= 7,
+	.vfront_porch	= 3,
+	.vsync_len	= 4,
+	.vback_porch	= 7,
 
-	.vsync_level	= OMAPDSS_SIG_ACTIVE_HIGH,
-	.hsync_level	= OMAPDSS_SIG_ACTIVE_HIGH,
-	.data_pclk_edge	= OMAPDSS_DRIVE_SIG_RISING_EDGE,
-	.de_level	= OMAPDSS_SIG_ACTIVE_HIGH,
-	.sync_pclk_edge	= OMAPDSS_DRIVE_SIG_FALLING_EDGE,
+	.flags		= DISPLAY_FLAGS_HSYNC_HIGH | DISPLAY_FLAGS_VSYNC_HIGH |
+			  DISPLAY_FLAGS_SYNC_NEGEDGE | DISPLAY_FLAGS_DE_HIGH |
+			  DISPLAY_FLAGS_PIXDATA_POSEDGE,
 };
 
 struct panel_drv_data {
 	struct omap_dss_device dssdev;
 	struct omap_dss_device *in;
 
-	struct omap_video_timings timings;
+	struct videomode vm;
 
 	struct i2c_adapter *i2c_adapter;
+
+	struct gpio_desc *hpd_gpio;
+
+	void (*hpd_cb)(void *cb_data, enum drm_connector_status status);
+	void *hpd_cb_data;
+	bool hpd_enabled;
+	/* mutex for hpd fields above */
+	struct mutex hpd_lock;
 };
 
 #define to_panel_data(x) container_of(x, struct panel_drv_data, dssdev)
@@ -54,16 +60,25 @@ struct panel_drv_data {
 static int dvic_connect(struct omap_dss_device *dssdev)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
-	struct omap_dss_device *in = ddata->in;
+	struct omap_dss_device *in;
 	int r;
 
 	if (omapdss_device_is_connected(dssdev))
 		return 0;
 
-	r = in->ops.dvi->connect(in, dssdev);
-	if (r)
-		return r;
+	in = omapdss_of_find_source_for_first_ep(dssdev->dev->of_node);
+	if (IS_ERR(in)) {
+		dev_err(dssdev->dev, "failed to find video source\n");
+		return PTR_ERR(in);
+	}
 
+	r = in->ops.dvi->connect(in, dssdev);
+	if (r) {
+		omap_dss_put_device(in);
+		return r;
+	}
+
+	ddata->in = in;
 	return 0;
 }
 
@@ -76,6 +91,9 @@ static void dvic_disconnect(struct omap_dss_device *dssdev)
 		return;
 
 	in->ops.dvi->disconnect(in, dssdev);
+
+	omap_dss_put_device(in);
+	ddata->in = NULL;
 }
 
 static int dvic_enable(struct omap_dss_device *dssdev)
@@ -90,7 +108,7 @@ static int dvic_enable(struct omap_dss_device *dssdev)
 	if (omapdss_device_is_enabled(dssdev))
 		return 0;
 
-	in->ops.dvi->set_timings(in, &ddata->timings);
+	in->ops.dvi->set_timings(in, &ddata->vm);
 
 	r = in->ops.dvi->enable(in);
 	if (r)
@@ -115,32 +133,32 @@ static void dvic_disable(struct omap_dss_device *dssdev)
 }
 
 static void dvic_set_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
+			     struct videomode *vm)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
 
-	ddata->timings = *timings;
-	dssdev->panel.timings = *timings;
+	ddata->vm = *vm;
+	dssdev->panel.vm = *vm;
 
-	in->ops.dvi->set_timings(in, timings);
+	in->ops.dvi->set_timings(in, vm);
 }
 
 static void dvic_get_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
+			     struct videomode *vm)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 
-	*timings = ddata->timings;
+	*vm = ddata->vm;
 }
 
 static int dvic_check_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
+			      struct videomode *vm)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
 
-	return in->ops.dvi->check_timings(in, timings);
+	return in->ops.dvi->check_timings(in, vm);
 }
 
 static int dvic_ddc_read(struct i2c_adapter *adapter,
@@ -180,6 +198,9 @@ static int dvic_read_edid(struct omap_dss_device *dssdev,
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	int r, l, bytes_read;
 
+	if (ddata->hpd_gpio && !gpiod_get_value_cansleep(ddata->hpd_gpio))
+		return -ENODEV;
+
 	if (!ddata->i2c_adapter)
 		return -ENODEV;
 
@@ -211,12 +232,69 @@ static bool dvic_detect(struct omap_dss_device *dssdev)
 	unsigned char out;
 	int r;
 
+	if (ddata->hpd_gpio)
+		return gpiod_get_value_cansleep(ddata->hpd_gpio);
+
 	if (!ddata->i2c_adapter)
 		return true;
 
 	r = dvic_ddc_read(ddata->i2c_adapter, &out, 1, 0);
 
 	return r == 0;
+}
+
+static int dvic_register_hpd_cb(struct omap_dss_device *dssdev,
+				 void (*cb)(void *cb_data,
+					    enum drm_connector_status status),
+				 void *cb_data)
+{
+	struct panel_drv_data *ddata = to_panel_data(dssdev);
+
+	if (!ddata->hpd_gpio)
+		return -ENOTSUPP;
+
+	mutex_lock(&ddata->hpd_lock);
+	ddata->hpd_cb = cb;
+	ddata->hpd_cb_data = cb_data;
+	mutex_unlock(&ddata->hpd_lock);
+	return 0;
+}
+
+static void dvic_unregister_hpd_cb(struct omap_dss_device *dssdev)
+{
+	struct panel_drv_data *ddata = to_panel_data(dssdev);
+
+	if (!ddata->hpd_gpio)
+		return;
+
+	mutex_lock(&ddata->hpd_lock);
+	ddata->hpd_cb = NULL;
+	ddata->hpd_cb_data = NULL;
+	mutex_unlock(&ddata->hpd_lock);
+}
+
+static void dvic_enable_hpd(struct omap_dss_device *dssdev)
+{
+	struct panel_drv_data *ddata = to_panel_data(dssdev);
+
+	if (!ddata->hpd_gpio)
+		return;
+
+	mutex_lock(&ddata->hpd_lock);
+	ddata->hpd_enabled = true;
+	mutex_unlock(&ddata->hpd_lock);
+}
+
+static void dvic_disable_hpd(struct omap_dss_device *dssdev)
+{
+	struct panel_drv_data *ddata = to_panel_data(dssdev);
+
+	if (!ddata->hpd_gpio)
+		return;
+
+	mutex_lock(&ddata->hpd_lock);
+	ddata->hpd_enabled = false;
+	mutex_unlock(&ddata->hpd_lock);
 }
 
 static struct omap_dss_driver dvic_driver = {
@@ -230,74 +308,69 @@ static struct omap_dss_driver dvic_driver = {
 	.get_timings	= dvic_get_timings,
 	.check_timings	= dvic_check_timings,
 
-	.get_resolution	= omapdss_default_get_resolution,
-
 	.read_edid	= dvic_read_edid,
 	.detect		= dvic_detect,
+
+	.register_hpd_cb	= dvic_register_hpd_cb,
+	.unregister_hpd_cb	= dvic_unregister_hpd_cb,
+	.enable_hpd		= dvic_enable_hpd,
+	.disable_hpd		= dvic_disable_hpd,
 };
 
-static int dvic_probe_pdata(struct platform_device *pdev)
+static irqreturn_t dvic_hpd_isr(int irq, void *data)
 {
-	struct panel_drv_data *ddata = platform_get_drvdata(pdev);
-	struct connector_dvi_platform_data *pdata;
-	struct omap_dss_device *in, *dssdev;
-	int i2c_bus_num;
+	struct panel_drv_data *ddata = data;
 
-	pdata = dev_get_platdata(&pdev->dev);
-	i2c_bus_num = pdata->i2c_bus_num;
+	mutex_lock(&ddata->hpd_lock);
+	if (ddata->hpd_enabled && ddata->hpd_cb) {
+		enum drm_connector_status status;
 
-	if (i2c_bus_num != -1) {
-		struct i2c_adapter *adapter;
+		if (dvic_detect(&ddata->dssdev))
+			status = connector_status_connected;
+		else
+			status = connector_status_disconnected;
 
-		adapter = i2c_get_adapter(i2c_bus_num);
-		if (!adapter) {
-			dev_err(&pdev->dev,
-					"Failed to get I2C adapter, bus %d\n",
-					i2c_bus_num);
-			return -EPROBE_DEFER;
-		}
-
-		ddata->i2c_adapter = adapter;
+		ddata->hpd_cb(ddata->hpd_cb_data, status);
 	}
+	mutex_unlock(&ddata->hpd_lock);
 
-	in = omap_dss_find_output(pdata->source);
-	if (in == NULL) {
-		i2c_put_adapter(ddata->i2c_adapter);
-
-		dev_err(&pdev->dev, "Failed to find video source\n");
-		return -EPROBE_DEFER;
-	}
-
-	ddata->in = in;
-
-	dssdev = &ddata->dssdev;
-	dssdev->name = pdata->name;
-
-	return 0;
+	return IRQ_HANDLED;
 }
 
 static int dvic_probe_of(struct platform_device *pdev)
 {
 	struct panel_drv_data *ddata = platform_get_drvdata(pdev);
 	struct device_node *node = pdev->dev.of_node;
-	struct omap_dss_device *in;
 	struct device_node *adapter_node;
 	struct i2c_adapter *adapter;
+	struct gpio_desc *gpio;
+	int r;
 
-	in = omapdss_of_find_source_for_first_ep(node);
-	if (IS_ERR(in)) {
-		dev_err(&pdev->dev, "failed to find video source\n");
-		return PTR_ERR(in);
+	gpio = devm_gpiod_get_optional(&pdev->dev, "hpd", GPIOD_IN);
+	if (IS_ERR(gpio)) {
+		dev_err(&pdev->dev, "failed to parse HPD gpio\n");
+		return PTR_ERR(gpio);
 	}
 
-	ddata->in = in;
+	ddata->hpd_gpio = gpio;
+
+	mutex_init(&ddata->hpd_lock);
+
+	if (ddata->hpd_gpio) {
+		r = devm_request_threaded_irq(&pdev->dev,
+			gpiod_to_irq(ddata->hpd_gpio), NULL, dvic_hpd_isr,
+			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+			"DVI HPD", ddata);
+		if (r)
+			return r;
+	}
 
 	adapter_node = of_parse_phandle(node, "ddc-i2c-bus", 0);
 	if (adapter_node) {
 		adapter = of_get_i2c_adapter_by_node(adapter_node);
+		of_node_put(adapter_node);
 		if (adapter == NULL) {
 			dev_err(&pdev->dev, "failed to parse ddc-i2c-bus\n");
-			omap_dss_put_device(ddata->in);
 			return -EPROBE_DEFER;
 		}
 
@@ -319,26 +392,18 @@ static int dvic_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, ddata);
 
-	if (dev_get_platdata(&pdev->dev)) {
-		r = dvic_probe_pdata(pdev);
-		if (r)
-			return r;
-	} else if (pdev->dev.of_node) {
-		r = dvic_probe_of(pdev);
-		if (r)
-			return r;
-	} else {
-		return -ENODEV;
-	}
+	r = dvic_probe_of(pdev);
+	if (r)
+		return r;
 
-	ddata->timings = dvic_default_timings;
+	ddata->vm = dvic_default_vm;
 
 	dssdev = &ddata->dssdev;
 	dssdev->driver = &dvic_driver;
 	dssdev->dev = &pdev->dev;
 	dssdev->type = OMAP_DISPLAY_TYPE_DVI;
 	dssdev->owner = THIS_MODULE;
-	dssdev->panel.timings = dvic_default_timings;
+	dssdev->panel.vm = dvic_default_vm;
 
 	r = omapdss_register_display(dssdev);
 	if (r) {
@@ -349,9 +414,8 @@ static int dvic_probe(struct platform_device *pdev)
 	return 0;
 
 err_reg:
-	omap_dss_put_device(ddata->in);
-
 	i2c_put_adapter(ddata->i2c_adapter);
+	mutex_destroy(&ddata->hpd_lock);
 
 	return r;
 }
@@ -360,16 +424,15 @@ static int __exit dvic_remove(struct platform_device *pdev)
 {
 	struct panel_drv_data *ddata = platform_get_drvdata(pdev);
 	struct omap_dss_device *dssdev = &ddata->dssdev;
-	struct omap_dss_device *in = ddata->in;
 
 	omapdss_unregister_display(&ddata->dssdev);
 
 	dvic_disable(dssdev);
 	dvic_disconnect(dssdev);
 
-	omap_dss_put_device(in);
-
 	i2c_put_adapter(ddata->i2c_adapter);
+
+	mutex_destroy(&ddata->hpd_lock);
 
 	return 0;
 }

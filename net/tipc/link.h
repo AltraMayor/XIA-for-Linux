@@ -63,7 +63,7 @@ enum {
 enum {
 	TIPC_LINK_UP_EVT       = 1,
 	TIPC_LINK_DOWN_EVT     = (1 << 1),
-	TIPC_LINK_SND_BC_ACK   = (1 << 2)
+	TIPC_LINK_SND_STATE    = (1 << 2)
 };
 
 /* Starting value for maximum packet size negotiation on unicast links
@@ -73,8 +73,8 @@ enum {
 
 bool tipc_link_create(struct net *net, char *if_name, int bearer_id,
 		      int tolerance, char net_plane, u32 mtu, int priority,
-		      int window, u32 session, u32 ownnode, u32 peer,
-		      u16 peer_caps,
+		      int window, u32 session, u32 ownnode,
+		      u32 peer, u8 *peer_id, u16 peer_caps,
 		      struct tipc_link *bc_sndlink,
 		      struct tipc_link *bc_rcvlink,
 		      struct sk_buff_head *inputq,
@@ -86,7 +86,6 @@ bool tipc_link_bc_create(struct net *net, u32 ownnode, u32 peer,
 			 struct sk_buff_head *namedq,
 			 struct tipc_link *bc_sndlink,
 			 struct tipc_link **link);
-void tipc_link_reinit(struct tipc_link *l, u32 addr);
 void tipc_link_tnl_prepare(struct tipc_link *l, struct tipc_link *tnl,
 			   int mtyp, struct sk_buff_head *xmitq);
 void tipc_link_build_reset_msg(struct tipc_link *l, struct sk_buff_head *xmitq);
@@ -111,9 +110,13 @@ char *tipc_link_name(struct tipc_link *l);
 char tipc_link_plane(struct tipc_link *l);
 int tipc_link_prio(struct tipc_link *l);
 int tipc_link_window(struct tipc_link *l);
+void tipc_link_update_caps(struct tipc_link *l, u16 capabilities);
+bool tipc_link_validate_msg(struct tipc_link *l, struct tipc_msg *hdr);
 unsigned long tipc_link_tolerance(struct tipc_link *l);
-void tipc_link_set_tolerance(struct tipc_link *l, u32 tol);
-void tipc_link_set_prio(struct tipc_link *l, u32 prio);
+void tipc_link_set_tolerance(struct tipc_link *l, u32 tol,
+			     struct sk_buff_head *xmitq);
+void tipc_link_set_prio(struct tipc_link *l, u32 prio,
+			struct sk_buff_head *xmitq);
 void tipc_link_set_abort_limit(struct tipc_link *l, u32 limit);
 void tipc_link_set_queue_limits(struct tipc_link *l, u32 window);
 int __tipc_nl_add_link(struct net *net, struct tipc_nl_msg *msg,
@@ -122,7 +125,7 @@ int tipc_nl_parse_link_prop(struct nlattr *prop, struct nlattr *props[]);
 int tipc_link_timeout(struct tipc_link *l, struct sk_buff_head *xmitq);
 int tipc_link_rcv(struct tipc_link *l, struct sk_buff *skb,
 		  struct sk_buff_head *xmitq);
-int tipc_link_build_ack_msg(struct tipc_link *l, struct sk_buff_head *xmitq);
+int tipc_link_build_state_msg(struct tipc_link *l, struct sk_buff_head *xmitq);
 void tipc_link_add_bc_peer(struct tipc_link *snd_l,
 			   struct tipc_link *uc_l,
 			   struct sk_buff_head *xmitq);
@@ -137,8 +140,8 @@ void tipc_link_bc_ack_rcv(struct tipc_link *l, u16 acked,
 void tipc_link_build_bc_sync_msg(struct tipc_link *l,
 				 struct sk_buff_head *xmitq);
 void tipc_link_bc_init_rcv(struct tipc_link *l, struct tipc_msg *hdr);
-void tipc_link_bc_sync_rcv(struct tipc_link *l,   struct tipc_msg *hdr,
-			   struct sk_buff_head *xmitq);
+int tipc_link_bc_sync_rcv(struct tipc_link *l,   struct tipc_msg *hdr,
+			  struct sk_buff_head *xmitq);
 int tipc_link_bc_nack_rcv(struct tipc_link *l, struct sk_buff *skb,
 			  struct sk_buff_head *xmitq);
 #endif
